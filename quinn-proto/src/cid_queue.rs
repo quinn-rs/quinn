@@ -31,6 +31,17 @@ impl CidQueue {
         }
     }
 
+    /// Create a queue whose active CID was issued in a frame and has a reset token.
+    pub(crate) fn new_issued(cid: NewConnectionId) -> Self {
+        let mut buffer = [None; Self::LEN];
+        buffer[0] = Some((cid.id, Some(cid.reset_token)));
+        Self {
+            buffer,
+            cursor: 0,
+            offset: cid.sequence,
+        }
+    }
+
     /// Handle a `NEW_CONNECTION_ID` frame
     ///
     /// Returns a non-empty range of retired sequence numbers and the reset token of the new active
@@ -276,6 +287,13 @@ mod tests {
             Err(InsertError::Retired),
             "previous active CID is already retired"
         );
+    }
+
+    #[test]
+    fn new_issued_starts_at_frame_sequence() {
+        let q = CidQueue::new_issued(cid(7, 0));
+        assert_eq!(q.active_seq(), 7);
+        assert_eq!(q.active(), ConnectionId::new(&[0xAB; 8]));
     }
 
     #[test]

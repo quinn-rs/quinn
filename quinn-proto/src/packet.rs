@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::{
     ConnectionId,
     coding::{self, BufExt, BufMutExt},
-    crypto,
+    crypto::{self, PacketNonce},
 };
 
 /// Decodes a QUIC packet's invariant header
@@ -472,11 +472,11 @@ impl PartialEncode {
         self,
         buf: &mut [u8],
         header_crypto: &dyn crypto::HeaderKey,
-        crypto: Option<(u64, &dyn crypto::PacketKey)>,
-    ) {
+        crypto: Option<(PacketNonce, &dyn crypto::PacketKey)>,
+    ) -> Result<(), crypto::CryptoError> {
         let Self { header_len, pn, .. } = self;
         let Some((pn_len, write_len)) = pn else {
-            return;
+            return Ok(());
         };
 
         let pn_pos = header_len - pn_len;
@@ -487,8 +487,8 @@ impl PartialEncode {
             slice.put_u16(len as u16 | (0b01 << 14));
         }
 
-        if let Some((number, crypto)) = crypto {
-            crypto.encrypt(number, buf, header_len);
+        if let Some((nonce, crypto)) = crypto {
+            crypto.encrypt_with_nonce(nonce, buf, header_len)?;
         }
 
         debug_assert!(
@@ -497,6 +497,7 @@ impl PartialEncode {
             pn_pos + 4 + header_crypto.sample_size()
         );
         header_crypto.encrypt(pn_pos, buf);
+        Ok(())
     }
 }
 
@@ -961,11 +962,13 @@ mod tests {
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
         buf.resize(header_len + 16 + client.packet.local.tag_len(), 0);
-        encode.finish(
-            &mut buf,
-            &*client.header.local,
-            Some((0, &*client.packet.local)),
-        );
+        encode
+            .finish(
+                &mut buf,
+                &*client.header.local,
+                Some((PacketNonce::packet_number(0), &*client.packet.local)),
+            )
+            .unwrap();
 
         for byte in &buf {
             print!("{byte:02x}");

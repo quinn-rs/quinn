@@ -62,7 +62,7 @@ impl FrameStats {
         match frame {
             Frame::Padding => {}
             Frame::Ping => self.ping += 1,
-            Frame::Ack(_) => self.acks += 1,
+            Frame::Ack(_) | Frame::PathAck { .. } => self.acks += 1,
             Frame::ResetStream(_) => self.reset_stream += 1,
             Frame::StopSending(_) => self.stop_sending += 1,
             Frame::Crypto(_) => self.crypto += 1,
@@ -91,6 +91,14 @@ impl FrameStats {
             Frame::RetireConnectionId { .. } => self.retire_connection_id += 1,
             Frame::PathChallenge(_) => self.path_challenge += 1,
             Frame::PathResponse(_) => self.path_response += 1,
+            Frame::PathAbandon { .. }
+            | Frame::PathStatusAvailable { .. }
+            | Frame::PathStatusBackup { .. }
+            | Frame::PathNewConnectionId { .. }
+            | Frame::PathRetireConnectionId { .. }
+            | Frame::MaxPathId { .. }
+            | Frame::PathsBlocked { .. }
+            | Frame::PathCidsBlocked { .. } => {}
             Frame::Close(_) => self.connection_close += 1,
             Frame::AckFrequency(_) => self.ack_frequency += 1,
             Frame::ImmediateAck => self.immediate_ack += 1,

@@ -1,20 +1,368 @@
-use std::{cmp, net::SocketAddr};
+use std::{
+    cmp,
+    net::{IpAddr, SocketAddr},
+    ops::{Deref, DerefMut},
+};
 
+use rand::Rng;
 use tracing::trace;
 
 use super::{
+    cid_state::CidState,
     mtud::MtuDiscovery,
     pacing::Pacer,
-    spaces::{PacketSpace, SentPacket},
+    spaces::{PacketNumberFilter, PacketSpace, SentPacket},
 };
-use crate::{Duration, Instant, TIMER_GRANULARITY, TransportConfig, congestion, packet::SpaceId};
+use crate::{
+    Duration, Instant, TIMER_GRANULARITY, TransportConfig, TransportError, VarInt,
+    cid_queue::CidQueue, congestion, packet::SpaceId,
+};
 
 #[cfg(feature = "qlog")]
 use qlog::events::{ExData, quic::RecoveryMetricsUpdated};
 
+const MAX_ADDITIONAL_PATHS: usize = 1024;
+
+/// Protocol-level identifier for a multipath QUIC path.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub(crate) struct PathId(u32);
+
+impl PathId {
+    pub(crate) const ZERO: Self = Self(0);
+
+    pub(crate) fn from_u32(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub(crate) fn into_inner(self) -> u32 {
+        self.0
+    }
+
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl TryFrom<VarInt> for PathId {
+    type Error = TransportError;
+
+    fn try_from(value: VarInt) -> Result<Self, Self::Error> {
+        let value = value.into_inner();
+        if value > u32::MAX.into() {
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "path ID exceeds 32-bit limit",
+            ));
+        }
+        Ok(Self(value as u32))
+    }
+}
+
+impl From<PathId> for VarInt {
+    fn from(value: PathId) -> Self {
+        Self::from_u32(value.0)
+    }
+}
+
+/// State for a single QUIC path.
+pub(super) struct Path {
+    id: PathId,
+    data: PathData,
+    remote_cids: CidQueue,
+    local_cid_state: CidState,
+    packet_number_filter: PacketNumberFilter,
+    data_space: PacketSpace,
+    peer_status: PathUsePreference,
+    latest_peer_status_sequence: Option<u64>,
+}
+
+impl Path {
+    pub(super) fn new(
+        id: PathId,
+        data: PathData,
+        remote_cids: CidQueue,
+        local_cid_state: CidState,
+        packet_number_filter: PacketNumberFilter,
+        data_space: PacketSpace,
+    ) -> Self {
+        Self {
+            id,
+            data,
+            remote_cids,
+            local_cid_state,
+            packet_number_filter,
+            data_space,
+            peer_status: PathUsePreference::Available,
+            latest_peer_status_sequence: None,
+        }
+    }
+
+    pub(super) fn id(&self) -> PathId {
+        self.id
+    }
+
+    pub(super) fn remote_cids(&self) -> &CidQueue {
+        &self.remote_cids
+    }
+
+    pub(super) fn remote_cids_mut(&mut self) -> &mut CidQueue {
+        &mut self.remote_cids
+    }
+
+    pub(super) fn local_cid_state(&self) -> &CidState {
+        &self.local_cid_state
+    }
+
+    pub(super) fn local_cid_state_mut(&mut self) -> &mut CidState {
+        &mut self.local_cid_state
+    }
+
+    pub(super) fn packet_number_filter(&self) -> &PacketNumberFilter {
+        &self.packet_number_filter
+    }
+
+    pub(super) fn data_space(&self) -> &PacketSpace {
+        &self.data_space
+    }
+
+    pub(super) fn data_space_mut(&mut self) -> &mut PacketSpace {
+        &mut self.data_space
+    }
+
+    pub(super) fn data_and_space_mut(&mut self) -> (&mut PathData, &mut PacketSpace) {
+        (&mut self.data, &mut self.data_space)
+    }
+
+    pub(super) fn replace_data(&mut self, data: PathData) -> PathData {
+        std::mem::replace(&mut self.data, data)
+    }
+
+    pub(super) fn allocate_packet_number(&mut self, rng: &mut (impl Rng + ?Sized)) -> u64 {
+        self.packet_number_filter
+            .allocate(rng, &mut self.data_space)
+    }
+
+    pub(super) fn sent_data(&mut self, pn: u64, packet: SentPacket) {
+        self.data.sent(pn, packet, &mut self.data_space);
+    }
+
+    pub(super) fn sent_on(&mut self, pn: u64, packet: SentPacket, space: &mut PacketSpace) {
+        self.data.sent(pn, packet, space);
+    }
+
+    pub(super) fn peer_status(&self) -> PathUsePreference {
+        self.peer_status
+    }
+
+    pub(super) fn update_peer_status(&mut self, status: PathUsePreference, sequence: u64) -> bool {
+        if self
+            .latest_peer_status_sequence
+            .is_some_and(|latest| sequence <= latest)
+        {
+            return false;
+        }
+        self.latest_peer_status_sequence = Some(sequence);
+        self.peer_status = status;
+        true
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(super) enum PathUsePreference {
+    Available,
+    Backup,
+}
+
+impl Deref for Path {
+    type Target = PathData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl DerefMut for Path {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
+/// Internal collection of paths for a connection.
+pub(super) struct Paths {
+    primary: Path,
+    additional: Vec<Option<Path>>,
+    abandoned: Vec<AbandonedPath>,
+}
+
+struct AbandonedPath {
+    path: Path,
+    retain_until: Instant,
+}
+
+impl Paths {
+    pub(super) fn new(primary: Path) -> Self {
+        Self {
+            primary,
+            additional: Vec::new(),
+            abandoned: Vec::new(),
+        }
+    }
+
+    pub(super) fn get(&self, id: PathId) -> Option<&Path> {
+        match id {
+            PathId::ZERO => Some(&self.primary),
+            _ => self
+                .additional
+                .get(id.index().checked_sub(1)?)
+                .and_then(Option::as_ref),
+        }
+    }
+
+    pub(super) fn get_mut(&mut self, id: PathId) -> Option<&mut Path> {
+        match id {
+            PathId::ZERO => Some(&mut self.primary),
+            _ => self
+                .additional
+                .get_mut(id.index().checked_sub(1)?)
+                .and_then(Option::as_mut),
+        }
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &Path> {
+        std::iter::once(&self.primary).chain(self.additional.iter().flatten())
+    }
+
+    pub(super) fn expired_validation_path_ids(&self, now: Instant) -> Vec<PathId> {
+        self.additional
+            .iter()
+            .flatten()
+            .filter(|path| {
+                path.challenge.is_some()
+                    && path
+                        .validation_deadline
+                        .is_some_and(|deadline| deadline <= now)
+            })
+            .map(Path::id)
+            .collect()
+    }
+
+    pub(super) fn next_validation_deadline(&self) -> Option<Instant> {
+        self.iter()
+            .filter(|path| path.challenge.is_some())
+            .filter_map(|path| path.validation_deadline)
+            .min()
+    }
+
+    pub(super) fn abandon(&mut self, id: PathId, retain_until: Instant) -> bool {
+        let Some(mut path) = (match id {
+            PathId::ZERO => None,
+            _ => self
+                .additional
+                .get_mut(
+                    id.index()
+                        .checked_sub(1)
+                        .expect("nonzero path has additional index"),
+                )
+                .and_then(Option::take),
+        }) else {
+            return false;
+        };
+        if !path.data_space.pending_acks.ranges().is_empty() {
+            path.data_space.pending_acks.set_immediate_ack_required();
+        }
+        self.abandoned.push(AbandonedPath { path, retain_until });
+        true
+    }
+
+    pub(super) fn get_abandoned(&self, id: PathId, now: Instant) -> Option<&Path> {
+        self.abandoned
+            .iter()
+            .find(|path| path.path.id() == id && now <= path.retain_until)
+            .map(|path| &path.path)
+    }
+
+    pub(super) fn get_abandoned_mut(&mut self, id: PathId, now: Instant) -> Option<&mut Path> {
+        self.abandoned
+            .iter_mut()
+            .find(|path| path.path.id() == id && now <= path.retain_until)
+            .map(|path| &mut path.path)
+    }
+
+    pub(super) fn next_validation_path_id(&self) -> Option<PathId> {
+        self.additional
+            .iter()
+            .flatten()
+            .find(|path| path.challenge_pending)
+            .map(Path::id)
+    }
+
+    pub(super) fn has_pending_validation(&self) -> bool {
+        self.primary.challenge.is_some()
+            || self
+                .additional
+                .iter()
+                .flatten()
+                .any(|path| path.challenge.is_some())
+    }
+
+    pub(super) fn next_abandoned_ack_path_id(&self, now: Instant) -> Option<PathId> {
+        self.abandoned
+            .iter()
+            .find(|path| now <= path.retain_until && path.path.data_space.pending_acks.can_send())
+            .map(|path| path.path.id())
+    }
+
+    pub(super) fn insert(&mut self, path: Path) -> Result<(), PathInsertError> {
+        let id = path.id();
+        if id == PathId::ZERO {
+            return Err(PathInsertError::PathZero);
+        }
+
+        let index = id.index() - 1;
+        if index >= MAX_ADDITIONAL_PATHS {
+            return Err(PathInsertError::PathLimit);
+        }
+        if self.additional.len() <= index {
+            self.additional.resize_with(index + 1, || None);
+        }
+
+        if self.additional[index].is_some() {
+            return Err(PathInsertError::Occupied);
+        }
+
+        self.additional[index] = Some(path);
+        Ok(())
+    }
+
+    pub(super) fn primary_mut(&mut self) -> &mut Path {
+        &mut self.primary
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(super) enum PathInsertError {
+    PathZero,
+    PathLimit,
+    Occupied,
+}
+
+impl Deref for Paths {
+    type Target = Path;
+
+    fn deref(&self) -> &Self::Target {
+        &self.primary
+    }
+}
+
+impl DerefMut for Paths {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.primary
+    }
+}
+
 /// Description of a particular network path
 pub(super) struct PathData {
     pub(super) remote: SocketAddr,
+    pub(super) local_ip: Option<IpAddr>,
     pub(super) rtt: RttEstimator,
     /// Whether we're enabling ECN on outgoing packets
     pub(super) sending_ecn: bool,
@@ -24,6 +372,7 @@ pub(super) struct PathData {
     pub(super) pacing: Pacer,
     pub(super) challenge: Option<u64>,
     pub(super) challenge_pending: bool,
+    pub(super) validation_deadline: Option<Instant>,
     /// Whether we're certain the peer can both send and receive on this address
     ///
     /// Initially equal to `use_stateless_retry` for servers, and becomes false again on every
@@ -57,6 +406,7 @@ pub(super) struct PathData {
 impl PathData {
     pub(super) fn new(
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         allow_mtud: bool,
         peer_max_udp_payload_size: Option<u16>,
         generation: u64,
@@ -69,6 +419,7 @@ impl PathData {
             .build(now, config.get_initial_mtu());
         Self {
             remote,
+            local_ip,
             rtt: RttEstimator::new(config.initial_rtt),
             sending_ecn: true,
             pacing: Pacer::new(
@@ -81,6 +432,7 @@ impl PathData {
             congestion,
             challenge: None,
             challenge_pending: false,
+            validation_deadline: None,
             validated: false,
             total_sent: 0,
             total_recvd: 0,
@@ -118,6 +470,7 @@ impl PathData {
         let smoothed_rtt = prev.rtt.get();
         Self {
             remote,
+            local_ip: prev.local_ip,
             rtt: prev.rtt,
             pacing: Pacer::new(
                 smoothed_rtt,
@@ -130,6 +483,7 @@ impl PathData {
             congestion,
             challenge: None,
             challenge_pending: false,
+            validation_deadline: None,
             validated: false,
             total_sent: 0,
             total_recvd: 0,
@@ -164,6 +518,17 @@ impl PathData {
     /// Returns the path's current MTU
     pub(super) fn current_mtu(&self) -> u16 {
         self.mtud.current_mtu()
+    }
+
+    pub(super) fn observe_datagram(
+        &mut self,
+        remote: SocketAddr,
+        local_ip: Option<IpAddr>,
+        len: usize,
+    ) {
+        self.remote = remote;
+        self.local_ip = local_ip;
+        self.total_recvd = self.total_recvd.saturating_add(len as u64);
     }
 
     /// Account for transmission of `packet` with number `pn` in `space`
@@ -371,15 +736,19 @@ pub(crate) struct PathResponses {
 }
 
 impl PathResponses {
-    pub(crate) fn push(&mut self, packet: u64, token: u64, remote: SocketAddr) {
+    pub(crate) fn push(&mut self, packet: u64, token: u64, path_id: PathId, remote: SocketAddr) {
         /// Arbitrary permissive limit to prevent abuse
         const MAX_PATH_RESPONSES: usize = 16;
         let response = PathResponse {
             packet,
+            path_id,
             token,
             remote,
         };
-        let existing = self.pending.iter_mut().find(|x| x.remote == remote);
+        let existing = self
+            .pending
+            .iter_mut()
+            .find(|x| x.path_id == path_id && x.remote == remote);
         if let Some(existing) = existing {
             // Update a queued response
             if existing.packet <= packet {
@@ -396,9 +765,13 @@ impl PathResponses {
         }
     }
 
-    pub(crate) fn pop_off_path(&mut self, remote: SocketAddr) -> Option<(u64, SocketAddr)> {
+    pub(crate) fn pop_off_path(
+        &mut self,
+        path_id: PathId,
+        remote: SocketAddr,
+    ) -> Option<(u64, SocketAddr)> {
         let response = *self.pending.last()?;
-        if response.remote == remote {
+        if response.path_id == path_id && response.remote == remote {
             // We don't bother searching further because we expect that the on-path response will
             // get drained in the immediate future by a call to `pop_on_path`
             return None;
@@ -407,15 +780,19 @@ impl PathResponses {
         Some((response.token, response.remote))
     }
 
-    pub(crate) fn pop_on_path(&mut self, remote: SocketAddr) -> Option<u64> {
+    pub(crate) fn pop_on_path(&mut self, path_id: PathId, remote: SocketAddr) -> Option<u64> {
         let response = *self.pending.last()?;
-        if response.remote != remote {
+        if response.path_id != path_id || response.remote != remote {
             // We don't bother searching further because we expect that the off-path response will
             // get drained in the immediate future by a call to `pop_off_path`
             return None;
         }
         self.pending.pop();
         Some(response.token)
+    }
+
+    pub(crate) fn next_path_id(&self) -> Option<PathId> {
+        self.pending.last().map(|response| response.path_id)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -427,6 +804,7 @@ impl PathResponses {
 struct PathResponse {
     /// The packet number the corresponding PATH_CHALLENGE was received in
     packet: u64,
+    path_id: PathId,
     token: u64,
     /// The address the corresponding PATH_CHALLENGE was received from
     remote: SocketAddr,
@@ -465,5 +843,178 @@ impl InFlight {
     fn remove(&mut self, packet: &SentPacket) {
         self.bytes -= u64::from(packet.size);
         self.ack_eliciting -= u64::from(packet.ack_eliciting);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use crate::{
+        Instant, TransportConfig,
+        cid_queue::CidQueue,
+        connection::{cid_state::CidState, spaces::PacketNumberFilter},
+        shared::ConnectionId,
+    };
+
+    use super::*;
+
+    fn path(id: u32) -> Path {
+        let now = Instant::now();
+        let remote = SocketAddr::from(([127, 0, 0, 1], 4433 + id as u16));
+        Path::new(
+            PathId(id),
+            PathData::new(
+                remote,
+                None,
+                true,
+                None,
+                id.into(),
+                now,
+                &TransportConfig::default(),
+            ),
+            CidQueue::new(ConnectionId::new(&[id as u8; 8])),
+            CidState::new(8, None, now, 1),
+            PacketNumberFilter::disabled(),
+            PacketSpace::new(now),
+        )
+    }
+
+    #[test]
+    fn paths_insert_and_lookup_sparse_nonzero_path() {
+        let mut paths = Paths::new(path(0));
+
+        assert_eq!(paths.get(PathId::ZERO).unwrap().id(), PathId::ZERO);
+        assert!(paths.get(PathId(3)).is_none());
+
+        paths.insert(path(3)).unwrap();
+
+        assert_eq!(paths.get(PathId(3)).unwrap().id(), PathId(3));
+        assert!(paths.get(PathId(1)).is_none());
+        assert!(paths.get(PathId(2)).is_none());
+    }
+
+    #[test]
+    fn paths_rejects_path_zero_and_duplicates() {
+        let mut paths = Paths::new(path(0));
+
+        assert_eq!(paths.insert(path(0)), Err(PathInsertError::PathZero));
+        paths.insert(path(1)).unwrap();
+        assert_eq!(paths.insert(path(1)), Err(PathInsertError::Occupied));
+    }
+
+    #[test]
+    fn paths_rejects_huge_sparse_path_id() {
+        let mut paths = Paths::new(path(0));
+
+        assert_eq!(
+            paths.insert(path(MAX_ADDITIONAL_PATHS as u32 + 1)),
+            Err(PathInsertError::PathLimit)
+        );
+    }
+
+    #[test]
+    fn paths_abandon_nonzero_path() {
+        let mut paths = Paths::new(path(0));
+        let now = Instant::now();
+        paths.insert(path(2)).unwrap();
+
+        assert!(paths.get(PathId(2)).is_some());
+        assert!(!paths.abandon(PathId::ZERO, now));
+        assert!(paths.abandon(PathId(2), now + Duration::from_secs(1)));
+        assert!(paths.get(PathId(2)).is_none());
+        assert_eq!(
+            paths.get_abandoned(PathId(2), now).map(Path::id),
+            Some(PathId(2))
+        );
+        assert!(
+            paths
+                .get_abandoned(PathId(2), now + Duration::from_secs(2))
+                .is_none()
+        );
+        assert!(!paths.abandon(PathId(2), now + Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn paths_abandon_schedules_final_ack() {
+        let mut paths = Paths::new(path(0));
+        let now = Instant::now();
+        let mut path = path(2);
+        path.data_space_mut().pending_acks.insert_one(7, now);
+        paths.insert(path).unwrap();
+
+        assert!(paths.abandon(PathId(2), now + Duration::from_secs(1)));
+        assert_eq!(paths.next_abandoned_ack_path_id(now), Some(PathId(2)));
+
+        let path = paths.get_abandoned_mut(PathId(2), now).unwrap();
+        path.data_space_mut().pending_acks.acks_sent();
+        assert_eq!(paths.next_abandoned_ack_path_id(now), None);
+        assert_eq!(
+            paths.next_abandoned_ack_path_id(now + Duration::from_secs(2)),
+            None
+        );
+    }
+
+    #[test]
+    fn paths_select_pending_validation_path() {
+        let mut paths = Paths::new(path(0));
+        let mut pending = path(2);
+        pending.challenge = Some(7);
+        pending.challenge_pending = true;
+        paths.insert(pending).unwrap();
+        paths.insert(path(1)).unwrap();
+
+        assert!(paths.has_pending_validation());
+        assert_eq!(paths.next_validation_path_id(), Some(PathId(2)));
+
+        paths.get_mut(PathId(2)).unwrap().challenge_pending = false;
+        assert!(paths.has_pending_validation());
+        assert_eq!(paths.next_validation_path_id(), None);
+
+        paths.get_mut(PathId(2)).unwrap().challenge = None;
+        assert!(!paths.has_pending_validation());
+    }
+
+    #[test]
+    fn paths_expire_only_due_validation_paths() {
+        let now = Instant::now();
+        let mut paths = Paths::new(path(0));
+        let mut first = path(1);
+        first.challenge = Some(1);
+        first.validation_deadline = Some(now + Duration::from_millis(5));
+        let mut second = path(2);
+        second.challenge = Some(2);
+        second.validation_deadline = Some(now + Duration::from_millis(10));
+        paths.insert(first).unwrap();
+        paths.insert(second).unwrap();
+
+        assert_eq!(
+            paths.next_validation_deadline(),
+            Some(now + Duration::from_millis(5))
+        );
+        assert_eq!(paths.expired_validation_path_ids(now), Vec::<PathId>::new());
+        assert_eq!(
+            paths.expired_validation_path_ids(now + Duration::from_millis(6)),
+            vec![PathId(1)]
+        );
+        assert_eq!(
+            paths.expired_validation_path_ids(now + Duration::from_millis(11)),
+            vec![PathId(1), PathId(2)]
+        );
+    }
+
+    #[test]
+    fn path_status_ignores_stale_sequence_numbers() {
+        let mut path = path(1);
+
+        assert_eq!(path.peer_status(), PathUsePreference::Available);
+        assert!(path.update_peer_status(PathUsePreference::Backup, 2));
+        assert_eq!(path.peer_status(), PathUsePreference::Backup);
+        assert!(!path.update_peer_status(PathUsePreference::Available, 1));
+        assert_eq!(path.peer_status(), PathUsePreference::Backup);
+        assert!(!path.update_peer_status(PathUsePreference::Available, 2));
+        assert_eq!(path.peer_status(), PathUsePreference::Backup);
+        assert!(path.update_peer_status(PathUsePreference::Available, 3));
+        assert_eq!(path.peer_status(), PathUsePreference::Available);
     }
 }

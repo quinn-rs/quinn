@@ -1,8 +1,9 @@
 use tracing::{debug, trace};
 
 use crate::Instant;
+use crate::connection::PathId;
 use crate::connection::spaces::PacketSpace;
-use crate::crypto::{HeaderKey, KeyPair, PacketKey};
+use crate::crypto::{HeaderKey, KeyPair, PacketKey, PacketNonce};
 use crate::packet::{Packet, PartialDecode, SpaceId};
 use crate::token::ResetToken;
 use crate::{RESET_TOKEN_SIZE, TransportError};
@@ -11,6 +12,7 @@ use crate::{RESET_TOKEN_SIZE, TransportError};
 pub(super) fn unprotect_header(
     partial_decode: PartialDecode,
     spaces: &[PacketSpace; 3],
+    data_space: &PacketSpace,
     zero_rtt_crypto: Option<&ZeroRttCrypto>,
     stateless_reset_token: Option<ResetToken>,
 ) -> Option<UnprotectHeaderResult> {
@@ -22,7 +24,7 @@ pub(super) fn unprotect_header(
             return None;
         }
     } else if let Some(space) = partial_decode.space() {
-        if let Some(ref crypto) = spaces[space].crypto {
+        if let Some(ref crypto) = packet_space(spaces, data_space, space).crypto {
             Some(&*crypto.header.remote)
         } else {
             debug!(
@@ -69,6 +71,10 @@ pub(super) struct UnprotectHeaderResult {
 pub(super) fn decrypt_packet_body(
     packet: &mut Packet,
     spaces: &[PacketSpace; 3],
+    data_space: &PacketSpace,
+    data_crypto_space: &PacketSpace,
+    data_path_id: PathId,
+    multipath_enabled: bool,
     zero_rtt_crypto: Option<&ZeroRttCrypto>,
     conn_key_phase: bool,
     prev_crypto: Option<&PrevCrypto>,
@@ -79,15 +85,26 @@ pub(super) fn decrypt_packet_body(
         return Ok(None);
     }
     let space = packet.header.space();
-    let rx_packet = spaces[space].rx_packet;
+    let pn_space = packet_space(spaces, data_space, space);
+    let crypto_space = packet_space(spaces, data_crypto_space, space);
+    let rx_packet = pn_space.rx_packet;
     let number = packet.header.number().ok_or(None)?.expand(rx_packet + 1);
+    let nonce = if space == SpaceId::Data && !packet.header.is_0rtt() && multipath_enabled {
+        PacketNonce::path(data_path_id.into_inner(), number).map_err(|_| {
+            Some(TransportError::PROTOCOL_VIOLATION(
+                "packet number exceeds multipath nonce limit",
+            ))
+        })?
+    } else {
+        PacketNonce::packet_number(number)
+    };
     let packet_key_phase = packet.header.key_phase();
 
     let mut crypto_update = false;
     let crypto = if packet.header.is_0rtt() {
         &zero_rtt_crypto.unwrap().packet
     } else if packet_key_phase == conn_key_phase || space != SpaceId::Data {
-        &spaces[space].crypto.as_ref().unwrap().packet.remote
+        &crypto_space.crypto.as_ref().unwrap().packet.remote
     } else if let Some(prev) = prev_crypto.and_then(|crypto| {
         // If this packet comes prior to acknowledgment of the key update by the peer,
         if crypto.end_packet.is_none_or(|(pn, _)| number < pn) {
@@ -110,7 +127,7 @@ pub(super) fn decrypt_packet_body(
     };
 
     crypto
-        .decrypt(number, &packet.header_data, &mut packet.payload)
+        .decrypt_with_nonce(nonce, &packet.header_data, &mut packet.payload)
         .map_err(|_| {
             trace!("decryption failed with packet number {}", number);
             None
@@ -141,6 +158,17 @@ pub(super) fn decrypt_packet_body(
         outgoing_key_update_acked,
         incoming_key_update: crypto_update,
     }))
+}
+
+fn packet_space<'a>(
+    spaces: &'a [PacketSpace; 3],
+    data_space: &'a PacketSpace,
+    space: SpaceId,
+) -> &'a PacketSpace {
+    match space {
+        SpaceId::Data => data_space,
+        SpaceId::Initial | SpaceId::Handshake => &spaces[space],
+    }
 }
 
 pub(super) struct DecryptPacketResult {

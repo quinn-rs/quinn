@@ -21,6 +21,13 @@ pub(super) struct Pacer {
     prev: Instant,
 }
 
+#[derive(Clone, Copy)]
+struct PacerBudget {
+    window: u64,
+    capacity: u64,
+    tokens: u64,
+}
+
 impl Pacer {
     /// Obtains a new [`Pacer`].
     pub(super) fn new(
@@ -52,6 +59,83 @@ impl Pacer {
         self.tokens = self.tokens.saturating_sub(packet_length.into())
     }
 
+    fn budget(&self, smoothed_rtt: Duration, mtu: u16, window: u64) -> PacerBudget {
+        let window = rate_limited_window(smoothed_rtt, window, self.max_bytes_per_second);
+        let mut tokens = self.tokens;
+        let capacity = if window != self.last_window || mtu != self.last_mtu {
+            let capacity = optimal_capacity(smoothed_rtt, window, mtu);
+            tokens = capacity.min(tokens);
+            capacity
+        } else {
+            self.capacity
+        };
+
+        PacerBudget {
+            window,
+            capacity,
+            tokens,
+        }
+    }
+
+    fn tokens_after_elapsed(
+        &self,
+        smoothed_rtt: Duration,
+        budget: PacerBudget,
+        now: Instant,
+        warn_on_early_time: bool,
+    ) -> (u64, u64) {
+        let time_elapsed = now.checked_duration_since(self.prev).unwrap_or_else(|| {
+            if warn_on_early_time {
+                warn!("received a timestamp early than a previous recorded time, ignoring");
+            }
+            Default::default()
+        });
+
+        let elapsed_rtts = time_elapsed.as_secs_f64() / smoothed_rtt.as_secs_f64();
+        let new_tokens = (budget.window as f64 * 1.25 * elapsed_rtts).round() as u64;
+        (
+            budget
+                .tokens
+                .saturating_add(new_tokens)
+                .min(budget.capacity),
+            new_tokens,
+        )
+    }
+
+    pub(super) fn can_send(
+        &self,
+        smoothed_rtt: Duration,
+        bytes_to_send: u64,
+        mtu: u16,
+        window: u64,
+        now: Instant,
+    ) -> bool {
+        debug_assert_ne!(
+            window, 0,
+            "zero-sized congestion control window is nonsense"
+        );
+
+        let budget = self.budget(smoothed_rtt, mtu, window);
+
+        if budget.tokens >= bytes_to_send || budget.window > u64::from(u32::MAX) {
+            return true;
+        }
+
+        if smoothed_rtt.as_nanos() == 0 {
+            return true;
+        }
+
+        self.tokens_after_elapsed(smoothed_rtt, budget, now, false)
+            .0
+            >= bytes_to_send
+    }
+
+    #[cfg(test)]
+    pub(super) fn block_for_test(&mut self, now: Instant) {
+        self.tokens = 0;
+        self.prev = now;
+    }
+
     /// Return how long we need to wait before sending `bytes_to_send`
     ///
     /// If we can send a packet right away, this returns `None`. Otherwise, returns `Some(d)`,
@@ -72,15 +156,11 @@ impl Pacer {
             "zero-sized congestion control window is nonsense"
         );
 
-        let window = rate_limited_window(smoothed_rtt, window, self.max_bytes_per_second);
-        if window != self.last_window || mtu != self.last_mtu {
-            self.capacity = optimal_capacity(smoothed_rtt, window, mtu);
-
-            // Clamp the tokens
-            self.tokens = self.capacity.min(self.tokens);
-            self.last_window = window;
-            self.last_mtu = mtu;
-        }
+        let budget = self.budget(smoothed_rtt, mtu, window);
+        self.capacity = budget.capacity;
+        self.tokens = budget.tokens;
+        self.last_window = budget.window;
+        self.last_mtu = mtu;
 
         // if we can already send a packet, there is no need for delay
         if self.tokens >= bytes_to_send {
@@ -88,24 +168,24 @@ impl Pacer {
         }
 
         // we disable pacing for extremely large windows
-        if window > u64::from(u32::MAX) {
+        if budget.window > u64::from(u32::MAX) {
             return None;
         }
-
-        let window = window as u32;
-
-        let time_elapsed = now.checked_duration_since(self.prev).unwrap_or_else(|| {
-            warn!("received a timestamp early than a previous recorded time, ignoring");
-            Default::default()
-        });
 
         if smoothed_rtt.as_nanos() == 0 {
             return None;
         }
 
-        let elapsed_rtts = time_elapsed.as_secs_f64() / smoothed_rtt.as_secs_f64();
-        let new_tokens = (window as f64 * 1.25 * elapsed_rtts).round() as u64;
-        self.tokens = self.tokens.saturating_add(new_tokens).min(self.capacity);
+        let (tokens, new_tokens) = self.tokens_after_elapsed(
+            smoothed_rtt,
+            PacerBudget {
+                tokens: self.tokens,
+                ..budget
+            },
+            now,
+            true,
+        );
+        self.tokens = tokens;
 
         // In the unlikely event that we're getting polled faster than tokens are generated, ensure
         // that `elapsed_rtts` can grow until we make progress.
@@ -118,6 +198,7 @@ impl Pacer {
             return None;
         }
 
+        let window = budget.window as u32;
         let unscaled_delay = smoothed_rtt
             .checked_mul((bytes_to_send.max(self.capacity) - self.tokens) as _)
             .unwrap_or(Duration::MAX)

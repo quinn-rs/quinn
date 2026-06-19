@@ -1,7 +1,8 @@
 use std::{
     convert::TryInto,
-    mem,
+    env, mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    process::Command,
     sync::{Arc, Mutex},
 };
 
@@ -28,15 +29,16 @@ use super::*;
 use crate::{
     Duration, Instant,
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
+    connection::PathId,
     crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
+    range_set::ArrayRangeSet,
+    shared::{EndpointEvent, EndpointEventInner},
     transport_parameters::TransportParameters,
 };
 mod util;
 use util::*;
-
 mod token;
-
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
@@ -44,8 +46,6 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 // Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in nodejs.
 // #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 // wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-#[test]
 fn version_negotiate_server() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
@@ -176,6 +176,586 @@ fn draft_version_compat() {
     assert_eq!(pair.client.known_cids(), 0);
     assert_eq!(pair.server.known_connections(), 0);
     assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[test]
+fn multipath_nonzero_path_validate_send_ack_and_abandon() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    assert!(pair.client_conn_mut(client_ch).path_validated(path_id));
+    assert!(pair.server_conn_mut(server_ch).path_validated(path_id));
+    {
+        let conn = pair.client_conn_mut(client_ch);
+        conn.set_path_rtt_for_test(PathId::ZERO, Duration::from_millis(333));
+        conn.set_path_rtt_for_test(path_id, Duration::from_millis(333));
+        conn.set_multipath_scheduler_next_path_id_for_test(PathId::ZERO);
+    }
+    pair.time += Duration::from_millis(333);
+
+    let server_path0_rx_before = pair
+        .server_conn_mut(server_ch)
+        .path_rx_packet(PathId::ZERO)
+        .unwrap();
+    let server_path1_rx_before = pair
+        .server_conn_mut(server_ch)
+        .path_rx_packet(path_id)
+        .unwrap();
+    let stream0 = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    let stream1 = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    const MSG: &[u8] = b"multipath";
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .path_application_data_scheduler_score(path_id)
+            .is_some()
+    );
+    pair.client_send(client_ch, stream0).write(MSG).unwrap();
+    pair.drive_client();
+    pair.server.drive(pair.time, pair.client.addr);
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .multipath_scheduler_next_path_id(),
+        path_id
+    );
+    pair.client_send(client_ch, stream1).write(MSG).unwrap();
+    pair.drive_client();
+    pair.server.drive(pair.time, pair.client.addr);
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .path_rx_packet(PathId::ZERO)
+            .unwrap()
+            > server_path0_rx_before
+    );
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .path_rx_packet(path_id)
+            .unwrap()
+            > server_path1_rx_before
+    );
+
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
+    );
+    assert_eq!(
+        pair.server_streams(server_ch).accept(Dir::Uni),
+        Some(stream0)
+    );
+    assert_eq!(
+        pair.server_streams(server_ch).accept(Dir::Uni),
+        Some(stream1)
+    );
+    assert_eq!(pair.server_streams(server_ch).accept(Dir::Uni), None);
+
+    for stream in [stream0, stream1] {
+        let mut recv = pair.server_recv(server_ch, stream);
+        let mut chunks = recv.read(false).unwrap();
+        assert_matches!(
+            chunks.next(usize::MAX),
+            Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
+        );
+        let _ = chunks.finalize();
+    }
+
+    let client_path_rx_before = pair
+        .client_conn_mut(client_ch)
+        .path_rx_packet(path_id)
+        .unwrap();
+    pair.drive_server();
+    pair.drive_client();
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .path_rx_packet(path_id)
+            .unwrap()
+            > client_path_rx_before
+    );
+
+    pair.time += Duration::from_millis(333);
+    let primary_turn_stream = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, primary_turn_stream)
+        .write(MSG)
+        .unwrap();
+    pair.drive_client();
+    pair.server.drive(pair.time, pair.client.addr);
+    let mut recv = pair.server_recv(server_ch, primary_turn_stream);
+    let mut chunks = recv.read(false).unwrap();
+    assert_matches!(
+        chunks.next(usize::MAX),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
+    );
+    let _ = chunks.finalize();
+
+    let alternate_client_addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 55555);
+    pair.time += Duration::from_millis(333);
+    pair.client_conn_mut(client_ch)
+        .set_multipath_scheduler_next_path_id_for_test(path_id);
+    let alt_stream = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, alt_stream).write(MSG).unwrap();
+    pair.time += Duration::from_millis(10);
+    pair.drive_client_from(alternate_client_addr);
+    pair.server.drive(pair.time, pair.client.addr);
+    assert_eq!(
+        pair.server_conn_mut(server_ch).path_remote(path_id),
+        Some(alternate_client_addr)
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch).path_local_ip(path_id),
+        Some(pair.server.addr.ip())
+    );
+    assert!(
+        pair.server
+            .outbound
+            .iter()
+            .any(|(packet, _)| packet.destination == alternate_client_addr)
+    );
+    pair.server.outbound.clear();
+
+    let now = pair.time;
+    pair.server_conn_mut(server_ch)
+        .rotate_path_local_cid_for_test(path_id, 1, now);
+    pair.drive_server();
+    pair.drive_client();
+    pair.drive_server();
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .path_active_local_cid_seq(path_id)
+            .unwrap()
+            .0
+            >= 1
+    );
+
+    let now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .abandon_path_for_test(now, path_id);
+    pair.time += Duration::from_millis(333);
+    pair.drive_client();
+    pair.drive_server();
+    pair.drive_client();
+    assert!(!pair.client_conn_mut(client_ch).path_exists(path_id));
+    assert!(!pair.server_conn_mut(server_ch).path_exists(path_id));
+}
+
+#[test]
+fn multipath_scheduler_skips_congestion_blocked_path() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    pair.client_conn_mut(client_ch)
+        .set_multipath_scheduler_next_path_id_for_test(path_id);
+
+    pair.client_conn_mut(client_ch)
+        .fill_path_congestion_window_for_test(path_id);
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .path_application_data_scheduler_score(path_id)
+            .is_none()
+    );
+
+    let server_path0_rx_before = pair
+        .server_conn_mut(server_ch)
+        .path_rx_packet(PathId::ZERO)
+        .unwrap();
+    let server_path1_rx_before = pair
+        .server_conn_mut(server_ch)
+        .path_rx_packet(path_id)
+        .unwrap();
+
+    let second = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, second)
+        .write(b"second")
+        .unwrap();
+    pair.drive_client();
+    pair.server.drive(pair.time, pair.client.addr);
+
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .path_rx_packet(PathId::ZERO)
+            .unwrap()
+            > server_path0_rx_before
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .path_rx_packet(path_id)
+            .unwrap(),
+        server_path1_rx_before
+    );
+}
+
+#[test]
+fn multipath_scheduler_skips_pacing_blocked_path() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    pair.client_conn_mut(client_ch)
+        .set_multipath_scheduler_next_path_id_for_test(path_id);
+
+    let now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .block_path_pacing_for_test(path_id, now);
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .path_application_data_transmit_score_for_test(path_id, now)
+            .is_none()
+    );
+
+    let server_path0_rx_before = pair
+        .server_conn_mut(server_ch)
+        .path_rx_packet(PathId::ZERO)
+        .unwrap();
+    let server_path1_rx_before = pair
+        .server_conn_mut(server_ch)
+        .path_rx_packet(path_id)
+        .unwrap();
+
+    let second = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, second)
+        .write(b"second")
+        .unwrap();
+    pair.drive_client();
+    pair.server.drive(pair.time, pair.client.addr);
+
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .path_rx_packet(PathId::ZERO)
+            .unwrap()
+            > server_path0_rx_before
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .path_rx_packet(path_id)
+            .unwrap(),
+        server_path1_rx_before
+    );
+}
+
+#[test]
+fn multipath_stream_scheduler_avoids_high_rtt_path() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    let client = pair.client_conn_mut(client_ch);
+    client.set_multipath_scheduler_next_path_id_for_test(path_id);
+    client.set_path_rtt_for_test(path_id, Duration::from_secs(5));
+
+    let server_path0_rx_before = pair
+        .server_conn_mut(server_ch)
+        .path_rx_packet(PathId::ZERO)
+        .unwrap();
+    let server_path1_rx_before = pair
+        .server_conn_mut(server_ch)
+        .path_rx_packet(path_id)
+        .unwrap();
+
+    let second = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, second)
+        .write(b"second")
+        .unwrap();
+    pair.drive_client();
+    pair.server.drive(pair.time, pair.client.addr);
+
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .path_rx_packet(PathId::ZERO)
+            .unwrap()
+            > server_path0_rx_before
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .path_rx_packet(path_id)
+            .unwrap(),
+        server_path1_rx_before
+    );
+}
+
+#[test]
+fn multipath_same_four_tuple_can_host_multiple_path_ids() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    assert!(pair.client_conn_mut(client_ch).path_exists(PathId::ZERO));
+    assert!(pair.client_conn_mut(client_ch).path_exists(path_id));
+    assert_eq!(
+        pair.client_conn_mut(client_ch).path_remote(PathId::ZERO),
+        pair.client_conn_mut(client_ch).path_remote(path_id)
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch).path_remote(PathId::ZERO),
+        pair.server_conn_mut(server_ch).path_remote(path_id)
+    );
+}
+
+#[test]
+#[ignore = "requires QUINN_MPQUIC_DRAFT21_INTEROP_COMMAND with an external draft-21 peer"]
+fn multipath_draft21_external_interop() {
+    let command = env::var_os("QUINN_MPQUIC_DRAFT21_INTEROP_COMMAND").expect(
+        "set QUINN_MPQUIC_DRAFT21_INTEROP_COMMAND to an external draft-21 MPQUIC interop harness",
+    );
+    let args = env::var("QUINN_MPQUIC_DRAFT21_INTEROP_ARGS").unwrap_or_default();
+    let status = Command::new(command)
+        .args(args.split_whitespace())
+        .env("QUINN_MPQUIC_DRAFT", "draft-ietf-quic-multipath-21")
+        .status()
+        .expect("failed to run external draft-21 MPQUIC interop harness");
+
+    assert!(
+        status.success(),
+        "external draft-21 MPQUIC interop harness exited with {status}"
+    );
+}
+
+#[test]
+fn multipath_validation_failure_abandons_only_failed_path() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, _) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    let now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .expire_path_validation_for_test(now, path_id);
+    pair.client_conn_mut(client_ch).handle_timeout(now);
+
+    assert!(pair.client_conn_mut(client_ch).path_exists(PathId::ZERO));
+    assert!(!pair.client_conn_mut(client_ch).path_exists(path_id));
+}
+
+#[test]
+fn multipath_path_cids_blocked_respects_next_sequence() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, _) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    while pair
+        .client_conn_mut(client_ch)
+        .poll_endpoint_events()
+        .is_some()
+    {}
+    let issued = pair
+        .client_conn_mut(client_ch)
+        .path_local_cids_issued_for_test(path_id)
+        .unwrap();
+    assert!(issued > 0);
+
+    let now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .handle_path_cids_blocked_for_test(now, path_id, 0)
+        .unwrap();
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .poll_endpoint_events()
+            .is_none()
+    );
+
+    pair.client_conn_mut(client_ch)
+        .handle_path_retire_connection_id_for_test(now, path_id, 0)
+        .unwrap();
+    while pair
+        .client_conn_mut(client_ch)
+        .poll_endpoint_events()
+        .is_some()
+    {}
+    pair.client_conn_mut(client_ch)
+        .handle_path_cids_blocked_for_test(now, path_id, issued)
+        .unwrap();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll_endpoint_events(),
+        Some(EndpointEvent(EndpointEventInner::NeedIdentifiers(_, id, 1))) if id == path_id
+    );
+}
+
+#[test]
+fn multipath_path_ack_can_ack_non_receive_path() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, _) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    {
+        let conn = pair.client_conn_mut(client_ch);
+        conn.set_path_rtt_for_test(PathId::ZERO, Duration::from_millis(333));
+        conn.set_path_rtt_for_test(path_id, Duration::from_millis(333));
+        conn.set_multipath_scheduler_next_path_id_for_test(PathId::ZERO);
+    }
+    pair.time += Duration::from_millis(333);
+    let first = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, first).write(b"first").unwrap();
+    pair.drive_client();
+
+    let before = pair
+        .client_conn_mut(client_ch)
+        .path_sent_packet_numbers_for_test(path_id);
+    let second = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, second)
+        .write(b"second")
+        .unwrap();
+    pair.drive_client();
+    let after = pair
+        .client_conn_mut(client_ch)
+        .path_sent_packet_numbers_for_test(path_id);
+    let acked = after
+        .iter()
+        .copied()
+        .find(|packet| !before.contains(packet))
+        .expect("second send should use path 1");
+
+    let mut ranges = ArrayRangeSet::new();
+    ranges.insert_one(acked);
+    let mut buf = Vec::new();
+    frame::Ack::encode_path(path_id, 0, &ranges, None, &mut buf);
+    let frames = frame::Iter::new(buf.into())
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let [Frame::PathAck { ack, .. }] = frames.as_slice() else {
+        panic!("expected one PATH_ACK frame");
+    };
+
+    let now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .handle_path_ack_for_test(now, path_id, ack.clone())
+        .unwrap();
+    let remaining = pair
+        .client_conn_mut(client_ch)
+        .path_sent_packet_numbers_for_test(path_id);
+    assert!(!remaining.contains(&acked));
+}
+
+#[test]
+fn multipath_path_abandon_zero_closes_connection() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, _) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let error_code = VarInt::from_u32(42);
+    let now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .handle_path_abandon_for_test(now, PathId::ZERO, error_code)
+        .unwrap();
+
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::ApplicationClosed(ApplicationClose {
+                error_code: actual,
+                ref reason,
+            })
+        }) if actual == error_code && reason.is_empty()
+    );
+}
+
+#[test]
+fn multipath_late_packet_on_abandoned_path_is_ack_tracked_only() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config_with_multipath());
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_multipath());
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    {
+        let conn = pair.client_conn_mut(client_ch);
+        conn.set_path_rtt_for_test(PathId::ZERO, Duration::from_millis(333));
+        conn.set_path_rtt_for_test(path_id, Duration::from_millis(333));
+        conn.set_multipath_scheduler_next_path_id_for_test(path_id);
+    }
+    pair.time += Duration::from_millis(333);
+
+    let stream = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, stream)
+        .write(b"late path data")
+        .unwrap();
+    pair.drive_client();
+    assert!(!pair.server.inbound.is_empty());
+
+    let now = pair.time;
+    pair.server_conn_mut(server_ch)
+        .handle_path_abandon_for_test(now, path_id, VarInt::from_u32(42))
+        .unwrap();
+    assert!(!pair.server_conn_mut(server_ch).path_exists(path_id));
+
+    pair.drive_server();
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), None);
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+}
+
+#[test]
+fn mixed_version_connections_do_not_open_multipath_path() {
+    assert_mixed_version_connection_does_not_open_multipath_path(
+        client_config(),
+        server_config_without_multipath(),
+    );
+    assert_mixed_version_connection_does_not_open_multipath_path(
+        client_config_without_multipath(),
+        server_config(),
+    );
+}
+
+fn assert_mixed_version_connection_does_not_open_multipath_path(
+    client_config: ClientConfig,
+    server_config: ServerConfig,
+) {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Default::default(), server_config);
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+    pair.drive();
+
+    pair.client.capture_inbound_packets = true;
+    pair.server.capture_inbound_packets = true;
+    pair.client_conn_mut(client_ch).ping();
+    pair.server_conn_mut(server_ch).ping();
+    pair.drive();
+
+    let path_id = PathId::from_u32(1);
+    assert!(!pair.client_conn_mut(client_ch).path_exists(path_id));
+    assert!(!pair.server_conn_mut(server_ch).path_exists(path_id));
+    assert_no_multipath_frames(&pair.client.captured_packets);
+    assert_no_multipath_frames(&pair.server.captured_packets);
+}
+
+fn assert_no_multipath_frames(packets: &[Vec<u8>]) {
+    assert!(!packets.is_empty());
+    for packet in packets {
+        let frames = frame::Iter::new(packet.clone().into())
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for frame in frames {
+            assert!(
+                !matches!(
+                    frame,
+                    Frame::PathAck { .. }
+                        | Frame::PathAbandon { .. }
+                        | Frame::PathStatusAvailable { .. }
+                        | Frame::PathStatusBackup { .. }
+                        | Frame::PathNewConnectionId { .. }
+                        | Frame::PathRetireConnectionId { .. }
+                        | Frame::MaxPathId { .. }
+                        | Frame::PathsBlocked { .. }
+                        | Frame::PathCidsBlocked { .. }
+                ),
+                "default connection emitted multipath frame: {frame:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -2595,8 +3175,8 @@ fn blackhole_after_mtu_change_repairs_itself() {
 #[test]
 fn mtud_probes_include_immediate_ack() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, _) = pair.connect();
+    let mut pair = Pair::new(Default::default(), server_config_without_multipath());
+    let (client_ch, _) = pair.connect_with(client_config_without_multipath());
     pair.drive();
 
     let stats = pair.client_conn_mut(client_ch).stats();
@@ -2653,8 +3233,8 @@ fn packet_splitting_not_necessary_after_higher_mtu_discovered() {
 #[test]
 fn single_ack_eliciting_packet_triggers_ack_after_delay() {
     let _guard = subscribe();
-    let mut pair = Pair::default_with_deterministic_pns();
-    let (client_ch, _) = pair.connect_with(client_config_with_deterministic_pns());
+    let mut pair = Pair::new(Default::default(), server_config_without_multipath());
+    let (client_ch, _) = pair.connect_with(client_config_without_multipath());
     pair.drive();
 
     let stats_after_connect = pair.client_conn_mut(client_ch).stats();
@@ -3284,8 +3864,8 @@ fn endpoint_and_connection_impl_send_sync() {
 #[test]
 fn stream_gso() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, _) = pair.connect();
+    let mut pair = Pair::new(Default::default(), server_config_without_multipath());
+    let (client_ch, _) = pair.connect_with(client_config_without_multipath());
 
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
 
@@ -3407,8 +3987,8 @@ fn pad_to_mtu() {
     assert_eq!(pair.client.outbound[1].1.len(), usize::from(MTU));
     pair.drive_client();
     assert_eq!(pair.server.inbound.len(), 2);
-    assert_eq!(pair.server.inbound[0].2.len(), usize::from(MTU));
-    assert_eq!(pair.server.inbound[1].2.len(), usize::from(MTU));
+    assert_eq!(pair.server.inbound[0].4.len(), usize::from(MTU));
+    assert_eq!(pair.server.inbound[1].4.len(), usize::from(MTU));
     pair.drive();
 
     // Check that both datagrams ended up in the same GSO batch
@@ -3436,8 +4016,8 @@ fn pad_to_mtu() {
 #[test]
 fn large_datagram_with_acks() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, server_ch) = pair.connect();
+    let mut pair = Pair::new(Default::default(), server_config_without_multipath());
+    let (client_ch, server_ch) = pair.connect_with(client_config_without_multipath());
 
     // Force the client to generate a large ACK frame by dropping several packets
     for _ in 0..10 {

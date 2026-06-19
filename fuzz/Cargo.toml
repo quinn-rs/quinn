@@ -40,3 +40,9 @@ name = "params"
 path = "fuzz_targets/params.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "mp_frames"
+path = "fuzz_targets/mp_frames.rs"
+test = false
+doc = false

@@ -41,6 +41,7 @@ pub struct TransportConfig {
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) pad_to_mtu: bool,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
+    pub(crate) initial_max_path_id: Option<VarInt>,
     pub(crate) max_outgoing_bytes_per_second: Option<u64>,
 
     pub(crate) persistent_congestion_threshold: u32,
@@ -385,6 +386,7 @@ impl Default for TransportConfig {
             mtu_discovery_config: Some(MtuDiscoveryConfig::default()),
             pad_to_mtu: false,
             ack_frequency_config: None,
+            initial_max_path_id: Some(VarInt::from_u32(1)),
             max_outgoing_bytes_per_second: None,
 
             persistent_congestion_threshold: 3,
@@ -423,6 +425,7 @@ impl fmt::Debug for TransportConfig {
             mtu_discovery_config,
             pad_to_mtu,
             ack_frequency_config,
+            initial_max_path_id,
             max_outgoing_bytes_per_second,
             persistent_congestion_threshold,
             keep_alive_interval,
@@ -453,6 +456,7 @@ impl fmt::Debug for TransportConfig {
             .field("mtu_discovery_config", mtu_discovery_config)
             .field("pad_to_mtu", pad_to_mtu)
             .field("ack_frequency_config", ack_frequency_config)
+            .field("initial_max_path_id", initial_max_path_id)
             .field(
                 "max_outgoing_bytes_per_second",
                 max_outgoing_bytes_per_second,
