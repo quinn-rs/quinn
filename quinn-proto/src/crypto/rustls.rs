@@ -20,7 +20,8 @@ use rustls_platform_verifier::BuilderVerifierExt;
 use crate::{
     ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
     crypto::{
-        self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys, UnsupportedVersion,
+        self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys, PacketNonce,
+        UnsupportedVersion,
     },
     transport_parameters::TransportParameters,
 };
@@ -633,6 +634,26 @@ impl crypto::PacketKey for Box<dyn PacketKey> {
         tag_storage.copy_from_slice(tag.as_ref());
     }
 
+    fn encrypt_with_nonce(
+        &self,
+        nonce: PacketNonce,
+        buf: &mut [u8],
+        header_len: usize,
+    ) -> Result<(), CryptoError> {
+        let (header, payload_tag) = buf.split_at_mut(header_len);
+        let (payload, tag_storage) = payload_tag.split_at_mut(payload_tag.len() - self.tag_len());
+        let packet_number = nonce.packet_number_value();
+        let tag = match nonce.path_id() {
+            None => self.encrypt_in_place(packet_number, &*header, payload),
+            Some(path_id) => {
+                self.encrypt_in_place_for_path(path_id, packet_number, &*header, payload)
+            }
+        }
+        .map_err(|_| CryptoError)?;
+        tag_storage.copy_from_slice(tag.as_ref());
+        Ok(())
+    }
+
     fn decrypt(
         &self,
         packet: u64,
@@ -647,8 +668,31 @@ impl crypto::PacketKey for Box<dyn PacketKey> {
         Ok(())
     }
 
+    fn decrypt_with_nonce(
+        &self,
+        nonce: PacketNonce,
+        header: &[u8],
+        payload: &mut BytesMut,
+    ) -> Result<(), CryptoError> {
+        let packet_number = nonce.packet_number_value();
+        let plain = match nonce.path_id() {
+            None => self.decrypt_in_place(packet_number, header, payload.as_mut()),
+            Some(path_id) => {
+                self.decrypt_in_place_for_path(path_id, packet_number, header, payload.as_mut())
+            }
+        }
+        .map_err(|_| CryptoError)?;
+        let plain_len = plain.len();
+        payload.truncate(plain_len);
+        Ok(())
+    }
+
     fn tag_len(&self) -> usize {
         (**self).tag_len()
+    }
+
+    fn supports_multipath_nonce(&self) -> bool {
+        true
     }
 
     fn confidentiality_limit(&self) -> u64 {
@@ -665,5 +709,58 @@ fn interpret_version(version: u32) -> Result<Version, UnsupportedVersion> {
         0xff00_001d..=0xff00_0020 => Ok(Version::V1Draft),
         0x0000_0001 | 0xff00_0021..=0xff00_0022 => Ok(Version::V1),
         _ => Err(UnsupportedVersion),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::BytesMut;
+
+    use super::{Version, configured_provider, initial_keys, initial_suite_from_provider};
+    use crate::{ConnectionId, Side, crypto::PacketNonce};
+
+    #[test]
+    fn path_nonce_round_trips_and_separates_paths() {
+        let provider = configured_provider();
+        let suite = initial_suite_from_provider(&provider).unwrap();
+        let cid = ConnectionId::new(&[1; 8]);
+        let client = initial_keys(Version::V1, cid, Side::Client, &suite);
+        let server = initial_keys(Version::V1, cid, Side::Server, &suite);
+        let header = b"header";
+        let plaintext = b"payload";
+        let header_len = header.len();
+        let mut packet = Vec::new();
+        packet.extend_from_slice(header);
+        packet.extend_from_slice(plaintext);
+        packet.resize(packet.len() + client.packet.local.tag_len(), 0);
+
+        client
+            .packet
+            .local
+            .encrypt_with_nonce(PacketNonce::path(1, 7).unwrap(), &mut packet, header_len)
+            .unwrap();
+
+        let mut wrong_path_payload = BytesMut::from(&packet[header_len..]);
+        server
+            .packet
+            .remote
+            .decrypt_with_nonce(
+                PacketNonce::path(2, 7).unwrap(),
+                &packet[..header_len],
+                &mut wrong_path_payload,
+            )
+            .unwrap_err();
+
+        let mut payload = BytesMut::from(&packet[header_len..]);
+        server
+            .packet
+            .remote
+            .decrypt_with_nonce(
+                PacketNonce::path(1, 7).unwrap(),
+                &packet[..header_len],
+                &mut payload,
+            )
+            .unwrap();
+        assert_eq!(&payload[..], plaintext);
     }
 }

@@ -13,9 +13,65 @@ use std::{any::Any, str, sync::Arc};
 use bytes::BytesMut;
 
 use crate::{
-    ConnectError, Side, TransportError, shared::ConnectionId,
+    ConnectError, Side, TransportError, VarInt, shared::ConnectionId,
     transport_parameters::TransportParameters,
 };
+
+/// Packet protection nonce input.
+///
+/// This is an implementation detail of Quinn's crypto abstraction, exposed only so custom
+/// [`PacketKey`] implementations can support internally-negotiated multipath packet protection.
+/// Existing providers that only implement [`PacketKey::encrypt`] and [`PacketKey::decrypt`] remain
+/// source-compatible: the default nonce-aware methods handle ordinary packet-number nonces and
+/// reject nonzero multipath path IDs with [`CryptoError`].
+#[doc(hidden)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct PacketNonce(PacketNonceInner);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum PacketNonceInner {
+    PacketNumber(u64),
+    PathAndPacketNumber { path_id: u32, packet_number: u64 },
+}
+
+impl PacketNonce {
+    /// Construct a standard packet-number nonce input.
+    pub fn packet_number(packet_number: u64) -> Self {
+        Self(PacketNonceInner::PacketNumber(packet_number))
+    }
+
+    /// Construct a multipath path-and-packet-number nonce input.
+    pub fn path(path_id: u32, packet_number: u64) -> Result<Self, PacketNonceError> {
+        if packet_number > VarInt::MAX.into_inner() {
+            return Err(PacketNonceError);
+        }
+        Ok(Self(PacketNonceInner::PathAndPacketNumber {
+            path_id,
+            packet_number,
+        }))
+    }
+
+    /// Return the packet number encoded by this nonce input.
+    pub fn packet_number_value(self) -> u64 {
+        match self.0 {
+            PacketNonceInner::PacketNumber(packet_number)
+            | PacketNonceInner::PathAndPacketNumber { packet_number, .. } => packet_number,
+        }
+    }
+
+    /// Return the path ID encoded by this nonce input, if any.
+    pub fn path_id(self) -> Option<u32> {
+        match self.0 {
+            PacketNonceInner::PacketNumber(_) => None,
+            PacketNonceInner::PathAndPacketNumber { path_id, .. } => Some(path_id),
+        }
+    }
+}
+
+/// Error returned when a multipath packet number cannot be encoded into a nonce input.
+#[doc(hidden)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct PacketNonceError;
 
 /// Cryptography interface based on *ring*
 #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
@@ -142,9 +198,29 @@ pub trait ServerConfig: Send + Sync {
 }
 
 /// Keys used to protect packet payloads
+///
+/// Quinn's internal multipath support uses [`PacketNonce`] for nonzero paths. Packet key
+/// implementations that do not override the nonce-aware methods remain compatible with standard
+/// QUIC and report [`CryptoError`] for nonzero path IDs.
 pub trait PacketKey: Send + Sync {
     /// Encrypt the packet payload with the given packet number
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
+    /// Encrypt the packet payload with the given packet protection nonce input
+    #[doc(hidden)]
+    fn encrypt_with_nonce(
+        &self,
+        nonce: PacketNonce,
+        buf: &mut [u8],
+        header_len: usize,
+    ) -> Result<(), CryptoError> {
+        match nonce.path_id() {
+            None | Some(0) => {
+                self.encrypt(nonce.packet_number_value(), buf, header_len);
+                Ok(())
+            }
+            Some(_) => Err(CryptoError),
+        }
+    }
     /// Decrypt the packet payload with the given packet number
     fn decrypt(
         &self,
@@ -152,6 +228,29 @@ pub trait PacketKey: Send + Sync {
         header: &[u8],
         payload: &mut BytesMut,
     ) -> Result<(), CryptoError>;
+    /// Decrypt the packet payload with the given packet protection nonce input
+    #[doc(hidden)]
+    fn decrypt_with_nonce(
+        &self,
+        nonce: PacketNonce,
+        header: &[u8],
+        payload: &mut BytesMut,
+    ) -> Result<(), CryptoError> {
+        match nonce.path_id() {
+            None | Some(0) => self.decrypt(nonce.packet_number_value(), header, payload),
+            Some(_) => Err(CryptoError),
+        }
+    }
+    /// Whether this key implementation can safely use draft-21 96-bit path-and-packet-number
+    /// nonces.
+    ///
+    /// Implementations must leave this as `false` unless their AEAD nonce construction supports at
+    /// least 12-byte nonce inputs and their nonce-aware encrypt/decrypt methods enforce the
+    /// path-and-packet-number layout used by multipath QUIC.
+    #[doc(hidden)]
+    fn supports_multipath_nonce(&self) -> bool {
+        false
+    }
     /// The length of the AEAD tag appended to packets on encryption
     fn tag_len(&self) -> usize;
     /// Maximum number of packets that may be sent using a single key
@@ -208,6 +307,139 @@ pub trait AeadKey {
 /// Generic crypto errors
 #[derive(Debug)]
 pub struct CryptoError;
+
+#[cfg(test)]
+mod tests {
+    use super::{CryptoError, PacketKey, PacketNonce, PacketNonceError};
+    use crate::VarInt;
+    use bytes::BytesMut;
+
+    struct LegacyPacketKey;
+
+    impl PacketKey for LegacyPacketKey {
+        fn encrypt(&self, _packet: u64, _buf: &mut [u8], _header_len: usize) {}
+
+        fn decrypt(
+            &self,
+            _packet: u64,
+            _header: &[u8],
+            _payload: &mut BytesMut,
+        ) -> Result<(), CryptoError> {
+            Ok(())
+        }
+
+        fn tag_len(&self) -> usize {
+            0
+        }
+
+        fn confidentiality_limit(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn integrity_limit(&self) -> u64 {
+            u64::MAX
+        }
+    }
+
+    struct MultipathPacketKey;
+
+    impl PacketKey for MultipathPacketKey {
+        fn encrypt(&self, _packet: u64, _buf: &mut [u8], _header_len: usize) {}
+
+        fn encrypt_with_nonce(
+            &self,
+            nonce: PacketNonce,
+            _buf: &mut [u8],
+            _header_len: usize,
+        ) -> Result<(), CryptoError> {
+            if nonce.path_id() == Some(1) {
+                Ok(())
+            } else {
+                Err(CryptoError)
+            }
+        }
+
+        fn decrypt(
+            &self,
+            _packet: u64,
+            _header: &[u8],
+            _payload: &mut BytesMut,
+        ) -> Result<(), CryptoError> {
+            Ok(())
+        }
+
+        fn tag_len(&self) -> usize {
+            0
+        }
+
+        fn supports_multipath_nonce(&self) -> bool {
+            true
+        }
+
+        fn confidentiality_limit(&self) -> u64 {
+            u64::MAX
+        }
+
+        fn integrity_limit(&self) -> u64 {
+            u64::MAX
+        }
+    }
+
+    #[test]
+    fn packet_nonce_accepts_multipath_boundaries() {
+        let path_zero = PacketNonce::path(0, 0).unwrap();
+        assert_eq!(path_zero.path_id(), Some(0));
+        assert_eq!(path_zero.packet_number_value(), 0);
+
+        let path_one = PacketNonce::path(1, 0).unwrap();
+        assert_eq!(path_one.path_id(), Some(1));
+        assert_eq!(path_one.packet_number_value(), 0);
+
+        let max_path = PacketNonce::path(u32::MAX, VarInt::MAX.into_inner()).unwrap();
+        assert_eq!(max_path.path_id(), Some(u32::MAX));
+        assert_eq!(max_path.packet_number_value(), VarInt::MAX.into_inner());
+    }
+
+    #[test]
+    fn packet_nonce_rejects_invalid_packet_number() {
+        assert_eq!(
+            PacketNonce::path(0, VarInt::MAX.into_inner() + 1),
+            Err(PacketNonceError)
+        );
+    }
+
+    #[test]
+    fn default_packet_key_rejects_nonzero_path_nonce() {
+        let key = LegacyPacketKey;
+        let mut packet = [];
+
+        assert!(
+            key.encrypt_with_nonce(PacketNonce::path(0, 7).unwrap(), &mut packet, 0)
+                .is_ok()
+        );
+        assert!(
+            key.encrypt_with_nonce(PacketNonce::path(1, 7).unwrap(), &mut packet, 0)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn packet_key_multipath_nonce_support_is_explicit() {
+        assert!(!LegacyPacketKey.supports_multipath_nonce());
+        assert!(MultipathPacketKey.supports_multipath_nonce());
+    }
+
+    #[test]
+    fn custom_packet_key_can_accept_nonzero_path_nonce() {
+        let key = MultipathPacketKey;
+        let mut packet = [];
+
+        assert!(
+            key.encrypt_with_nonce(PacketNonce::path(1, 7).unwrap(), &mut packet, 0)
+                .is_ok()
+        );
+    }
+}
 
 /// Error indicating that the specified QUIC version is not supported
 #[derive(Debug)]

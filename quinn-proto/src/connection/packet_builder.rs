@@ -5,7 +5,8 @@ use tracing::{debug, trace, trace_span};
 use super::{Connection, SentFrames, spaces::SentPacket};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
-    connection::ConnectionSide,
+    connection::{ConnectionSide, PathId},
+    crypto::PacketNonce,
     frame::{self, Close},
     packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
 };
@@ -13,6 +14,7 @@ use crate::{
 pub(super) struct PacketBuilder {
     pub(super) datagram_start: usize,
     pub(super) space: SpaceId,
+    pub(super) path_id: PathId,
     pub(super) partial_encode: PartialEncode,
     pub(super) ack_eliciting: bool,
     pub(super) exact_number: u64,
@@ -35,6 +37,7 @@ impl PacketBuilder {
     pub(super) fn new(
         now: Instant,
         space_id: SpaceId,
+        path_id: PathId,
         dst_cid: ConnectionId,
         buffer: &mut Vec<u8>,
         buffer_capacity: usize,
@@ -43,15 +46,25 @@ impl PacketBuilder {
         conn: &mut Connection,
     ) -> Option<Self> {
         let version = conn.version;
+        let sent_with_keys = match space_id {
+            SpaceId::Data => {
+                conn.path
+                    .get(path_id)
+                    .expect("selected packet path should exist")
+                    .data_space()
+                    .sent_with_keys
+            }
+            SpaceId::Initial | SpaceId::Handshake => conn.space_by_id(space_id).sent_with_keys,
+        };
         // Initiate key update if we're approaching the confidentiality limit
-        let sent_with_keys = conn.spaces[space_id].sent_with_keys;
         if space_id == SpaceId::Data {
             if sent_with_keys >= conn.key_phase_size {
                 debug!("routine key update due to phase exhaustion");
                 conn.force_key_update();
             }
         } else {
-            let confidentiality_limit = conn.spaces[space_id]
+            let confidentiality_limit = conn
+                .space_by_id(space_id)
                 .crypto
                 .as_ref()
                 .map_or_else(
@@ -78,17 +91,36 @@ impl PacketBuilder {
             }
         }
 
-        let space = &mut conn.spaces[space_id];
         let exact_number = match space_id {
-            SpaceId::Data => conn.packet_number_filter.allocate(&mut conn.rng, space),
-            _ => space.get_tx_number(),
+            SpaceId::Data => conn
+                .path
+                .get_mut(path_id)
+                .expect("selected packet path should exist")
+                .allocate_packet_number(&mut conn.rng),
+            _ => conn.space_by_id_mut(space_id).get_tx_number(),
         };
 
-        let span = trace_span!("send", space = ?space_id, pn = exact_number).entered();
+        let span = trace_span!(
+            "send",
+            space = ?space_id,
+            path = path_id.into_inner(),
+            pn = exact_number,
+        )
+        .entered();
 
-        let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
+        let packet_space = match space_id {
+            SpaceId::Data => conn
+                .path
+                .get(path_id)
+                .expect("selected packet path should exist")
+                .data_space(),
+            SpaceId::Initial | SpaceId::Handshake => conn.space_by_id(space_id),
+        };
+        let largest_acked_packet = packet_space.largest_acked_packet.unwrap_or(0);
+        let number = PacketNumber::new(exact_number, largest_acked_packet);
+        let has_crypto = conn.space_by_id(space_id).crypto.is_some();
         let header = match space_id {
-            SpaceId::Data if space.crypto.is_some() => Header::Short {
+            SpaceId::Data if has_crypto => Header::Short {
                 dst_cid,
                 number,
                 spin: if conn.spin_enabled {
@@ -128,7 +160,7 @@ impl PacketBuilder {
             buffer[partial_encode.start] ^= FIXED_BIT;
         }
 
-        let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
+        let (sample_size, tag_len) = if let Some(ref crypto) = conn.space_by_id(space_id).crypto {
             (
                 crypto.header.local.sample_size(),
                 crypto.packet.local.tag_len(),
@@ -158,6 +190,7 @@ impl PacketBuilder {
         Some(Self {
             datagram_start,
             space: space_id,
+            path_id,
             partial_encode,
             exact_number,
             short_header: header.is_short(),
@@ -187,13 +220,18 @@ impl PacketBuilder {
         conn: &mut Connection,
         sent: Option<SentFrames>,
         buffer: &mut Vec<u8>,
-    ) {
+    ) -> bool {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
-        let (size, padded) = self.finish(conn, now, buffer);
+        let path_id = self.path_id;
+        let Ok((size, padded)) = self.finish(conn, now, buffer) else {
+            buffer.clear();
+            conn.kill(TransportError::INTERNAL_ERROR("packet encryption failed").into());
+            return false;
+        };
         let Some(sent) = sent else {
-            return;
+            return true;
         };
 
         let size = match padded || ack_eliciting {
@@ -202,7 +240,12 @@ impl PacketBuilder {
         };
 
         let packet = SentPacket {
-            path_generation: conn.path.generation(),
+            path_id,
+            path_generation: conn
+                .path
+                .get(path_id)
+                .expect("selected packet path should exist")
+                .generation(),
             largest_acked: sent.largest_acked,
             time_sent: now,
             size,
@@ -211,21 +254,48 @@ impl PacketBuilder {
             stream_frames: sent.stream_frames,
         };
 
-        conn.path
-            .sent(exact_number, packet, &mut conn.spaces[space_id]);
+        match space_id {
+            SpaceId::Data => conn
+                .path
+                .get_mut(path_id)
+                .expect("selected packet path should exist")
+                .sent_data(exact_number, packet),
+            SpaceId::Initial | SpaceId::Handshake => {
+                let path = &mut conn.path;
+                let space = &mut conn.spaces[space_id];
+                path.sent_on(exact_number, packet, space);
+            }
+        }
         conn.stats.path.sent_packets += 1;
         conn.reset_keep_alive(now);
         if size != 0 {
             if ack_eliciting {
-                conn.spaces[space_id].time_of_last_ack_eliciting_packet = Some(now);
+                match space_id {
+                    SpaceId::Data => {
+                        conn.path
+                            .get_mut(path_id)
+                            .expect("selected packet path should exist")
+                            .data_space_mut()
+                            .time_of_last_ack_eliciting_packet = Some(now);
+                    }
+                    SpaceId::Initial | SpaceId::Handshake => {
+                        conn.space_by_id_mut(space_id)
+                            .time_of_last_ack_eliciting_packet = Some(now);
+                    }
+                }
                 if conn.permit_idle_reset {
                     conn.reset_idle_timeout(now, space_id);
                 }
                 conn.permit_idle_reset = false;
             }
             conn.set_loss_detection_timer(now);
-            conn.path.pacing.on_transmit(size);
+            conn.path
+                .get_mut(path_id)
+                .expect("selected packet path should exist")
+                .pacing
+                .on_transmit(size);
         }
+        true
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
@@ -234,15 +304,15 @@ impl PacketBuilder {
         conn: &mut Connection,
         now: Instant,
         buffer: &mut Vec<u8>,
-    ) -> (usize, bool) {
+    ) -> Result<(usize, bool), crate::crypto::CryptoError> {
         let pad = buffer.len() < self.min_size;
         if pad {
             trace!("PADDING * {}", self.min_size - buffer.len());
             buffer.resize(self.min_size, 0);
         }
 
-        let space = &conn.spaces[self.space];
-        let (header_crypto, packet_crypto) = if let Some(ref crypto) = space.crypto {
+        let crypto_space = conn.space_by_id(self.space);
+        let (header_crypto, packet_crypto) = if let Some(ref crypto) = crypto_space.crypto {
             (&*crypto.header.local, &*crypto.packet.local)
         } else if self.space == SpaceId::Data {
             let zero_rtt = conn.zero_rtt_crypto.as_ref().unwrap();
@@ -260,11 +330,17 @@ impl PacketBuilder {
         buffer.resize(buffer.len() + packet_crypto.tag_len(), 0);
         let encode_start = self.partial_encode.start;
         let packet_buf = &mut buffer[encode_start..];
-        self.partial_encode.finish(
-            packet_buf,
-            header_crypto,
-            Some((self.exact_number, packet_crypto)),
-        );
+        let nonce = if self.space == SpaceId::Data
+            && crypto_space.crypto.is_some()
+            && conn.multipath_enabled()
+        {
+            PacketNonce::path(self.path_id.into_inner(), self.exact_number)
+                .expect("packet number should fit in multipath nonce")
+        } else {
+            PacketNonce::packet_number(self.exact_number)
+        };
+        self.partial_encode
+            .finish(packet_buf, header_crypto, Some((nonce, packet_crypto)))?;
 
         let len = buffer.len() - encode_start;
         conn.config.qlog_sink.emit_packet_sent(
@@ -272,10 +348,11 @@ impl PacketBuilder {
             len,
             self.space,
             self.space == SpaceId::Data && conn.spaces[SpaceId::Data].crypto.is_none(),
+            self.path_id,
             now,
             conn.orig_rem_cid,
         );
 
-        (len, pad)
+        Ok((len, pad))
     }
 }

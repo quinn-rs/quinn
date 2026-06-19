@@ -8,7 +8,7 @@ use std::time::Duration;
 #[cfg(feature = "qlog")]
 use qlog::{
     events::{
-        Event, EventData,
+        Event, EventData, ExData,
         quic::{
             PacketHeader, PacketLost, PacketLostTrigger, PacketReceived, PacketSent, PacketType,
         },
@@ -20,9 +20,12 @@ use tracing::warn;
 
 use crate::{
     ConnectionId, Instant,
-    connection::{PathData, SentPacket},
+    connection::{PathData, PathId, SentPacket},
     packet::SpaceId,
 };
+
+#[cfg(feature = "qlog")]
+const PATH_ID_EX_DATA_KEY: &str = "path_id";
 
 /// Shareable handle to a single qlog output stream
 #[cfg(feature = "qlog")]
@@ -32,8 +35,18 @@ pub struct QlogStream(pub(crate) Arc<Mutex<QlogStreamer>>);
 #[cfg(feature = "qlog")]
 impl QlogStream {
     fn emit_event(&self, orig_rem_cid: ConnectionId, event: EventData, now: Instant) {
+        self.emit_event_ex(orig_rem_cid, event, ExData::default(), now);
+    }
+
+    fn emit_event_ex(
+        &self,
+        orig_rem_cid: ConnectionId,
+        event: EventData,
+        ex_data: ExData,
+        now: Instant,
+    ) {
         // Time will be overwritten by `add_event_with_instant`
-        let mut event = Event::with_time(0.0, event);
+        let mut event = Event::with_time_ex(0.0, event, ex_data);
         event.group_id = Some(Box::new(orig_rem_cid.to_string()));
 
         let mut qlog_streamer = self.0.lock().unwrap();
@@ -41,6 +54,21 @@ impl QlogStream {
             warn!("could not emit qlog event: {e}");
         }
     }
+}
+
+#[cfg(feature = "qlog")]
+fn insert_path_ex_data(ex_data: &mut ExData, path_id: PathId) {
+    ex_data.insert(
+        PATH_ID_EX_DATA_KEY.to_string(),
+        u64::from(path_id.into_inner()).into(),
+    );
+}
+
+#[cfg(feature = "qlog")]
+fn path_ex_data(path_id: PathId) -> ExData {
+    let mut ex_data = ExData::default();
+    insert_path_ex_data(&mut ex_data, path_id);
+    ex_data
 }
 
 /// A [`QlogStream`] that may be either dynamically disabled or compiled out entirely
@@ -65,6 +93,7 @@ impl QlogSink {
     pub(super) fn emit_recovery_metrics(
         &self,
         pto_count: u32,
+        path_id: PathId,
         path: &mut PathData,
         now: Instant,
         orig_rem_cid: ConnectionId,
@@ -75,9 +104,10 @@ impl QlogSink {
                 return;
             };
 
-            let Some(metrics) = path.qlog_recovery_metrics(pto_count) else {
+            let Some(mut metrics) = path.qlog_recovery_metrics(pto_count) else {
                 return;
             };
+            insert_path_ex_data(&mut metrics.ex_data, path_id);
 
             stream.emit_event(orig_rem_cid, EventData::QuicMetricsUpdated(metrics), now);
         }
@@ -89,6 +119,7 @@ impl QlogSink {
         info: &SentPacket,
         loss_delay: Duration,
         space: SpaceId,
+        path_id: PathId,
         now: Instant,
         orig_rem_cid: ConnectionId,
     ) {
@@ -115,7 +146,12 @@ impl QlogSink {
                 ),
             };
 
-            stream.emit_event(orig_rem_cid, EventData::QuicPacketLost(event), now);
+            stream.emit_event_ex(
+                orig_rem_cid,
+                EventData::QuicPacketLost(event),
+                path_ex_data(path_id),
+                now,
+            );
         }
     }
 
@@ -125,6 +161,7 @@ impl QlogSink {
         len: usize,
         space: SpaceId,
         is_0rtt: bool,
+        path_id: PathId,
         now: Instant,
         orig_rem_cid: ConnectionId,
     ) {
@@ -144,7 +181,12 @@ impl QlogSink {
                 ..Default::default()
             };
 
-            stream.emit_event(orig_rem_cid, EventData::QuicPacketSent(event), now);
+            stream.emit_event_ex(
+                orig_rem_cid,
+                EventData::QuicPacketSent(event),
+                path_ex_data(path_id),
+                now,
+            );
         }
     }
 
@@ -153,6 +195,7 @@ impl QlogSink {
         pn: u64,
         space: SpaceId,
         is_0rtt: bool,
+        path_id: PathId,
         now: Instant,
         orig_rem_cid: ConnectionId,
     ) {
@@ -171,7 +214,12 @@ impl QlogSink {
                 ..Default::default()
             };
 
-            stream.emit_event(orig_rem_cid, EventData::QuicPacketReceived(event), now);
+            stream.emit_event_ex(
+                orig_rem_cid,
+                EventData::QuicPacketReceived(event),
+                path_ex_data(path_id),
+                now,
+            );
         }
     }
 }

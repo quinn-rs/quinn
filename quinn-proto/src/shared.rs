@@ -1,8 +1,13 @@
-use std::{fmt, net::SocketAddr};
+use std::{
+    fmt,
+    net::{IpAddr, SocketAddr},
+};
 
 use bytes::{Buf, BufMut, BytesMut};
 
-use crate::{Instant, MAX_CID_SIZE, ResetToken, coding::BufExt, packet::PartialDecode};
+use crate::{
+    Instant, MAX_CID_SIZE, ResetToken, coding::BufExt, connection::PathId, packet::PartialDecode,
+};
 
 /// Events sent from an Endpoint to a Connection
 #[derive(Debug)]
@@ -13,7 +18,7 @@ pub(crate) enum ConnectionEventInner {
     /// A datagram has been received for the Connection
     Datagram(DatagramConnectionEvent),
     /// New connection identifiers have been issued for the Connection
-    NewIdentifiers(Vec<IssuedCid>, Instant),
+    NewIdentifiers(PathId, Vec<IssuedCid>, Instant),
 }
 
 /// Variant of [`ConnectionEventInner`].
@@ -21,6 +26,8 @@ pub(crate) enum ConnectionEventInner {
 pub(crate) struct DatagramConnectionEvent {
     pub(crate) now: Instant,
     pub(crate) remote: SocketAddr,
+    pub(crate) local_ip: Option<IpAddr>,
+    pub(crate) path_id: Option<PathId>,
     pub(crate) ecn: Option<EcnCodepoint>,
     pub(crate) first_decode: PartialDecode,
     pub(crate) remaining: Option<BytesMut>,
@@ -54,10 +61,12 @@ pub(crate) enum EndpointEventInner {
     /// The reset token and/or address eligible for generating resets has been updated
     ResetToken(SocketAddr, ResetToken),
     /// The connection needs connection identifiers
-    NeedIdentifiers(Instant, u64),
+    NeedIdentifiers(Instant, PathId, u64),
     /// Stop routing connection ID for this sequence number to the connection
     /// When `bool == true`, a new connection ID will be issued to peer
     RetireConnectionId(Instant, u64, bool),
+    /// Stop routing a path-specific connection ID for this sequence number to the connection
+    RetirePathConnectionId(Instant, PathId, u64, bool),
 }
 
 /// Protocol-level identifier for a connection.

@@ -1,10 +1,11 @@
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
-use std::net::{SocketAddr, SocketAddrV6};
+use std::net::SocketAddrV6;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::time::Duration;
 use std::{
     io::IoSliceMut,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, UdpSocket},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, UdpSocket},
     slice,
-    time::Duration,
 };
 
 use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
@@ -211,6 +212,108 @@ fn gso() {
 }
 
 #[test]
+fn wildcard_recv_dst_ip_and_src_ip_reply() {
+    let client = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
+    let server = Socket::from(UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap());
+    let client_state = UdpSocketState::new((&client).into()).unwrap();
+    let server_state = UdpSocketState::new((&server).into()).unwrap();
+    client.set_nonblocking(false).unwrap();
+    server.set_nonblocking(false).unwrap();
+
+    let server_port = server.local_addr().unwrap().as_socket().unwrap().port();
+    let server_loopback = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, server_port));
+    client_state
+        .try_send(
+            (&client).into(),
+            &Transmit {
+                destination: server_loopback,
+                ecn: None,
+                contents: b"hello",
+                segment_size: None,
+                src_ip: None,
+            },
+        )
+        .unwrap();
+
+    let mut buf = [0; 64];
+    let meta = recv_one(&server_state, &server, &mut buf);
+    assert_eq!(&buf[..meta.len], b"hello");
+
+    if dst_ip_expected() {
+        let dst_ip = meta.dst_ip.expect("wildcard receive should report dst_ip");
+        assert_eq!(dst_ip, IpAddr::V4(Ipv4Addr::LOCALHOST));
+        server_state
+            .try_send(
+                (&server).into(),
+                &Transmit {
+                    destination: meta.addr,
+                    ecn: None,
+                    contents: b"reply",
+                    segment_size: None,
+                    src_ip: Some(dst_ip),
+                },
+            )
+            .unwrap();
+
+        let reply = recv_one(&client_state, &client, &mut buf);
+        assert_eq!(&buf[..reply.len], b"reply");
+        assert_eq!(reply.addr.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        assert_eq!(reply.addr.port(), server_port);
+    }
+}
+
+#[test]
+fn wildcard_recv_dst_ip_and_src_ip_reply_v6() {
+    let client = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
+    let server = Socket::from(UdpSocket::bind((Ipv6Addr::UNSPECIFIED, 0)).unwrap());
+    let client_state = UdpSocketState::new((&client).into()).unwrap();
+    let server_state = UdpSocketState::new((&server).into()).unwrap();
+    client.set_nonblocking(false).unwrap();
+    server.set_nonblocking(false).unwrap();
+
+    let server_port = server.local_addr().unwrap().as_socket().unwrap().port();
+    let server_loopback = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), server_port);
+    client_state
+        .try_send(
+            (&client).into(),
+            &Transmit {
+                destination: server_loopback,
+                ecn: None,
+                contents: b"hello",
+                segment_size: None,
+                src_ip: None,
+            },
+        )
+        .unwrap();
+
+    let mut buf = [0; 64];
+    let meta = recv_one(&server_state, &server, &mut buf);
+    assert_eq!(&buf[..meta.len], b"hello");
+
+    if dst_ip_expected() {
+        let dst_ip = meta.dst_ip.expect("wildcard receive should report dst_ip");
+        assert_eq!(dst_ip, IpAddr::V6(Ipv6Addr::LOCALHOST));
+        server_state
+            .try_send(
+                (&server).into(),
+                &Transmit {
+                    destination: meta.addr,
+                    ecn: None,
+                    contents: b"reply",
+                    segment_size: None,
+                    src_ip: Some(dst_ip),
+                },
+            )
+            .unwrap();
+
+        let reply = recv_one(&client_state, &client, &mut buf);
+        assert_eq!(&buf[..reply.len], b"reply");
+        assert_eq!(reply.addr.ip(), IpAddr::V6(Ipv6Addr::LOCALHOST));
+        assert_eq!(reply.addr.port(), server_port);
+    }
+}
+
+#[test]
 fn socket_buffers() {
     const BUFFER_SIZE: usize = 123456;
     const FACTOR: usize = if cfg!(any(target_os = "linux", target_os = "android")) {
@@ -382,6 +485,38 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit<'_>) {
         }
     }
     assert_eq!(datagrams, expected_datagrams);
+}
+
+fn recv_one(state: &UdpSocketState, socket: &Socket, buf: &mut [u8]) -> RecvMeta {
+    let mut meta = RecvMeta::default();
+    let n = state
+        .recv(
+            socket.into(),
+            &mut [IoSliceMut::new(buf)],
+            slice::from_mut(&mut meta),
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+    meta
+}
+
+fn dst_ip_expected() -> bool {
+    if cfg!(target_os = "android") {
+        return std::env::var("API_LEVEL")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .is_some_and(|level| level > 25);
+    }
+
+    cfg!(any(
+        target_os = "freebsd",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "windows",
+    ))
 }
 
 fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {

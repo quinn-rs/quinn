@@ -284,6 +284,8 @@ impl IndexMut<SpaceId> for [PacketSpace; 3] {
 /// Represents one or more packets subject to retransmission
 #[derive(Debug, Clone)]
 pub(super) struct SentPacket {
+    /// Multipath QUIC path ID on which this packet was sent
+    pub(super) path_id: super::PathId,
     /// [`PathData::generation`](super::PathData::generation) of the path on which this packet was sent
     pub(super) path_generation: u64,
     /// The time the packet was sent.
@@ -324,8 +326,14 @@ pub struct Retransmits {
     pub(super) stop_sending: Vec<frame::StopSending>,
     pub(super) max_stream_data: FxHashSet<StreamId>,
     pub(super) crypto: VecDeque<frame::Crypto>,
-    pub(super) new_cids: Vec<IssuedCid>,
+    pub(super) new_cids: Vec<(super::PathId, u64, IssuedCid)>,
     pub(super) retire_cids: Vec<u64>,
+    pub(super) path_retire_cids: Vec<(super::PathId, u64)>,
+    pub(super) path_abandon: Vec<(super::PathId, VarInt)>,
+    pub(super) path_status: Vec<(super::PathId, bool, u64)>,
+    pub(super) max_path_id: Option<super::PathId>,
+    pub(super) paths_blocked: Option<super::PathId>,
+    pub(super) path_cids_blocked: Vec<(super::PathId, u64)>,
     pub(super) ack_frequency: bool,
     pub(super) handshake_done: bool,
     /// For each enqueued NEW_TOKEN frame, a copy of the path's remote address
@@ -361,6 +369,12 @@ impl Retransmits {
             && self.crypto.is_empty()
             && self.new_cids.is_empty()
             && self.retire_cids.is_empty()
+            && self.path_retire_cids.is_empty()
+            && self.path_abandon.is_empty()
+            && self.path_status.is_empty()
+            && self.max_path_id.is_none()
+            && self.paths_blocked.is_none()
+            && self.path_cids_blocked.is_empty()
             && !self.ack_frequency
             && !self.handshake_done
             && self.new_tokens.is_empty()
@@ -384,6 +398,12 @@ impl ::std::ops::BitOrAssign for Retransmits {
         }
         self.new_cids.extend(&rhs.new_cids);
         self.retire_cids.extend(rhs.retire_cids);
+        self.path_retire_cids.extend(rhs.path_retire_cids);
+        self.path_abandon.extend(rhs.path_abandon);
+        self.path_status.extend(rhs.path_status);
+        self.max_path_id = cmp::max(self.max_path_id, rhs.max_path_id);
+        self.paths_blocked = cmp::max(self.paths_blocked, rhs.paths_blocked);
+        self.path_cids_blocked.extend(rhs.path_cids_blocked);
         self.ack_frequency |= rhs.ack_frequency;
         self.handshake_done |= rhs.handshake_done;
         self.new_tokens.extend_from_slice(&rhs.new_tokens);
@@ -808,6 +828,31 @@ impl PendingAcks {
         if self.non_ack_eliciting_since_last_ack_sent > LAZY_ACK_THRESHOLD {
             self.immediate_ack_required = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Retransmits;
+    use crate::connection::PathId;
+
+    #[test]
+    fn retransmits_merge_keeps_largest_path_limits() {
+        let mut first = Retransmits {
+            max_path_id: Some(PathId::from_u32(1)),
+            paths_blocked: Some(PathId::from_u32(4)),
+            ..Retransmits::default()
+        };
+        let second = Retransmits {
+            max_path_id: Some(PathId::from_u32(3)),
+            paths_blocked: Some(PathId::from_u32(2)),
+            ..Retransmits::default()
+        };
+
+        first |= second;
+
+        assert_eq!(first.max_path_id, Some(PathId::from_u32(3)));
+        assert_eq!(first.paths_blocked, Some(PathId::from_u32(4)));
     }
 }
 

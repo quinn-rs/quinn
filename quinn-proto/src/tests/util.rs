@@ -4,7 +4,7 @@ use std::{
     env,
     io::{self, Write},
     mem,
-    net::{Ipv6Addr, SocketAddr, UdpSocket},
+    net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket},
     ops::RangeFrom,
     str,
     sync::{Arc, LazyLock, Mutex},
@@ -132,6 +132,10 @@ impl Pair {
     }
 
     pub(super) fn drive_client(&mut self) {
+        self.drive_client_from(self.client.addr);
+    }
+
+    pub(super) fn drive_client_from(&mut self, client_addr: SocketAddr) {
         let span = info_span!("client");
         let _guard = span.enter();
         self.client.drive(self.time, self.server.addr);
@@ -153,6 +157,8 @@ impl Pair {
                 let ecn = set_congestion_experienced(packet.ecn, self.congestion_experienced);
                 self.server.inbound.push_back((
                     self.time + self.latency,
+                    client_addr,
+                    Some(packet.destination.ip()),
                     ecn,
                     buffer.as_ref().into(),
                 ));
@@ -177,6 +183,8 @@ impl Pair {
                 let ecn = set_congestion_experienced(packet.ecn, self.congestion_experienced);
                 self.client.inbound.push_back((
                     self.time + self.latency,
+                    self.server.addr,
+                    Some(packet.destination.ip()),
                     ecn,
                     buffer.as_ref().into(),
                 ));
@@ -286,6 +294,14 @@ impl Default for Pair {
     }
 }
 
+type InboundDatagram = (
+    Instant,
+    SocketAddr,
+    Option<IpAddr>,
+    Option<EcnCodepoint>,
+    BytesMut,
+);
+
 pub(super) struct TestEndpoint {
     pub(super) endpoint: Endpoint,
     pub(super) addr: SocketAddr,
@@ -293,7 +309,7 @@ pub(super) struct TestEndpoint {
     timeout: Option<Instant>,
     pub(super) outbound: VecDeque<(Transmit, Bytes)>,
     delayed: VecDeque<(Transmit, Bytes)>,
-    pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut)>,
+    pub(super) inbound: VecDeque<InboundDatagram>,
     accepted: Option<Result<ConnectionHandle, ConnectionError>>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
     conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
@@ -353,7 +369,7 @@ impl TestEndpoint {
         self.drive_outgoing(now);
     }
 
-    pub(super) fn drive_incoming(&mut self, now: Instant, remote: SocketAddr) {
+    pub(super) fn drive_incoming(&mut self, now: Instant, _remote: SocketAddr) {
         if let Some(ref socket) = self.socket {
             loop {
                 let mut buf = [0; 8192];
@@ -366,10 +382,11 @@ impl TestEndpoint {
         let mut buf = Vec::with_capacity(buffer_size);
 
         while self.inbound.front().is_some_and(|x| x.0 <= now) {
-            let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some(event) = self
-                .endpoint
-                .handle(recv_time, remote, None, ecn, packet, &mut buf)
+            let (recv_time, packet_remote, local_ip, ecn, packet) =
+                self.inbound.pop_front().unwrap();
+            if let Some(event) =
+                self.endpoint
+                    .handle(recv_time, packet_remote, local_ip, ecn, packet, &mut buf)
             {
                 match event {
                     DatagramEvent::NewConnection(incoming) => {
@@ -572,6 +589,28 @@ pub(super) fn server_config() -> ServerConfig {
     config
 }
 
+pub(super) fn server_config_with_multipath() -> ServerConfig {
+    let mut config = server_config();
+    let mut transport = TransportConfig {
+        initial_max_path_id: Some(VarInt::from_u32(1)),
+        ..Default::default()
+    };
+    transport.deterministic_packet_numbers(true);
+    config.transport = Arc::new(transport);
+    config
+}
+
+pub(super) fn server_config_without_multipath() -> ServerConfig {
+    let mut config = server_config();
+    let mut transport = TransportConfig {
+        initial_max_path_id: None,
+        ..Default::default()
+    };
+    transport.deterministic_packet_numbers(true);
+    config.transport = Arc::new(transport);
+    config
+}
+
 pub(super) fn server_config_with_cert(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
@@ -620,6 +659,28 @@ fn server_crypto_inner(
 
 pub(super) fn client_config() -> ClientConfig {
     ClientConfig::new(Arc::new(client_crypto()))
+}
+
+pub(super) fn client_config_with_multipath() -> ClientConfig {
+    let mut config = ClientConfig::new(Arc::new(client_crypto()));
+    let mut transport = TransportConfig {
+        initial_max_path_id: Some(VarInt::from_u32(1)),
+        ..Default::default()
+    };
+    transport.deterministic_packet_numbers(true);
+    config.transport = Arc::new(transport);
+    config
+}
+
+pub(super) fn client_config_without_multipath() -> ClientConfig {
+    let mut config = ClientConfig::new(Arc::new(client_crypto()));
+    let mut transport = TransportConfig {
+        initial_max_path_id: None,
+        ..Default::default()
+    };
+    transport.deterministic_packet_numbers(true);
+    config.transport = Arc::new(transport);
+    config
 }
 
 pub(super) fn client_config_with_deterministic_pns() -> ClientConfig {

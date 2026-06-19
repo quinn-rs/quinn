@@ -11,6 +11,7 @@ use crate::{
     Dir, MAX_CID_SIZE, RESET_TOKEN_SIZE, ResetToken, StreamId, TransportError, TransportErrorCode,
     VarInt,
     coding::{self, BufExt, BufMutExt, UnexpectedEnd},
+    connection::PathId,
     range_set::ArrayRangeSet,
     shared::{ConnectionId, EcnCodepoint},
 };
@@ -133,6 +134,17 @@ frame_types! {
     // ACK Frequency
     ACK_FREQUENCY = 0xaf,
     IMMEDIATE_ACK = 0x1f,
+    // Multipath QUIC
+    PATH_ACK = 0x3e,
+    PATH_ACK_ECN = 0x3f,
+    PATH_ABANDON = 0x3e75,
+    PATH_STATUS_BACKUP = 0x3e76,
+    PATH_STATUS_AVAILABLE = 0x3e77,
+    PATH_NEW_CONNECTION_ID = 0x3e78,
+    PATH_RETIRE_CONNECTION_ID = 0x3e79,
+    MAX_PATH_ID = 0x3e7a,
+    PATHS_BLOCKED = 0x3e7b,
+    PATH_CIDS_BLOCKED = 0x3e7c,
     // DATAGRAM
 }
 
@@ -150,15 +162,65 @@ pub(crate) enum Frame {
     NewToken(NewToken),
     Stream(Stream),
     MaxData(VarInt),
-    MaxStreamData { id: StreamId, offset: u64 },
-    MaxStreams { dir: Dir, count: u64 },
-    DataBlocked { offset: u64 },
-    StreamDataBlocked { id: StreamId, offset: u64 },
-    StreamsBlocked { dir: Dir, limit: u64 },
+    MaxStreamData {
+        id: StreamId,
+        offset: u64,
+    },
+    MaxStreams {
+        dir: Dir,
+        count: u64,
+    },
+    DataBlocked {
+        offset: u64,
+    },
+    StreamDataBlocked {
+        id: StreamId,
+        offset: u64,
+    },
+    StreamsBlocked {
+        dir: Dir,
+        limit: u64,
+    },
     NewConnectionId(NewConnectionId),
-    RetireConnectionId { sequence: u64 },
+    RetireConnectionId {
+        sequence: u64,
+    },
     PathChallenge(u64),
     PathResponse(u64),
+    PathAck {
+        path_id: PathId,
+        ack: Ack,
+    },
+    PathAbandon {
+        path_id: PathId,
+        error_code: VarInt,
+    },
+    PathStatusAvailable {
+        path_id: PathId,
+        sequence: u64,
+    },
+    PathStatusBackup {
+        path_id: PathId,
+        sequence: u64,
+    },
+    PathNewConnectionId {
+        path_id: PathId,
+        frame: NewConnectionId,
+    },
+    PathRetireConnectionId {
+        path_id: PathId,
+        sequence: u64,
+    },
+    MaxPathId {
+        maximum: PathId,
+    },
+    PathsBlocked {
+        maximum: PathId,
+    },
+    PathCidsBlocked {
+        path_id: PathId,
+        next_sequence: u64,
+    },
     Close(Close),
     Datagram(Datagram),
     AckFrequency(AckFrequency),
@@ -198,6 +260,21 @@ impl Frame {
             }
             PathChallenge(_) => FrameType::PATH_CHALLENGE,
             PathResponse(_) => FrameType::PATH_RESPONSE,
+            PathAck { ref ack, .. } => {
+                if ack.ecn.is_some() {
+                    FrameType::PATH_ACK_ECN
+                } else {
+                    FrameType::PATH_ACK
+                }
+            }
+            PathAbandon { .. } => FrameType::PATH_ABANDON,
+            PathStatusAvailable { .. } => FrameType::PATH_STATUS_AVAILABLE,
+            PathStatusBackup { .. } => FrameType::PATH_STATUS_BACKUP,
+            PathNewConnectionId { .. } => FrameType::PATH_NEW_CONNECTION_ID,
+            PathRetireConnectionId { .. } => FrameType::PATH_RETIRE_CONNECTION_ID,
+            MaxPathId { .. } => FrameType::MAX_PATH_ID,
+            PathsBlocked { .. } => FrameType::PATHS_BLOCKED,
+            PathCidsBlocked { .. } => FrameType::PATH_CIDS_BLOCKED,
             NewConnectionId { .. } => FrameType::NEW_CONNECTION_ID,
             Crypto(_) => FrameType::CRYPTO,
             NewToken(_) => FrameType::NEW_TOKEN,
@@ -209,7 +286,10 @@ impl Frame {
     }
 
     pub(crate) fn is_ack_eliciting(&self) -> bool {
-        !matches!(*self, Self::Ack(_) | Self::Padding | Self::Close(_))
+        !matches!(
+            self,
+            Self::Ack(_) | Self::Padding | Self::Close(_) | Self::PathAck { .. }
+        )
     }
 }
 
@@ -384,15 +464,41 @@ impl Ack {
         ecn: Option<&EcnCounts>,
         buf: &mut W,
     ) {
-        let mut rest = ranges.iter().rev();
-        let first = rest.next().unwrap();
-        let largest = first.end - 1;
-        let first_size = first.end - first.start;
         buf.write(if ecn.is_some() {
             FrameType::ACK_ECN
         } else {
             FrameType::ACK
         });
+        Self::encode_ack_payload(delay, ranges, ecn, buf);
+    }
+
+    pub(crate) fn encode_path<W: BufMut>(
+        path_id: PathId,
+        delay: u64,
+        ranges: &ArrayRangeSet,
+        ecn: Option<&EcnCounts>,
+        buf: &mut W,
+    ) {
+        let ty = if ecn.is_some() {
+            FrameType::PATH_ACK_ECN
+        } else {
+            FrameType::PATH_ACK
+        };
+        buf.write(ty);
+        buf.write(VarInt::from(path_id));
+        Self::encode_ack_payload(delay, ranges, ecn, buf);
+    }
+
+    fn encode_ack_payload<W: BufMut>(
+        delay: u64,
+        ranges: &ArrayRangeSet,
+        ecn: Option<&EcnCounts>,
+        buf: &mut W,
+    ) {
+        let mut rest = ranges.iter().rev();
+        let first = rest.next().unwrap();
+        let largest = first.end - 1;
+        let first_size = first.end - first.start;
         buf.write_var(largest);
         buf.write_var(delay);
         buf.write_var(ranges.len() as u64 - 1);
@@ -631,54 +737,55 @@ impl Iter {
                 sequence: self.bytes.get_var()?,
             },
             FrameType::ACK | FrameType::ACK_ECN => {
-                let largest = self.bytes.get_var()?;
-                let delay = self.bytes.get_var()?;
-                let extra_blocks = self.bytes.get_var()? as usize;
-                let n = scan_ack_blocks(&self.bytes, largest, extra_blocks)?;
-                Frame::Ack(Ack {
-                    delay,
-                    largest,
-                    additional: self.bytes.split_to(n),
-                    ecn: if ty != FrameType::ACK_ECN {
-                        None
-                    } else {
-                        Some(EcnCounts {
-                            ect0: self.bytes.get_var()?,
-                            ect1: self.bytes.get_var()?,
-                            ce: self.bytes.get_var()?,
-                        })
-                    },
-                })
+                Frame::Ack(decode_ack(&mut self.bytes, ty == FrameType::ACK_ECN)?)
             }
+            FrameType::PATH_ACK | FrameType::PATH_ACK_ECN => Frame::PathAck {
+                path_id: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+                ack: decode_ack(&mut self.bytes, ty == FrameType::PATH_ACK_ECN)?,
+            },
             FrameType::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
             FrameType::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
+            FrameType::PATH_ABANDON => Frame::PathAbandon {
+                path_id: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+                error_code: self.bytes.get()?,
+            },
+            FrameType::PATH_STATUS_AVAILABLE => Frame::PathStatusAvailable {
+                path_id: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+                sequence: self.bytes.get_var()?,
+            },
+            FrameType::PATH_STATUS_BACKUP => Frame::PathStatusBackup {
+                path_id: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+                sequence: self.bytes.get_var()?,
+            },
+            FrameType::PATH_NEW_CONNECTION_ID => Frame::PathNewConnectionId {
+                path_id: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+                frame: decode_new_connection_id(&mut self.bytes)?,
+            },
+            FrameType::PATH_RETIRE_CONNECTION_ID => Frame::PathRetireConnectionId {
+                path_id: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+                sequence: self.bytes.get_var()?,
+            },
+            FrameType::MAX_PATH_ID => Frame::MaxPathId {
+                maximum: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+            },
+            FrameType::PATHS_BLOCKED => Frame::PathsBlocked {
+                maximum: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+            },
+            FrameType::PATH_CIDS_BLOCKED => Frame::PathCidsBlocked {
+                path_id: PathId::try_from(self.bytes.get::<VarInt>()?)
+                    .map_err(|_| IterErr::Malformed)?,
+                next_sequence: self.bytes.get_var()?,
+            },
             FrameType::NEW_CONNECTION_ID => {
-                let sequence = self.bytes.get_var()?;
-                let retire_prior_to = self.bytes.get_var()?;
-                if retire_prior_to > sequence {
-                    return Err(IterErr::Malformed);
-                }
-                let length = self.bytes.get::<u8>()? as usize;
-                if length > MAX_CID_SIZE || length == 0 {
-                    return Err(IterErr::Malformed);
-                }
-                if length > self.bytes.remaining() {
-                    return Err(IterErr::UnexpectedEnd);
-                }
-                let mut stage = [0; MAX_CID_SIZE];
-                self.bytes.copy_to_slice(&mut stage[0..length]);
-                let id = ConnectionId::new(&stage[..length]);
-                if self.bytes.remaining() < 16 {
-                    return Err(IterErr::UnexpectedEnd);
-                }
-                let mut reset_token = [0; RESET_TOKEN_SIZE];
-                self.bytes.copy_to_slice(&mut reset_token);
-                Frame::NewConnectionId(NewConnectionId {
-                    sequence,
-                    retire_prior_to,
-                    id,
-                    reset_token: reset_token.into(),
-                })
+                Frame::NewConnectionId(decode_new_connection_id(&mut self.bytes)?)
             }
             FrameType::CRYPTO => Frame::Crypto(Crypto {
                 offset: self.bytes.get_var()?,
@@ -745,6 +852,56 @@ impl Iterator for Iter {
             }
         }
     }
+}
+
+fn decode_ack(bytes: &mut Bytes, ecn: bool) -> Result<Ack, IterErr> {
+    let largest = bytes.get_var()?;
+    let delay = bytes.get_var()?;
+    let extra_blocks = bytes.get_var()? as usize;
+    let n = scan_ack_blocks(bytes, largest, extra_blocks)?;
+    Ok(Ack {
+        delay,
+        largest,
+        additional: bytes.split_to(n),
+        ecn: if ecn {
+            Some(EcnCounts {
+                ect0: bytes.get_var()?,
+                ect1: bytes.get_var()?,
+                ce: bytes.get_var()?,
+            })
+        } else {
+            None
+        },
+    })
+}
+
+fn decode_new_connection_id(bytes: &mut Bytes) -> Result<NewConnectionId, IterErr> {
+    let sequence = bytes.get_var()?;
+    let retire_prior_to = bytes.get_var()?;
+    if retire_prior_to > sequence {
+        return Err(IterErr::Malformed);
+    }
+    let length = bytes.get::<u8>()? as usize;
+    if length > MAX_CID_SIZE || length == 0 {
+        return Err(IterErr::Malformed);
+    }
+    if length > bytes.remaining() {
+        return Err(IterErr::UnexpectedEnd);
+    }
+    let mut stage = [0; MAX_CID_SIZE];
+    bytes.copy_to_slice(&mut stage[0..length]);
+    let id = ConnectionId::new(&stage[..length]);
+    if bytes.remaining() < 16 {
+        return Err(IterErr::UnexpectedEnd);
+    }
+    let mut reset_token = [0; RESET_TOKEN_SIZE];
+    bytes.copy_to_slice(&mut reset_token);
+    Ok(NewConnectionId {
+        sequence,
+        retire_prior_to,
+        id,
+        reset_token: reset_token.into(),
+    })
 }
 
 #[derive(Debug)]
@@ -882,6 +1039,16 @@ impl NewConnectionId {
         out.put_slice(&self.id);
         out.put_slice(&self.reset_token);
     }
+
+    pub(crate) fn encode_path<W: BufMut>(&self, path_id: PathId, out: &mut W) {
+        out.write(FrameType::PATH_NEW_CONNECTION_ID);
+        out.write(VarInt::from(path_id));
+        out.write_var(self.sequence);
+        out.write_var(self.retire_prior_to);
+        out.write(self.id.len() as u8);
+        out.put_slice(&self.id);
+        out.put_slice(&self.reset_token);
+    }
 }
 
 impl FrameStruct for NewConnectionId {
@@ -993,6 +1160,132 @@ mod test {
         assert_eq!(frames.len(), 1);
         match &frames[0] {
             Frame::AckFrequency(decoded) => assert_eq!(decoded, &original),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn path_ack_coding() {
+        let mut ranges = ArrayRangeSet::new();
+        ranges.insert(7..8);
+        let mut buf = Vec::new();
+        Ack::encode_path(
+            PathId::try_from(VarInt::from_u32(1)).unwrap(),
+            0,
+            &ranges,
+            None,
+            &mut buf,
+        );
+
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::PathAck { path_id, ack } => {
+                assert_eq!(*path_id, PathId::try_from(VarInt::from_u32(1)).unwrap());
+                assert_eq!(ack.largest, 7);
+                assert_eq!(ack.iter().next(), Some(7..=7));
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn path_new_connection_id_coding() {
+        let mut buf = Vec::new();
+        NewConnectionId {
+            sequence: 2,
+            retire_prior_to: 0,
+            id: ConnectionId::new(&[1, 2, 3, 4]),
+            reset_token: [5; RESET_TOKEN_SIZE].into(),
+        }
+        .encode_path(PathId::try_from(VarInt::from_u32(1)).unwrap(), &mut buf);
+
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::PathNewConnectionId { path_id, frame } => {
+                assert_eq!(*path_id, PathId::try_from(VarInt::from_u32(1)).unwrap());
+                assert_eq!(frame.sequence, 2);
+                assert_eq!(frame.retire_prior_to, 0);
+                assert_eq!(frame.id, ConnectionId::new(&[1, 2, 3, 4]));
+                assert_eq!(frame.reset_token, [5; RESET_TOKEN_SIZE].into());
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn path_retire_connection_id_coding() {
+        let mut buf = Vec::new();
+        buf.write(FrameType::PATH_RETIRE_CONNECTION_ID);
+        buf.write(VarInt::from_u32(2));
+        buf.write_var(7);
+
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::PathRetireConnectionId { path_id, sequence } => {
+                assert_eq!(*path_id, PathId::try_from(VarInt::from_u32(2)).unwrap());
+                assert_eq!(*sequence, 7);
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn path_abandon_coding() {
+        let mut buf = Vec::new();
+        buf.write(FrameType::PATH_ABANDON);
+        buf.write(VarInt::from_u32(2));
+        buf.write(VarInt::from_u32(0x3e));
+
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::PathAbandon {
+                path_id,
+                error_code,
+            } => {
+                assert_eq!(*path_id, PathId::try_from(VarInt::from_u32(2)).unwrap());
+                assert_eq!(*error_code, VarInt::from_u32(0x3e));
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn path_limit_frame_coding() {
+        let mut buf = Vec::new();
+        buf.write(FrameType::MAX_PATH_ID);
+        buf.write(VarInt::from_u32(4));
+        buf.write(FrameType::PATHS_BLOCKED);
+        buf.write(VarInt::from_u32(3));
+        buf.write(FrameType::PATH_CIDS_BLOCKED);
+        buf.write(VarInt::from_u32(2));
+        buf.write_var(9);
+
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 3);
+        match &frames[0] {
+            Frame::MaxPathId { maximum } => {
+                assert_eq!(*maximum, PathId::try_from(VarInt::from_u32(4)).unwrap());
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+        match &frames[1] {
+            Frame::PathsBlocked { maximum } => {
+                assert_eq!(*maximum, PathId::try_from(VarInt::from_u32(3)).unwrap());
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+        match &frames[2] {
+            Frame::PathCidsBlocked {
+                path_id,
+                next_sequence,
+            } => {
+                assert_eq!(*path_id, PathId::try_from(VarInt::from_u32(2)).unwrap());
+                assert_eq!(*next_sequence, 9);
+            }
             x => panic!("incorrect frame {x:?}"),
         }
     }

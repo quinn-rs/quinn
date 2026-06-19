@@ -88,6 +88,8 @@ macro_rules! make_struct {
             /// If a value is provided, it implies that the endpoint supports QUIC Acknowledgement
             /// Frequency
             pub(crate) min_ack_delay: Option<VarInt>,
+            /// Maximum path ID initially permitted for the QUIC multipath extension
+            pub(crate) initial_max_path_id: Option<VarInt>,
 
             // Server-only
             /// The value of the Destination Connection ID field from the first Initial packet sent
@@ -126,6 +128,7 @@ macro_rules! make_struct {
                     initial_src_cid: None,
                     grease_quic_bit: false,
                     min_ack_delay: None,
+                    initial_max_path_id: None,
 
                     original_dst_cid: None,
                     retry_src_cid: None,
@@ -170,6 +173,9 @@ impl TransportParameters {
             max_datagram_frame_size: config
                 .datagram_receive_buffer_size
                 .map(|x| (x.min(u16::MAX.into()) as u16).into()),
+            initial_max_path_id: (cid_gen.cid_len() != 0)
+                .then_some(config.initial_max_path_id)
+                .flatten(),
             grease_quic_bit: endpoint_config.grease_quic_bit,
             min_ack_delay: Some(
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
@@ -381,6 +387,13 @@ impl TransportParameters {
                         w.write(x);
                     }
                 }
+                TransportParameterId::InitialMaxPathId => {
+                    if let Some(x) = self.initial_max_path_id {
+                        w.write_var(id as u64);
+                        w.write_var(x.size() as u64);
+                        w.write(x);
+                    }
+                }
                 id => {
                     macro_rules! write_params {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
@@ -477,6 +490,16 @@ impl TransportParameters {
                     _ => return Err(Error::Malformed),
                 },
                 TransportParameterId::MinAckDelayDraft07 => params.min_ack_delay = Some(r.get()?),
+                TransportParameterId::InitialMaxPathId => {
+                    if len > 8 || params.initial_max_path_id.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    let value = r.get::<VarInt>()?;
+                    if len != value.size() {
+                        return Err(Error::Malformed);
+                    }
+                    params.initial_max_path_id = Some(value);
+                }
                 _ => {
                     macro_rules! parse {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
@@ -514,6 +537,10 @@ impl TransportParameters {
                 // min_ack_delay uses microseconds, whereas max_ack_delay uses milliseconds
                 min_ack_delay.0 > params.max_ack_delay.0 * 1_000
             })
+            // https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath-21#section-2.1
+            || params
+                .initial_max_path_id
+                .is_some_and(|initial_max_path_id| initial_max_path_id.0 > u32::MAX.into())
             // https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-8
             || (side.is_server()
                 && (params.original_dst_cid.is_some()
@@ -634,6 +661,9 @@ pub(crate) enum TransportParameterId {
     // https://www.rfc-editor.org/rfc/rfc9221.html#section-3
     MaxDatagramFrameSize = 0x20,
 
+    // https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath-21#section-2.1
+    InitialMaxPathId = 0x3E,
+
     // https://www.rfc-editor.org/rfc/rfc9287.html#section-3
     GreaseQuicBit = 0x2AB2,
 
@@ -643,7 +673,7 @@ pub(crate) enum TransportParameterId {
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 21] = [
+    const SUPPORTED: [Self; 22] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -659,6 +689,7 @@ impl TransportParameterId {
         Self::StatelessResetToken,
         Self::DisableActiveMigration,
         Self::MaxDatagramFrameSize,
+        Self::InitialMaxPathId,
         Self::PreferredAddress,
         Self::OriginalDestinationConnectionId,
         Self::InitialSourceConnectionId,
@@ -696,6 +727,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::StatelessResetToken == id => Self::StatelessResetToken,
             id if Self::DisableActiveMigration == id => Self::DisableActiveMigration,
             id if Self::MaxDatagramFrameSize == id => Self::MaxDatagramFrameSize,
+            id if Self::InitialMaxPathId == id => Self::InitialMaxPathId,
             id if Self::PreferredAddress == id => Self::PreferredAddress,
             id if Self::OriginalDestinationConnectionId == id => {
                 Self::OriginalDestinationConnectionId
@@ -725,6 +757,8 @@ mod test {
 
     use rand::TryRng;
 
+    use crate::cid_generator::RandomConnectionIdGenerator;
+
     use super::*;
 
     #[test]
@@ -743,6 +777,7 @@ mod test {
                 connection_id: ConnectionId::new(&[0x42]),
                 stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
             }),
+            initial_max_path_id: Some(1u32.into()),
             grease_quic_bit: true,
             min_ack_delay: Some(2_000u32.into()),
             ..TransportParameters::default()
@@ -752,6 +787,50 @@ mod test {
             TransportParameters::read(Side::Client, &mut buf.as_slice()).unwrap(),
             params
         );
+    }
+
+    #[test]
+    fn initial_max_path_id_generation_is_default_enabled_and_cid_gated() {
+        let endpoint_config = EndpointConfig::default();
+        let mut config = TransportConfig::default();
+        let cid_gen = RandomConnectionIdGenerator::new(8);
+
+        let mut rng = StepRng(0);
+        let params = TransportParameters::new(
+            &config,
+            &endpoint_config,
+            &cid_gen,
+            ConnectionId::new(&[1; 8]),
+            None,
+            &mut rng,
+        );
+        assert_eq!(params.initial_max_path_id, Some(1u32.into()));
+
+        config.initial_max_path_id = None;
+        let mut rng = StepRng(0);
+        let params = TransportParameters::new(
+            &config,
+            &endpoint_config,
+            &cid_gen,
+            ConnectionId::new(&[1; 8]),
+            None,
+            &mut rng,
+        );
+        assert_eq!(params.initial_max_path_id, None);
+
+        config.initial_max_path_id = Some(1u32.into());
+
+        let zero_len_cid_gen = RandomConnectionIdGenerator::new(0);
+        let mut rng = StepRng(0);
+        let params = TransportParameters::new(
+            &config,
+            &endpoint_config,
+            &zero_len_cid_gen,
+            ConnectionId::new(&[]),
+            None,
+            &mut rng,
+        );
+        assert_eq!(params.initial_max_path_id, None);
     }
 
     #[test]

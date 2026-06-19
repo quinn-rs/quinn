@@ -180,9 +180,21 @@ impl CidState {
         self.cid_len
     }
 
+    pub(crate) fn cid_lifetime(&self) -> Option<Duration> {
+        self.cid_lifetime
+    }
+
     /// The value for `retire_prior_to` field in `NEW_CONNECTION_ID` frame
     pub(crate) fn retire_prior_to(&self) -> u64 {
         self.retire_seq
+    }
+
+    pub(crate) fn issued(&self) -> u64 {
+        self.issued
+    }
+
+    pub(crate) fn active_len(&self) -> usize {
+        self.active_seq.len()
     }
 
     #[cfg(test)]

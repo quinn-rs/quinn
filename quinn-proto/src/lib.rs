@@ -115,10 +115,73 @@ pub mod fuzzing {
     pub use crate::frame::ResetStream;
     pub use crate::packet::PartialDecode;
     pub use crate::transport_parameters::TransportParameters;
-    pub use bytes::{BufMut, BytesMut};
+    pub use bytes::{BufMut, Bytes, BytesMut};
 
     #[cfg(feature = "arbitrary")]
     use arbitrary::{Arbitrary, Result, Unstructured};
+
+    #[derive(Debug, Default)]
+    pub struct MultipathFrameStats {
+        pub frames: usize,
+        pub multipath_frames: usize,
+        pub ack_eliciting_frames: usize,
+        pub path_id_xor: u32,
+    }
+
+    pub fn exercise_multipath_frame_payload(
+        payload: Bytes,
+    ) -> core::result::Result<MultipathFrameStats, crate::TransportError> {
+        let mut stats = MultipathFrameStats::default();
+        for frame in crate::frame::Iter::new(payload)? {
+            let frame = frame?;
+            stats.frames += 1;
+            if frame.is_ack_eliciting() {
+                stats.ack_eliciting_frames += 1;
+            }
+            match frame {
+                crate::frame::Frame::PathAck { path_id, ack } => {
+                    let _ = ack.largest;
+                    stats.multipath_frames += 1;
+                    stats.path_id_xor ^= path_id.into_inner();
+                }
+                crate::frame::Frame::PathAbandon {
+                    path_id,
+                    error_code,
+                } => {
+                    let _ = error_code;
+                    stats.multipath_frames += 1;
+                    stats.path_id_xor ^= path_id.into_inner();
+                }
+                crate::frame::Frame::PathStatusAvailable { path_id, sequence }
+                | crate::frame::Frame::PathStatusBackup { path_id, sequence }
+                | crate::frame::Frame::PathRetireConnectionId { path_id, sequence } => {
+                    let _ = sequence;
+                    stats.multipath_frames += 1;
+                    stats.path_id_xor ^= path_id.into_inner();
+                }
+                crate::frame::Frame::PathNewConnectionId { path_id, frame } => {
+                    let _ = (frame.sequence, frame.retire_prior_to, frame.id);
+                    stats.multipath_frames += 1;
+                    stats.path_id_xor ^= path_id.into_inner();
+                }
+                crate::frame::Frame::MaxPathId { maximum }
+                | crate::frame::Frame::PathsBlocked { maximum } => {
+                    stats.multipath_frames += 1;
+                    stats.path_id_xor ^= maximum.into_inner();
+                }
+                crate::frame::Frame::PathCidsBlocked {
+                    path_id,
+                    next_sequence,
+                } => {
+                    let _ = next_sequence;
+                    stats.multipath_frames += 1;
+                    stats.path_id_xor ^= path_id.into_inner();
+                }
+                _ => {}
+            }
+        }
+        Ok(stats)
+    }
 
     #[cfg(feature = "arbitrary")]
     impl<'arbitrary> Arbitrary<'arbitrary> for TransportParameters {
