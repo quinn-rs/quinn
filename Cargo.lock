@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "quinn"
-version = "0.11.10"
+version = "0.11.11"
 dependencies = [
  "anyhow",
  "async-io",
@@ -2041,7 +2041,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "smol",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2053,7 +2053,7 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.14"
+version = "0.11.15"
 dependencies = [
  "arbitrary",
  "assert_matches",
