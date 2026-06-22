@@ -19,7 +19,7 @@ use thiserror::Error;
 use tokio::sync::{
     Notify,
     futures::{Notified, OwnedNotified},
-    mpsc, oneshot,
+    mpsc, oneshot, watch,
 };
 use tracing::{Instrument, Span, debug_span};
 
@@ -559,6 +559,21 @@ impl Connection {
         self.0.state.lock("remote_address").inner.remote_address()
     }
 
+    /// Watch the peer's UDP address.
+    ///
+    /// If `ServerConfig::migration` is `true`, clients may change addresses at will, e.g. when
+    /// switching to a cellular internet connection.
+    pub fn watch_remote_address(&self) -> RemoteAddressWatcher {
+        let receiver = self
+            .0
+            .state
+            .lock("watch_remote_address")
+            .remote_address
+            .subscribe();
+
+        RemoteAddressWatcher { receiver }
+    }
+
     /// The local IP address which was used when the peer established
     /// the connection
     ///
@@ -944,6 +959,25 @@ impl Future for SendDatagram<'_> {
     }
 }
 
+/// Watcher produced by [`Connection::watch_remote_address`]
+pub struct RemoteAddressWatcher {
+    receiver: watch::Receiver<SocketAddr>,
+}
+
+impl RemoteAddressWatcher {
+    /// Wait for an address change, mark it as seen and return the address.
+    ///
+    /// If multiple migrations occur between calls to `wait` or polls of the resulting future,
+    /// the last observed address will be returned, skipping intermediate updates.
+    pub async fn wait(&mut self) -> Option<SocketAddr> {
+        if self.receiver.changed().await.is_err() {
+            return None;
+        }
+
+        Some(*self.receiver.borrow())
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ConnectionRef(Arc<ConnectionInner>);
 
@@ -1028,6 +1062,7 @@ pub(crate) struct State {
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
+    remote_address: watch::Sender<SocketAddr>,
 }
 
 impl State {
@@ -1041,6 +1076,8 @@ impl State {
         sender: Pin<Box<dyn UdpSender>>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
+        let remote_address = inner.remote_address();
+
         Self {
             inner,
             driver: None,
@@ -1060,6 +1097,7 @@ impl State {
             runtime,
             send_buffer: Vec::new(),
             buffered_transmit: None,
+            remote_address: watch::Sender::new(remote_address),
         }
     }
 
@@ -1208,6 +1246,13 @@ impl State {
                 Stream(StreamEvent::Stopped { id, .. }) => {
                     wake_stream_notify(id, &mut self.stopped);
                     wake_stream(id, &mut self.blocked_writers);
+                }
+                PathUpdated => {
+                    // Using `send_replace` since `send` does not update the value
+                    // when there are no subscribed receivers.
+                    let _ = self
+                        .remote_address
+                        .send_replace(self.inner.remote_address());
                 }
             }
         }
