@@ -83,21 +83,12 @@ impl crypto::Session for TlsSession {
         }))
     }
 
-    /// For the rustls `TlsSession`, the `Any` type is `Vec<rustls::pki_types::CertificateDer>`
+    /// For the rustls `TlsSession`, the `Any` type is `rustls::crypto::Identity<'static>`
     fn peer_identity(&self) -> Option<Box<dyn Any>> {
-        let Identity::X509(identity) = self.inner.peer_identity()? else {
-            return None;
-        };
-
-        let mut certs = Vec::with_capacity(1 + identity.intermediates.len());
-        certs.push(identity.end_entity.clone().into_owned());
-        certs.extend(
-            identity
-                .intermediates
-                .iter()
-                .map(|cert| cert.clone().into_owned()),
-        );
-        Some(Box::new(certs))
+        self.inner
+            .peer_identity()
+            .cloned()
+            .map(|identity| -> Box<dyn Any> { Box::new(identity) })
     }
 
     fn early_crypto(&self) -> Option<(Box<dyn HeaderKey>, Box<dyn crypto::PacketKey>)> {
