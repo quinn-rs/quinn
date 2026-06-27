@@ -627,7 +627,7 @@ impl Connection {
     ///
     /// The dynamic type returned is determined by the configured
     /// [`Session`](proto::crypto::Session). For the default `rustls` session, the return value can
-    /// be [`downcast`](Box::downcast) to a <code>Vec<[rustls::pki_types::CertificateDer]></code>
+    /// be [`downcast`](Box::downcast) to <code>rustls::crypto::Identity&lt;'static&gt;</code>.
     pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
         self.0
             .state
@@ -674,7 +674,7 @@ impl Connection {
             .state
             .lock("export_keying_material")
             .inner
-            .crypto_session()
+            .crypto_session_mut()
             .export_keying_material(output, label, context)
     }
 

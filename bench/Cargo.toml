@@ -10,9 +10,10 @@ anyhow = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
 hdrhistogram = { workspace = true }
-quinn = { path = "../quinn", features = ["ring"] }
+quinn = { path = "../quinn" }
 rcgen = { workspace = true }
 rustls = { workspace = true }
+rustls-aws-lc-rs = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

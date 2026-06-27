@@ -13,11 +13,24 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use proto::crypto::rustls::QuicServerConfig;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject};
+use rustls::{
+    crypto::Identity,
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject},
+};
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
 mod common;
+
+#[cfg(feature = "rustls-aws-lc-rs")]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls_aws_lc_rs::DEFAULT_PROVIDER
+}
+
+#[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-ring"))]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls_ring::DEFAULT_PROVIDER
+}
 
 #[derive(Parser, Debug)]
 #[clap(name = "server")]
@@ -119,12 +132,12 @@ async fn run(options: Opt) -> Result<()> {
         (vec![cert], key)
     };
 
-    let mut server_crypto = rustls::ServerConfig::builder()
+    let mut server_crypto = rustls::ServerConfig::builder(Arc::new(default_provider()))
         .with_no_client_auth()
-        .with_single_cert(certs, key)?;
+        .with_single_cert(Arc::new(Identity::from_cert_chain(certs)?), key)?;
     server_crypto.alpn_protocols = common::ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
     if options.keylog {
-        server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        server_crypto.key_log = Arc::new(rustls_util::KeyLogFile::new());
     }
 
     let mut server_config =
