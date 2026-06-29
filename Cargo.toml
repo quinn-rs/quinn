@@ -23,7 +23,7 @@ bytes = "1"
 clap = { version = "4", features = ["derive"] }
 crc = "3"
 directories-next = "2"
-fastbloom = "0.17"
+fastbloom = { version = "0.17", default-features = false }
 futures-io = "0.3.19"
 getrandom = { version = "0.4", default-features = false }
 hdrhistogram = { version = "7.2", default-features = false }
