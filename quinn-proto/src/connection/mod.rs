@@ -1200,6 +1200,7 @@ impl Connection {
                     if let Some((_, prev)) = self.prev_path.take() {
                         self.path = prev;
                         self.set_loss_detection_timer(now);
+                        self.events.push_back(Event::PathUpdated);
                     }
                     self.path.challenge = None;
                     self.path.challenge_pending = false;
@@ -3123,6 +3124,8 @@ impl Connection {
         let prev_pto = self.pto(SpaceId::Data);
 
         let mut prev = mem::replace(&mut self.path, new_path);
+        self.events.push_back(Event::PathUpdated);
+
         // Don't clobber the original path if the previous one hasn't been validated yet
         if prev.challenge.is_none() {
             prev.challenge = Some(self.rng.random());
@@ -4049,6 +4052,8 @@ pub enum Event {
     DatagramReceived,
     /// One or more application datagrams have been sent after blocking
     DatagramsUnblocked,
+    /// The currently active path was updated
+    PathUpdated,
 }
 
 fn get_max_ack_delay(params: &TransportParameters) -> Duration {
