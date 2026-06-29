@@ -55,7 +55,9 @@ impl Controller for NewReno {
 
         if self.window < self.ssthresh {
             // Slow start
-            self.window += bytes;
+            // Saturate: an extreme (e.g. forged/aggregated) ACK byte count must not
+            // overflow the window and panic in debug builds (quinn-rs/quinn#2702).
+            self.window = self.window.saturating_add(bytes);
 
             if self.window >= self.ssthresh {
                 // Exiting slow start
@@ -73,11 +75,11 @@ impl Controller for NewReno {
             // for every round trip.
             // This mechanism is called Appropriate Byte Counting in
             // https://tools.ietf.org/html/rfc3465
-            self.bytes_acked += bytes;
+            self.bytes_acked = self.bytes_acked.saturating_add(bytes);
 
             if self.bytes_acked >= self.window {
                 self.bytes_acked -= self.window;
-                self.window += self.current_mtu;
+                self.window = self.window.saturating_add(self.current_mtu);
             }
         }
     }
@@ -169,5 +171,30 @@ impl Default for NewRenoConfig {
 impl ControllerFactory for NewRenoConfig {
     fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
         Box::new(NewReno::new(self, now, current_mtu))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Duration;
+
+    /// A forged/aggregated ACK with an extreme byte count must saturate the window
+    /// rather than overflow-panicking in debug builds. See quinn-rs/quinn#2702.
+    #[test]
+    fn extreme_ack_saturates_window_without_panic() {
+        let now = Instant::now();
+        // `sent` must be after `recovery_start_time` (== now) or on_ack early-returns.
+        let sent = now + Duration::from_micros(1);
+        let rtt = RttEstimator::new(Duration::from_millis(100));
+        let mut controller = NewReno::new(Arc::new(NewRenoConfig::default()), now, 1200);
+
+        // First ACK: slow-start path (`window += bytes`).
+        controller.on_ack(now, sent, u64::MAX, false, &rtt);
+        assert_eq!(controller.window(), u64::MAX);
+
+        // Second ACK: congestion-avoidance path (`bytes_acked += bytes`, `window += mtu`).
+        controller.on_ack(now, sent, u64::MAX, false, &rtt);
+        assert_eq!(controller.window(), u64::MAX);
     }
 }

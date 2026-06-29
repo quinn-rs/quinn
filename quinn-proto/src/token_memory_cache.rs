@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, VecDeque, hash_map},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use bytes::Bytes;
@@ -29,11 +29,20 @@ impl TokenMemoryCache {
 impl TokenStore for TokenMemoryCache {
     fn insert(&self, server_name: &str, token: Bytes) {
         trace!(%server_name, "storing token");
-        self.0.lock().unwrap().store(server_name, token)
+        // A poisoned lock only means a previous holder panicked; the cache state is
+        // still a valid token store, so recover the guard rather than panicking.
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .store(server_name, token)
     }
 
     fn take(&self, server_name: &str) -> Option<Bytes> {
-        let token = self.0.lock().unwrap().take(server_name);
+        let token = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take(server_name);
         trace!(%server_name, found=%token.is_some(), "taking token");
         token
     }
