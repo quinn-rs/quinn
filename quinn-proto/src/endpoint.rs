@@ -8,7 +8,10 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
+use rand::{
+    Rng, RngExt, SeedableRng,
+    rngs::{StdRng, SysRng},
+};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
@@ -72,9 +75,12 @@ impl Endpoint {
         allow_mtud: bool,
         rng_seed: Option<[u8; 32]>,
     ) -> Self {
-        let rng_seed = rng_seed.or(config.rng_seed);
         Self {
-            rng: rng_seed.map_or(StdRng::from_os_rng(), StdRng::from_seed),
+            rng: match rng_seed.or(config.rng_seed) {
+                Some(seed) => StdRng::from_seed(seed),
+                None => StdRng::try_from_rng(&mut SysRng)
+                    .expect("failed to seed random number generator from system"),
+            },
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),

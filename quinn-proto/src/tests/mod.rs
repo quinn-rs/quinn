@@ -10,7 +10,7 @@ use assert_matches::assert_matches;
 use aws_lc_rs::hmac;
 use bytes::{Bytes, BytesMut};
 use hex_literal::hex;
-use rand::RngCore;
+use rand::Rng;
 #[cfg(feature = "ring")]
 use ring::hmac;
 #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
