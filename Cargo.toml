@@ -29,6 +29,7 @@ hdrhistogram = { version = "7.2", default-features = false }
 hex-literal = "1"
 lru-slab = "0.1.2"
 log = "0.4"
+parking_lot = "0.12.5"
 pin-project-lite = "0.2"
 qlog = "0.18"
 rand = "0.10.1"
