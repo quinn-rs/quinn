@@ -107,6 +107,7 @@ impl Controller for Cubic {
         now: Instant,
         sent: Instant,
         bytes: u64,
+        _pn: u64,
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
@@ -187,6 +188,7 @@ impl Controller for Cubic {
         is_persistent_congestion: bool,
         is_ecn: bool,
         _lost_bytes: u64,
+        _largest_lost: u64,
     ) {
         if self
             .state
@@ -259,6 +261,7 @@ impl Controller for Cubic {
             congestion_window: self.window(),
             ssthresh: Some(self.state.ssthresh),
             pacing_rate: None,
+            send_quantum: None,
         }
     }
 
@@ -319,7 +322,7 @@ mod tests {
         cubic.state.ssthresh = window;
         cubic.state.w_max = 12.0 * BASE_DATAGRAM_SIZE as f64;
 
-        cubic.on_congestion_event(now, now + Duration::from_millis(1), false, false, 0);
+        cubic.on_congestion_event(now, now + Duration::from_millis(1), false, false, 0, 0);
 
         assert_eq!(cubic.state.w_max, window as f64 * (1.0 + BETA_CUBIC) / 2.0);
         assert_eq!(cubic.state.ssthresh, (window as f64 * BETA_CUBIC) as u64);
@@ -347,6 +350,7 @@ mod tests {
             now,
             now + Duration::from_millis(1),
             BASE_DATAGRAM_SIZE,
+            0,
             false,
             &rtt,
         );
