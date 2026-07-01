@@ -2127,17 +2127,17 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.14"
+version = "0.5.15"
 dependencies = [
  "cfg_aliases",
  "criterion",
  "libc",
  "log",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tokio",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
