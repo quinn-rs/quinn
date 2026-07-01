@@ -3029,7 +3029,7 @@ impl Connection {
                     // timeout
                     if let Some(timeout) = space
                         .pending_acks
-                        .max_ack_delay_timeout(self.ack_frequency.max_ack_delay)
+                        .max_ack_delay_timeout(self.ack_frequency.max_ack_delay_timer())
                     {
                         self.timers.set(Timer::MaxAckDelay, timeout);
                     }
@@ -3060,8 +3060,10 @@ impl Connection {
             .pending_acks
             .packet_received(now, number, ack_eliciting, &space.dedup)
         {
-            self.timers
-                .set(Timer::MaxAckDelay, now + self.ack_frequency.max_ack_delay);
+            self.timers.set(
+                Timer::MaxAckDelay,
+                now + self.ack_frequency.max_ack_delay_timer(),
+            );
         }
 
         // Issue stream ID credit due to ACKs of outgoing finish/resets and incoming finish/resets
