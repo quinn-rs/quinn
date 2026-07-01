@@ -1210,6 +1210,75 @@ impl Incoming {
     pub fn orig_dst_cid(&self) -> ConnectionId {
         self.token.orig_dst_cid
     }
+
+    /// The TLS handshake bytes carried by the Initial packet, suitable for
+    /// inspecting the ClientHello before deciding whether to
+    /// [`accept`](Endpoint::accept) or [`ignore`](Endpoint::ignore) this
+    /// connection attempt.
+    ///
+    /// This decrypts the Initial packet's payload using the (publicly
+    /// derivable) Initial keys, walks the QUIC frames, and concatenates the
+    /// data carried by `CRYPTO` frames in offset order. Per RFC 9001 §4.1.3,
+    /// QUIC carries TLS handshake messages directly inside `CRYPTO` frames
+    /// with no intervening TLS record layer, so the returned bytes begin with
+    /// the TLS handshake message header (`0x01` = ClientHello, then a 3-byte
+    /// length, then the body).
+    ///
+    /// Returns an error if the packet fails AEAD authentication, if its
+    /// frames cannot be parsed, or if the `CRYPTO` frames are non-contiguous
+    /// from offset 0. Non-`CRYPTO` frames (e.g. `PADDING`, `PING`) are
+    /// ignored.
+    pub fn handshake_bytes(&self) -> Result<Vec<u8>, HandshakeBytesError> {
+        let packet_number = self.packet.header.number.expand(0);
+        let mut payload = self.packet.payload.clone();
+        self.crypto
+            .packet
+            .remote
+            .decrypt(packet_number, &self.packet.header_data, &mut payload)
+            .map_err(|_| HandshakeBytesError::Decrypt)?;
+
+        let mut chunks: Vec<(u64, Bytes)> = Vec::new();
+        let iter =
+            frame::Iter::new(payload.freeze()).map_err(|_| HandshakeBytesError::MalformedFrames)?;
+        for frame in iter {
+            // PADDING, PING, ACK, CONNECTION_CLOSE are legal in Initials —
+            // skip them. Anything else would be a protocol violation, but we
+            // leave that judgement to the post-accept handshake path.
+            if let frame::Frame::Crypto(c) =
+                frame.map_err(|_| HandshakeBytesError::MalformedFrames)?
+            {
+                chunks.push((c.offset, c.data));
+            }
+        }
+
+        chunks.sort_by_key(|(off, _)| *off);
+        let mut out = Vec::new();
+        let mut expected = 0u64;
+        for (off, data) in chunks {
+            if off != expected {
+                return Err(HandshakeBytesError::NonContiguous);
+            }
+            expected += data.len() as u64;
+            out.extend_from_slice(&data);
+        }
+
+        Ok(out)
+    }
+}
+
+/// Error returned by [`Incoming::handshake_bytes`].
+#[derive(Debug, Error)]
+pub enum HandshakeBytesError {
+    /// The Initial packet failed AEAD authentication.
+    #[error("initial packet failed authentication")]
+    Decrypt,
+    /// The Initial packet's frames could not be parsed.
+    #[error("malformed frames in initial packet")]
+    MalformedFrames,
+    /// `CRYPTO` frames in the Initial packet did not form a contiguous run
+    /// starting at offset 0.
+    #[error("CRYPTO frames in initial packet are not contiguous from offset 0")]
+    NonContiguous,
 }
 
 impl fmt::Debug for Incoming {
