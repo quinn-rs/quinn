@@ -311,6 +311,9 @@ pub(super) struct SentPacket {
 pub(super) struct LostPacket {
     /// The time the packet was sent.
     pub(super) time_sent: Instant,
+    /// How far the packet trailed the largest acknowledged packet number when it was declared
+    /// lost, used to adapt loss detection when the loss later proves spurious.
+    pub(super) displacement: u64,
 }
 
 /// Retransmittable data queue

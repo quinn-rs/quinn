@@ -1560,6 +1560,7 @@ impl Connection {
             return false;
         }
 
+        let mut max_displacement = 0;
         for range in ack.iter() {
             let spurious_losses: Vec<u64> = lost_packets
                 .range(range.clone())
@@ -1568,15 +1569,22 @@ impl Connection {
                 .collect();
 
             for pn in spurious_losses {
-                lost_packets.remove(&pn);
+                if let Some(info) = lost_packets.remove(&pn) {
+                    max_displacement = max_displacement.max(info.displacement);
+                }
             }
         }
+
+        // A spuriously declared loss means the packet was delivered, merely reordered. Adapt
+        // packet-count loss detection to the observed reordering (RFC 9002 §6.1.1) so benign
+        // reordering of similar magnitude no longer triggers spurious retransmits.
+        self.path.observed_reordering = self.path.observed_reordering.max(max_displacement);
 
         // If this ACK frame acknowledged all deemed lost packets,
         // then we have raised a spurious congestion event in the past.
         // We cannot conclude when there are remaining packets,
         // but future ACK frames might indicate a spurious loss detection.
-        lost_packets.is_empty()
+        self.spaces[space].lost_packets.is_empty()
     }
 
     /// Drain lost packets that we reasonably think will never arrive
@@ -1703,7 +1711,15 @@ impl Connection {
         let loss_delay = cmp::max(rtt.mul_f32(self.config.time_threshold), TIMER_GRANULARITY);
 
         let largest_acked_packet = self.spaces[pn_space].largest_acked_packet.unwrap();
-        let packet_threshold = self.config.packet_threshold as u64;
+        // Adapt to reordering observed on this path: spurious loss declarations (packets that
+        // were delivered but deemed lost) raise the effective packet threshold above the largest
+        // reordering displacement seen, with 25% headroom for variance (RFC 9002 §6.1.1 endorses
+        // adapting to observed reordering; cf. TCP RACK's reordering window). The configured
+        // `packet_threshold` remains the floor, so paths without spurious losses are unaffected,
+        // and time-based detection continues to bound recovery latency regardless.
+        let reordering = self.path.observed_reordering;
+        let packet_threshold =
+            (self.config.packet_threshold as u64).max(reordering + (reordering >> 2) + 1);
         let mut size_of_lost_packets = 0u64;
 
         // InPersistentCongestion: Determine if all packets in the time period before the newest
@@ -1804,6 +1820,7 @@ impl Connection {
                     packet,
                     LostPacket {
                         time_sent: info.time_sent,
+                        displacement: largest_acked_packet - packet,
                     },
                 );
             }

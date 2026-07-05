@@ -39,6 +39,11 @@ pub(super) struct PathData {
     ///
     /// Used in persistent congestion determination.
     pub(super) first_packet_after_rtt_sample: Option<(SpaceId, u64)>,
+    /// Largest packet-number reordering displacement observed via spuriously declared losses
+    ///
+    /// Used to adapt the packet-count loss threshold to reordering on this path
+    /// (RFC 9002 §6.1.1).
+    pub(super) observed_reordering: u64,
     pub(super) in_flight: InFlight,
     /// Number of the first packet sent on this path
     ///
@@ -100,6 +105,7 @@ impl PathData {
                     },
                 ),
             first_packet_after_rtt_sample: None,
+            observed_reordering: 0,
             in_flight: InFlight::new(),
             first_packet: None,
             #[cfg(feature = "qlog")]
@@ -135,6 +141,7 @@ impl PathData {
             total_recvd: 0,
             mtud: prev.mtud.clone(),
             first_packet_after_rtt_sample: prev.first_packet_after_rtt_sample,
+            observed_reordering: prev.observed_reordering,
             in_flight: InFlight::new(),
             first_packet: None,
             #[cfg(feature = "qlog")]
