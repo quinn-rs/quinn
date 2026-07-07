@@ -210,6 +210,60 @@ fn gso() {
     );
 }
 
+/// A GSO transmit whose total size exceeds the kernel's per-`sendmsg` limit
+/// (`u16::MAX` bytes) must be split into multiple syscalls — and every split
+/// must land on a segment boundary, or the kernel emits a short datagram in the
+/// middle of the stream and shifts every segment after it. This is only
+/// observable against a real kernel that actually performs the segmentation.
+///
+/// Gated to Linux/Android: the oversized-send chunking lives in the unix
+/// `send` path, whereas Windows issues a single `WSASendMsg` with no chunking
+/// (and would reject a transmit this large outright).
+#[test]
+#[cfg_attr(not(any(target_os = "linux", target_os = "android")), ignore)]
+fn gso_oversized_transmit_is_sliced() {
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+
+    let max_segments = UdpSocketState::new((&send).into())
+        .unwrap()
+        .max_gso_segments();
+
+    const SEGMENT_SIZE: usize = 1200;
+    let total = SEGMENT_SIZE * max_segments;
+    if max_segments <= 1 || total <= u16::MAX as usize {
+        // GSO unavailable, or the segment budget is too small to build a
+        // transmit that overflows a single `sendmsg`. Nothing to slice.
+        return;
+    }
+
+    // Fill each segment with a distinct byte so a misaligned split (which would
+    // straddle two segments) shows up as a content mismatch.
+    let msg: Vec<u8> = (0..total).map(|i| (i / SEGMENT_SIZE) as u8).collect();
+
+    let dst_addr = recv.local_addr().unwrap();
+    let recv: Socket = recv.into();
+    // `try_send` queues every byte before the receiver drains, so all the
+    // fanned-out datagrams must fit in the receive buffer at once.
+    recv.set_recv_buffer_size(4 << 20).ok();
+
+    test_send_recv(
+        &send.into(),
+        &recv,
+        Transmit {
+            destination: dst_addr,
+            ecn: None,
+            contents: &msg,
+            segment_size: Some(SEGMENT_SIZE),
+            src_ip: None,
+        },
+    );
+}
+
 #[test]
 fn socket_buffers() {
     const BUFFER_SIZE: usize = 123456;
