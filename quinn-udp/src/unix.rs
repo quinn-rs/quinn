@@ -474,6 +474,14 @@ fn send(
                             "`libc::sendmsg` failed with {e}; halting segmentation offload"
                         );
                         state.max_gso_segments.store(1, Ordering::Relaxed);
+
+                        // Immediately retry this batch as individual datagrams rather than waiting
+                        // for the upper layer to time out and retransmit. These sends run with GSO
+                        // now disabled, so a repeated failure falls through here instead of
+                        // recursing.
+                        if let Some(segment_size) = transmit.segment_size {
+                            return send_individual_datagrams(state, io, transmit, segment_size);
+                        }
                     }
                 }
 
@@ -499,6 +507,33 @@ fn send(
             }
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn send_individual_datagrams(
+    state: &UdpSocketState,
+    io: SockRef<'_>,
+    transmit: &Transmit<'_>,
+    segment_size: usize,
+) -> io::Result<()> {
+    debug_assert!(segment_size > 0, "GSO batch with a zero segment size");
+
+    for contents in transmit.contents.chunks(segment_size) {
+        let io = SockRef::from(&*io);
+        send(
+            state,
+            io,
+            &Transmit {
+                destination: transmit.destination,
+                ecn: transmit.ecn,
+                contents,
+                segment_size: None,
+                src_ip: transmit.src_ip,
+            },
+        )?;
+    }
+
+    Ok(())
 }
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
