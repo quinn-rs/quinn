@@ -7,25 +7,26 @@ As QUIC uses TLS 1.3 for authentication of connections, the server needs to prov
 ## Insecure Connection
 
 For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!).
-When the [rustls][3] `dangerous_configuration` feature flag is enabled, a client can be configured to trust any server.
+With [rustls][3]'s dangerous client configuration API, a client can be configured to trust any server.
 
-Start by adding a [rustls][3] dependency with the `dangerous_configuration` feature flag to your `Cargo.toml` file.
+Start by adding [rustls][3] and provider dependencies to your `Cargo.toml` file.
 
 ```toml
-quinn = "0.11"
-rustls = "0.23"
+quinn = "0.12"
+rustls = "0.24"
+rustls-ring = "0.1"
 ```
 
-Then, allow the client to skip the certificate validation by implementing [ServerCertVerifier][ServerCertVerifier] and letting it assert verification for any server.
+Then, allow the client to skip the certificate validation by implementing [ServerVerifier][ServerVerifier] and letting it assert verification for any server.
 
 ```rust
-{{#include ../bin/certificate.rs:36:88}}
+{{#include ../bin/certificate.rs:30:75}}
 ```
 
-After that, modify the [ClientConfig][ClientConfig] to use this [ServerCertVerifier][ServerCertVerifier] implementation.
+After that, modify the [ClientConfig][ClientConfig] to use this [ServerVerifier][ServerVerifier] implementation.
 
 ```rust
-{{#include ../bin/certificate.rs:25:34}}
+{{#include ../bin/certificate.rs:19:28}}
 ```
 
 Finally, if you plug this [ClientConfig][ClientConfig] into the [Endpoint::set_default_client_config()][set_default_client_config] your client endpoint should verify all connections as trustworthy.
@@ -45,7 +46,7 @@ This example uses [rcgen][4] to generate a certificate.
 Let's look at an example:
 
 ```rust
-{{#include ../bin/certificate.rs:90:96}}
+{{#include ../bin/certificate.rs:77:83}}
 ```
 
 _Note that [generate_simple_self_signed][generate_simple_self_signed] returns a [Certificate][2] that can be serialized to both `.der` and `.pem` formats._
@@ -68,7 +69,7 @@ certbot asks for the required data and writes the certificates to `fullchain.pem
 These files can then be referenced in code.
 
 ```rust
-{{#include ../bin/certificate.rs:98:106}}
+{{#include ../bin/certificate.rs:85:93}}
 ```
 
 ### Configuring Certificates
@@ -79,7 +80,7 @@ After configuring plug the configuration into the `Endpoint`.
 **Configure Server**
 
 ```rust
-{{#include ../bin/certificate.rs:20}}
+{{#include ../bin/certificate.rs:14}}
 ```
 
 This is the only thing you need to do for your server to be secured.
@@ -87,7 +88,7 @@ This is the only thing you need to do for your server to be secured.
 **Configure Client**
 
 ```rust
-{{#include ../bin/certificate.rs:21}}
+{{#include ../bin/certificate.rs:15}}
 ```
 
 This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.
@@ -104,7 +105,7 @@ This is the only thing you need to do for your client to trust a server certific
 [6]: https://letsencrypt.org/getting-started/
 [7]: https://certbot.eff.org/instructions
 [ClientConfig]: https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html
-[ServerCertVerifier]: https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html
+[ServerVerifier]: https://docs.rs/rustls/latest/rustls/client/danger/trait.ServerVerifier.html
 [set_default_client_config]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.set_default_client_config
 [generate_simple_self_signed]: https://docs.rs/rcgen/latest/rcgen/fn.generate_simple_self_signed.html
 [Certificate]: https://docs.rs/rcgen/latest/rcgen/struct.Certificate.html

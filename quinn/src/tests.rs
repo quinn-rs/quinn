@@ -1,10 +1,5 @@
 #![cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 
-#[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-use rustls::crypto::aws_lc_rs::default_provider;
-#[cfg(feature = "rustls-ring")]
-use rustls::crypto::ring::default_provider;
-
 use std::{
     convert::TryInto,
     future::Future,
@@ -26,6 +21,7 @@ use proto::{RandomConnectionIdGenerator, crypto::rustls::QuicClientConfig};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustls::{
     RootCertStore,
+    crypto::Identity,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
 };
 use tokio::time::{sleep, timeout};
@@ -38,6 +34,31 @@ use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
 use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
+
+#[cfg(all(feature = "rustls-aws-lc-rs-fips", not(feature = "rustls-ring")))]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls::crypto::CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::SECP256R1]),
+        ..rustls_aws_lc_rs::DEFAULT_FIPS_PROVIDER
+    }
+}
+
+#[cfg(all(
+    feature = "rustls-aws-lc-rs",
+    not(feature = "rustls-aws-lc-rs-fips"),
+    not(feature = "rustls-ring")
+))]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls::crypto::CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::X25519]),
+        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
+    }
+}
+
+#[cfg(feature = "rustls-ring")]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls_ring::DEFAULT_PROVIDER
+}
 
 #[test]
 fn handshake_timeout() {
@@ -291,14 +312,24 @@ impl EndpointFactory {
     }
 
     fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
+        let cert = self.cert.cert.der().clone();
         let key = PrivateKeyDer::Pkcs8(self.cert.signing_key.serialize_der().into());
         let transport_config = Arc::new(transport_config);
-        let mut server_config =
-            crate::ServerConfig::with_single_cert(vec![self.cert.cert.der().clone()], key).unwrap();
+        let mut server_crypto = rustls::ServerConfig::builder(Arc::new(default_provider()))
+            .with_no_client_auth()
+            .with_single_cert(
+                Arc::new(Identity::from_cert_chain(vec![cert.clone()]).unwrap()),
+                key,
+            )
+            .unwrap();
+        server_crypto.max_early_data_size = u32::MAX;
+        let mut server_config = crate::ServerConfig::with_crypto(Arc::new(
+            crate::crypto::rustls::QuicServerConfig::try_from(server_crypto).unwrap(),
+        ));
         server_config.transport_config(transport_config.clone());
 
         let mut roots = RootCertStore::empty();
-        roots.add(self.cert.cert.der().clone()).unwrap();
+        roots.add(cert).unwrap();
         let endpoint = Endpoint::new(
             self.endpoint_config.clone(),
             Some(server_config),
@@ -306,7 +337,13 @@ impl EndpointFactory {
             Arc::new(TokioRuntime),
         )
         .unwrap();
-        let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
+        let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+            .unwrap();
+        client_crypto.enable_early_data = true;
+        let mut client_config =
+            ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
         client_config.transport_config(transport_config);
         endpoint.set_default_client_config(client_config);
 
@@ -528,13 +565,11 @@ fn run_echo(args: EchoArgs) {
 
         let mut roots = RootCertStore::empty();
         roots.add(cert).unwrap();
-        let mut client_crypto =
-            rustls::ClientConfig::builder_with_provider(default_provider().into())
-                .with_safe_default_protocol_versions()
-                .unwrap()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-        client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+            .unwrap();
+        client_crypto.key_log = Arc::new(rustls_util::KeyLogFile::new());
 
         let client = {
             let _guard = runtime.enter();

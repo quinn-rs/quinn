@@ -388,6 +388,7 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
+ "rustls-aws-lc-rs",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -456,6 +457,7 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
+ "rustls-ring",
 ]
 
 [[package]]
@@ -1812,6 +1814,8 @@ dependencies = [
  "quinn-proto",
  "rcgen",
  "rustls",
+ "rustls-aws-lc-rs",
+ "rustls-util",
  "serde",
  "serde_json",
  "socket2",
@@ -1981,6 +1985,9 @@ dependencies = [
  "rcgen",
  "rustc-hash",
  "rustls",
+ "rustls-aws-lc-rs",
+ "rustls-ring",
+ "rustls-util",
  "smol",
  "socket2",
  "thiserror 2.0.18",
@@ -2011,8 +2018,11 @@ dependencies = [
  "ring",
  "rustc-hash",
  "rustls",
+ "rustls-aws-lc-rs",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "rustls-ring",
+ "rustls-util",
  "slab",
  "thiserror 2.0.18",
  "tinyvec",
@@ -2199,14 +2209,11 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.41"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b92b125634d9b795e7beca796cc790df15a7fb38323bf3196fda83292d06b1f"
+version = "0.24.0-dev.0"
+source = "git+https://github.com/rustls/rustls.git?branch=main#d61b9270adc750375e8fee0cf71c0837c499beac"
 dependencies = [
- "aws-lc-rs",
  "log",
  "once_cell",
- "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -2214,10 +2221,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-aws-lc-rs"
+version = "0.1.0-dev.0"
+source = "git+https://github.com/rustls/rustls.git?branch=main#d61b9270adc750375e8fee0cf71c0837c499beac"
+dependencies = [
+ "aws-lc-rs",
+ "rustls",
+ "rustls-pki-types",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "rustls-native-certs"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
+checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",
@@ -2237,9 +2256,8 @@ dependencies = [
 
 [[package]]
 name = "rustls-platform-verifier"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26d1e2536ce4f35f4846aa13bff16bd0ff40157cdb14cc056c7b14ba41233ba0"
+version = "0.8.0"
+source = "git+https://github.com/iadev09/rustls-platform-verifier.git?rev=05cefce8d045ca21010f2f9aa952d7a821c1f429#05cefce8d045ca21010f2f9aa952d7a821c1f429"
 dependencies = [
  "core-foundation",
  "core-foundation-sys",
@@ -2253,23 +2271,40 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
 name = "rustls-platform-verifier-android"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
+source = "git+https://github.com/iadev09/rustls-platform-verifier.git?rev=05cefce8d045ca21010f2f9aa952d7a821c1f429#05cefce8d045ca21010f2f9aa952d7a821c1f429"
+
+[[package]]
+name = "rustls-ring"
+version = "0.1.0-dev.0"
+source = "git+https://github.com/rustls/rustls.git?branch=main#d61b9270adc750375e8fee0cf71c0837c499beac"
+dependencies = [
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "subtle",
+]
+
+[[package]]
+name = "rustls-util"
+version = "0.1.0"
+source = "git+https://github.com/rustls/rustls.git?branch=main#d61b9270adc750375e8fee0cf71c0837c499beac"
+dependencies = [
+ "log",
+ "rustls",
+]
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.104.0-alpha.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "bea702cca24d344fc70973022bf7eb920c224e318466eb49784272337dd24b1a"
 dependencies = [
- "aws-lc-rs",
- "ring",
  "rustls-pki-types",
  "untrusted",
 ]
@@ -2379,9 +2414,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
+checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
 dependencies = [
  "serde_core",
  "serde_with_macros",
@@ -2389,9 +2424,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
+checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -2483,9 +2518,9 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.6.4"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
+checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",

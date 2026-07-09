@@ -13,12 +13,11 @@ use hex_literal::hex;
 use rand::Rng;
 #[cfg(feature = "ring")]
 use ring::hmac;
-#[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-use rustls::crypto::aws_lc_rs::default_provider;
-#[cfg(feature = "rustls-ring")]
-use rustls::crypto::ring::default_provider;
 use rustls::{
-    AlertDescription, RootCertStore,
+    RootCertStore,
+    crypto::Identity,
+    enums::{ApplicationProtocol, ProtocolVersion},
+    error::AlertDescription,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     server::WebPkiClientVerifier,
 };
@@ -146,11 +145,11 @@ fn lifecycle() {
 }
 
 #[test]
-fn draft_version_compat() {
+fn compatible_version() {
     let _guard = subscribe();
 
     let mut client_config = client_config();
-    client_config.version(0xff00_0020);
+    client_config.version(0xff00_0022);
 
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect_with(client_config);
@@ -296,14 +295,14 @@ fn export_keying_material() {
     // client keying material
     let mut client_buf = [0u8; 64];
     pair.client_conn_mut(client_ch)
-        .crypto_session()
+        .crypto_session_mut()
         .export_keying_material(&mut client_buf, LABEL, CONTEXT)
         .unwrap();
 
     // server keying material
     let mut server_buf = [0u8; 64];
     pair.server_conn_mut(server_ch)
-        .crypto_session()
+        .crypto_session_mut()
         .export_keying_material(&mut server_buf, LABEL, CONTEXT)
         .unwrap();
 
@@ -436,7 +435,7 @@ fn reject_self_signed_server_cert() {
 
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
-                    if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCA.into()));
+                    if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCa.into()));
 }
 
 #[test]
@@ -451,16 +450,17 @@ fn reject_missing_client_cert() {
     let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.signing_key.serialize_der());
     let cert = CERTIFIED_KEY.cert.der().clone();
 
-    let provider = Arc::new(default_provider());
-    let config = rustls::ServerConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_client_cert_verifier(
-            WebPkiClientVerifier::builder_with_provider(Arc::new(store), provider)
+    let provider = crypto::rustls::configured_provider();
+    let config = rustls::ServerConfig::builder(provider.clone())
+        .with_client_cert_verifier(Arc::new(
+            WebPkiClientVerifier::builder(Arc::new(store), &provider)
                 .build()
                 .unwrap(),
+        ))
+        .with_single_cert(
+            Arc::new(Identity::from_cert_chain(vec![cert]).unwrap()),
+            PrivateKeyDer::from(key),
         )
-        .with_single_cert(vec![cert], PrivateKeyDer::from(key))
         .unwrap();
     let config = QuicServerConfig::try_from(config).unwrap();
 
@@ -647,7 +647,7 @@ fn zero_rtt_rejection() {
     // the existing `ClientConfig` and change the ALPN protocols to make that happen.
     let this = Arc::get_mut(&mut client_crypto).expect("QuicClientConfig is shared");
     let inner = Arc::get_mut(&mut this.inner).expect("QuicClientConfig.inner is shared");
-    inner.alpn_protocols = vec!["bar".into()];
+    inner.alpn_protocols = vec![ApplicationProtocol::from(b"bar")];
 
     // Changing protocols invalidates 0-RTT
     let client_config = ClientConfig::new(client_crypto);
@@ -845,13 +845,13 @@ fn alpn_success() {
     assert_eq!(
         hd.protocol_version
             .unwrap()
-            .downcast_ref::<rustls::ProtocolVersion>(),
-        Some(&rustls::ProtocolVersion::TLSv1_3)
+            .downcast_ref::<ProtocolVersion>(),
+        Some(&ProtocolVersion::TLSv1_3)
     );
     assert!(
         hd.cipher_suite
             .unwrap()
-            .downcast_ref::<rustls::CipherSuite>()
+            .downcast_ref::<rustls::crypto::CipherSuite>()
             .is_some()
     );
 }

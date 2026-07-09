@@ -20,6 +20,16 @@ use url::Url;
 
 mod common;
 
+#[cfg(feature = "rustls-aws-lc-rs")]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls_aws_lc_rs::DEFAULT_PROVIDER
+}
+
+#[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-ring"))]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls_ring::DEFAULT_PROVIDER
+}
+
 /// HTTP/0.9 over QUIC client
 #[derive(Parser, Debug)]
 #[clap(name = "client")]
@@ -92,13 +102,13 @@ async fn run(options: Opt) -> Result<()> {
             }
         }
     }
-    let mut client_crypto = rustls::ClientConfig::builder()
+    let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
         .with_root_certificates(roots)
-        .with_no_client_auth();
+        .with_no_client_auth()?;
 
     client_crypto.alpn_protocols = common::ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
     if options.keylog {
-        client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        client_crypto.key_log = Arc::new(rustls_util::KeyLogFile::new());
     }
 
     let client_config =

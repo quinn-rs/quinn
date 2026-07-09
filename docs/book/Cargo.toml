@@ -14,3 +14,4 @@ bytes = { workspace = true }
 quinn = { version = "0.12.0", path = "../../quinn" }
 rcgen.workspace = true
 rustls.workspace = true
+rustls-ring.workspace = true
