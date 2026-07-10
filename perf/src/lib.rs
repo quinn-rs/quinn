@@ -56,6 +56,12 @@ pub struct CommonOpt {
     /// Ack Frequency mode
     #[clap(long = "ack-frequency")]
     pub ack_frequency: bool,
+    /// ECN mode to use
+    ///
+    /// NOTE: this does not guarantee that ECN will actually be used, as it also depends on
+    /// support from the network path (e.g., network queues in routers) and the remote peer.
+    #[clap(long = "ecn", default_value = "classic")]
+    pub ecn: EcnMode,
     /// Congestion algorithm to use
     #[clap(long = "congestion")]
     pub cong_alg: Option<CongestionAlgorithm>,
@@ -121,6 +127,8 @@ impl CommonOpt {
         if let Some(send_window) = self.send_window {
             transport.send_window(send_window);
         }
+
+        transport.enable_ecn(self.ecn.into());
 
         #[cfg(feature = "qlog")]
         if let Some(qlog_file) = &self.qlog_file {
@@ -197,11 +205,34 @@ pub fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
     Ok(u64::from_str(s)? * multiplier)
 }
 
+/// Mode of operation for Explicit Congestion Notification (ECN)
+///
+/// NOTE: all this boilerplate-like code is here to avoid adding a trait
+/// from clap (a library crate for CLI applications -- binary crates) to a
+/// library crate.
+#[derive(Clone, Copy, ValueEnum)]
+pub enum EcnMode {
+    Disabled,
+    Classic,
+    L4S,
+}
+
+impl From<EcnMode> for quinn_proto::EcnMode {
+    fn from(mode: EcnMode) -> Self {
+        match mode {
+            EcnMode::Disabled => Self::Disabled,
+            EcnMode::Classic => Self::Classic,
+            EcnMode::L4S => Self::L4S,
+        }
+    }
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 pub enum CongestionAlgorithm {
     Cubic,
     Bbr,
     NewReno,
+    Prague,
 }
 
 impl CongestionAlgorithm {
@@ -210,6 +241,7 @@ impl CongestionAlgorithm {
             Self::Cubic => Arc::new(congestion::CubicConfig::default()),
             Self::Bbr => Arc::new(congestion::BbrConfig::default()),
             Self::NewReno => Arc::new(congestion::NewRenoConfig::default()),
+            Self::Prague => Arc::new(congestion::PragueConfig::default()),
         }
     }
 }

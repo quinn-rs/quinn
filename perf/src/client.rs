@@ -165,6 +165,7 @@ pub async fn run(opt: Opt) -> Result<()> {
     let mut stats = Stats::default();
 
     let stats_fut = async {
+        let total_duration = Duration::from_secs(opt.duration);
         let interval_duration = Duration::from_secs(opt.interval);
 
         #[cfg(feature = "json-output")]
@@ -172,9 +173,16 @@ pub async fn run(opt: Opt) -> Result<()> {
         #[cfg(not(feature = "json-output"))]
         let allow_table_output = true;
 
+        // Periodically report statistics.
         loop {
+            let elapsed = stats.elapsed_since_start();
+            let remaining = total_duration.saturating_sub(elapsed);
+            if remaining.is_zero() {
+                break;
+            }
+
             let start = Instant::now();
-            tokio::time::sleep(interval_duration).await;
+            tokio::time::sleep(interval_duration.min(remaining)).await;
             {
                 stats.on_interval(start, &stream_stats);
 
@@ -189,16 +197,15 @@ pub async fn run(opt: Opt) -> Result<()> {
     };
 
     tokio::select! {
-        _ = drive_fut => {}
-        _ = stats_fut => {}
+        _ = drive_fut => {
+            connection.close(0u32.into(), b"finished");
+        }
+        _ = stats_fut => {
+            connection.close(0u32.into(), b"time is up");
+        }
         _ = tokio::signal::ctrl_c() => {
             info!("shutting down");
             connection.close(0u32.into(), b"interrupted");
-        }
-        // Add a small duration so the final interval can be reported
-        _ = tokio::time::sleep(Duration::from_secs(opt.duration) + Duration::from_millis(200)) => {
-            info!("shutting down");
-            connection.close(0u32.into(), b"done");
         }
     }
 
@@ -243,7 +250,8 @@ async fn drain_stream(
             first_byte = false;
         }
         let bytes_received = bufs[..size].iter().map(|b| b.len()).sum();
-        recv_stream_stats.on_bytes(bytes_received);
+        let path_stats = stream.path_stats();
+        recv_stream_stats.on_bytes(bytes_received, path_stats.rtt, path_stats.rttvar);
     }
 
     if first_byte {
@@ -288,40 +296,45 @@ async fn drive_uni(
 async fn request_uni(
     send: quinn::SendStream,
     conn: quinn::Connection,
-    upload: u64,
-    download: u64,
+    upload_size: u64,
+    download_size: u64,
     stream_stats: OpenStreamStats,
 ) -> Result<()> {
-    request(send, upload, download, stream_stats.clone()).await?;
+    request(send, upload_size, download_size, stream_stats.clone()).await?;
     let recv = conn.accept_uni().await?;
-    drain_stream(recv, download, stream_stats).await?;
+    drain_stream(recv, download_size, stream_stats).await?;
     Ok(())
 }
 
 async fn request(
     mut send: quinn::SendStream,
-    mut upload: u64,
-    download: u64,
+    mut upload_size: u64,
+    download_size: u64,
     stream_stats: OpenStreamStats,
 ) -> Result<()> {
     let upload_start = Instant::now();
-    send.write_all(&download.to_be_bytes()).await?;
-    if upload == 0 {
+
+    send.write_all(&download_size.to_be_bytes()).await?;
+    if upload_size == 0 {
         send.finish().unwrap();
         return Ok(());
     }
 
-    let send_stream_stats = stream_stats.new_sender(&send, upload);
+    let send_stream_stats = stream_stats.new_sender(&send, upload_size);
 
     static DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
-    while upload > 0 {
-        let chunk_len = upload.min(DATA.len() as u64);
+    while upload_size > 0 {
+        let chunk_len = upload_size.min(DATA.len() as u64);
         send.write_chunk(Bytes::from_static(&DATA[..chunk_len as usize]))
             .await
             .context("sending response")?;
-        send_stream_stats.on_bytes(chunk_len as usize);
-        upload -= chunk_len;
+
+        let path_stats = send.path_stats();
+        send_stream_stats.on_bytes(chunk_len as usize, path_stats.rtt, path_stats.rttvar);
+
+        upload_size -= chunk_len;
     }
+
     send.finish().unwrap();
     // Wait for stream to close
     _ = send.stopped().await;
@@ -335,8 +348,8 @@ async fn drive_bi(
     connection: quinn::Connection,
     stream_stats: OpenStreamStats,
     concurrency: u64,
-    upload: u64,
-    download: u64,
+    upload_size: u64,
+    download_size: u64,
 ) -> Result<()> {
     if concurrency == 0 {
         return Ok(());
@@ -351,7 +364,7 @@ async fn drive_bi(
 
         debug!("sending request on {}", send.id());
         tokio::spawn(async move {
-            if let Err(e) = request_bi(send, recv, upload, download, stream_stats).await {
+            if let Err(e) = request_bi(send, recv, upload_size, download_size, stream_stats).await {
                 error!("request failed: {:#}", e);
             }
 
@@ -363,12 +376,12 @@ async fn drive_bi(
 async fn request_bi(
     send: quinn::SendStream,
     recv: quinn::RecvStream,
-    upload: u64,
-    download: u64,
+    upload_size: u64,
+    download_size: u64,
     stream_stats: OpenStreamStats,
 ) -> Result<()> {
-    request(send, upload, download, stream_stats.clone()).await?;
-    drain_stream(recv, download, stream_stats).await?;
+    request(send, upload_size, download_size, stream_stats.clone()).await?;
+    drain_stream(recv, download_size, stream_stats).await?;
     Ok(())
 }
 
