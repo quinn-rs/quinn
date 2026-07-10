@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-0392ca55.css">
-        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-212f7d85.js";
+            window.path_to_searchindex_js = "searchindex-6057e2c4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fe9b6941.js"></script>
@@ -208,7 +208,7 @@ It has several difficulties that QUIC tries to resolve.</p>
 It is a convenient feature because it ensures that all packages are sent and arrive in order.
 However, in cases of high throughput (multiplayer game networking) and big load in a short time (web page load), this can severely impact latency.</p>
 <p>The issue is demonstrated in the following animation:</p>
-<p><img src="./images/hol.gif" alt="Head of line blocking"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="./images/hol.gif" alt="Head of line blocking"><span class="img-wrapper"><img src="./images/hol.gif" alt="Head of line blocking"></span></label></p>
 <p>This animation shows that if a certain packet drops in transmission, all packets have to wait at the transport layer until it is resent by the other end. Once the delayed packet arrives at its destination, all later packets are passed on to the destination application together.</p>
 <p>Let’s look at two areas where head-of-line blocking causes problems.</p>
 <p><strong>Web Networking</strong></p>
@@ -260,7 +260,7 @@ However, data loss of a single packet will still block all response streams beca
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-c22b7243.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 
