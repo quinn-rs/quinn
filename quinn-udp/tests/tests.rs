@@ -1,10 +1,11 @@
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 use std::net::{SocketAddr, SocketAddrV6};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::time::Duration;
 use std::{
     io::IoSliceMut,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, UdpSocket},
     slice,
-    time::Duration,
 };
 
 use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
