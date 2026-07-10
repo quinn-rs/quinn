@@ -8,10 +8,12 @@ use std::sync::Arc;
 mod bbr;
 mod cubic;
 mod new_reno;
+mod prague;
 
 pub use bbr::{Bbr, BbrConfig};
 pub use cubic::{Cubic, CubicConfig};
 pub use new_reno::{NewReno, NewRenoConfig};
+pub use prague::{Prague, PragueConfig};
 
 /// Common interface for different congestion controllers
 pub trait Controller: Send + Sync {
