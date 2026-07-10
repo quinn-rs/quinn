@@ -479,7 +479,9 @@ fn send(
 
                 // Some arguments to `sendmsg` are not supported. Switch to
                 // fallback mode and retry if we haven't already.
-                if e.raw_os_error() == Some(libc::EINVAL) && !state.sendmsg_einval() {
+                if matches!(e.raw_os_error(), Some(libc::EINVAL) | Some(libc::EIO))
+                    && !state.sendmsg_einval()
+                {
                     state.set_sendmsg_einval();
                     prepare_msg(
                         transmit,
