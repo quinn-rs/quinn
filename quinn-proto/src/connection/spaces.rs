@@ -10,6 +10,7 @@ use rustc_hash::FxHashSet;
 use tracing::trace;
 
 use super::assembler::Assembler;
+use super::sent_packets::SentPackets;
 use crate::{
     Dir, Duration, Instant, SocketAddr, StreamId, TransportError, VarInt, connection::StreamsState,
     crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet, shared::IssuedCid,
@@ -37,8 +38,7 @@ pub(super) struct PacketSpace {
     /// Number of packets in `sent_packets` with numbers above `largest_ack_eliciting_sent`
     pub(super) unacked_non_ack_eliciting_tail: u64,
     /// Transmitted but not acked
-    // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
-    pub(super) sent_packets: BTreeMap<u64, SentPacket>,
+    pub(super) sent_packets: SentPackets,
     /// Packets that were deemed lost
     // Older packets are regularly removed in `Connection::drain_lost_packets`.
     pub(super) lost_packets: BTreeMap<u64, LostPacket>,
@@ -86,7 +86,7 @@ impl PacketSpace {
             largest_acked_packet_sent: now,
             largest_ack_eliciting_sent: 0,
             unacked_non_ack_eliciting_tail: 0,
-            sent_packets: BTreeMap::new(),
+            sent_packets: SentPackets::default(),
             lost_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
@@ -209,7 +209,7 @@ impl PacketSpace {
 
     /// Stop tracking sent packet `number`, and return what we knew about it
     pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
-        let packet = self.sent_packets.remove(&number)?;
+        let packet = self.sent_packets.remove(number)?;
         if !packet.ack_eliciting && number > self.largest_ack_eliciting_sent {
             self.unacked_non_ack_eliciting_tail =
                 self.unacked_non_ack_eliciting_tail.checked_sub(1).unwrap();
@@ -232,7 +232,7 @@ impl PacketSpace {
             self.unacked_non_ack_eliciting_tail = 0;
             self.largest_ack_eliciting_sent = number;
         } else if self.unacked_non_ack_eliciting_tail > MAX_UNACKED_NON_ACK_ELICTING_TAIL {
-            let oldest_after_ack_eliciting = *self
+            let oldest_after_ack_eliciting = self
                 .sent_packets
                 .range((
                     Bound::Excluded(self.largest_ack_eliciting_sent),
@@ -247,7 +247,7 @@ impl PacketSpace {
             // in-flight counters if padded.
             let packet = self
                 .sent_packets
-                .remove(&oldest_after_ack_eliciting)
+                .remove(oldest_after_ack_eliciting)
                 .unwrap();
             debug_assert!(!packet.ack_eliciting);
             forgotten = Some(packet);
