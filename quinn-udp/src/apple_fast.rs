@@ -60,6 +60,7 @@ fn send_via_sendmsg_x(
             state.sendmsg_einval(),
         );
         hdrs[i].msg_datalen = chunk.len();
+        state.check_send_buffer_limit(chunk.len(), &hdrs[i])?;
         cnt += 1;
     }
     let Some(sendmsg_x) = state.resolve_apple_fast_fn(sendmsg_x_fn) else {
