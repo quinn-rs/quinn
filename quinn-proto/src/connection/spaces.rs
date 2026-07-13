@@ -261,10 +261,7 @@ impl PacketSpace {
 
     /// Whether any congestion-controlled packets in this space are not yet acknowledged or lost
     pub(super) fn has_in_flight(&self) -> bool {
-        // The number of non-congestion-controlled (i.e. size == 0) packets in flight at a time
-        // should be small, since otherwise congestion control wouldn't be effective. Therefore,
-        // this shouldn't need to visit many packets before finishing one way or another.
-        self.sent_packets.values().any(|x| x.size != 0)
+        self.sent_packets.has_in_flight()
     }
 }
 

@@ -13,6 +13,8 @@ pub(super) struct SentPackets {
     offset: u64,
     /// `slots[i]` holds packet number `offset + i`, or `None` if removed or skipped.
     slots: VecDeque<Option<SentPacket>>,
+    /// Count of present entries with `size != 0`, for O(1) `has_in_flight`.
+    in_flight: usize,
 }
 
 impl SentPackets {
@@ -29,6 +31,9 @@ impl SentPackets {
         let index = (pn - self.offset) as usize;
         // Pad skipped packet numbers.
         self.slots.resize(index, None);
+        if value.size != 0 {
+            self.in_flight += 1;
+        }
         self.slots.push_back(Some(value));
     }
 
@@ -36,6 +41,9 @@ impl SentPackets {
     pub(super) fn remove(&mut self, pn: u64) -> Option<SentPacket> {
         let index = usize::try_from(pn.checked_sub(self.offset)?).ok()?;
         let value = self.slots.get_mut(index)?.take()?;
+        if value.size != 0 {
+            self.in_flight -= 1;
+        }
         // Reclaim leading vacant slots so the buffer tracks the live window.
         while let Some(None) = self.slots.front() {
             self.slots.pop_front();
@@ -48,6 +56,11 @@ impl SentPackets {
     pub(super) fn get(&self, pn: u64) -> Option<&SentPacket> {
         let index = usize::try_from(pn.checked_sub(self.offset)?).ok()?;
         self.slots.get(index)?.as_ref()
+    }
+
+    /// Whether any present entry has `size != 0`.
+    pub(super) fn has_in_flight(&self) -> bool {
+        self.in_flight != 0
     }
 
     /// Iterate present entries in `range`, in increasing packet-number order.
@@ -78,11 +91,6 @@ impl SentPackets {
             .filter_map(move |i| self.slots[i].as_ref().map(|v| (self.offset + i as u64, v)))
     }
 
-    /// Iterate present entries in increasing packet-number order.
-    pub(super) fn values(&self) -> impl Iterator<Item = &SentPacket> + '_ {
-        self.slots.iter().filter_map(Option::as_ref)
-    }
-
     /// Mutably iterate present entries in increasing packet-number order.
     pub(super) fn values_mut(&mut self) -> impl Iterator<Item = &mut SentPacket> + '_ {
         self.slots.iter_mut().filter_map(Option::as_mut)
@@ -111,7 +119,7 @@ mod tests {
         assert!(m.get(7).is_none());
         assert_eq!(m.get(5).map(|p| p.size), Some(50));
         assert_eq!(
-            m.values().map(|p| p.size).collect::<Vec<_>>(),
+            m.range(..).map(|(_, p)| p.size).collect::<Vec<_>>(),
             vec![30, 40, 50, 60]
         );
     }
@@ -215,6 +223,23 @@ mod tests {
         // Reusable after take.
         m.insert(100, packet(100));
         assert_eq!(m.get(100).map(|p| p.size), Some(100));
+    }
+
+    #[test]
+    fn tracks_in_flight() {
+        let mut m = SentPackets::default();
+        assert!(!m.has_in_flight());
+        m.insert(0, packet(0)); // size 0: not in flight
+        assert!(!m.has_in_flight());
+        m.insert(1, packet(1200));
+        m.insert(2, packet(1200));
+        assert!(m.has_in_flight());
+        m.remove(1);
+        assert!(m.has_in_flight()); // 2 still in flight
+        m.remove(2);
+        assert!(!m.has_in_flight()); // only size-0 remains
+        m.remove(0);
+        assert!(!m.has_in_flight());
     }
 
     /// A `SentPacket` identified by its `size`.
