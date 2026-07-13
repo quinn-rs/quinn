@@ -197,6 +197,15 @@ impl UdpSocketState {
             )?;
         }
 
+        // Enlarge SO_SNDBUF to a safe minimum.
+        #[cfg(apple)]
+        if io
+            .send_buffer_size()
+            .is_ok_and(|cur| cur < Self::MIN_SAFE_SNDBUF)
+        {
+            let _ = io.set_send_buffer_size(Self::MIN_SAFE_SNDBUF);
+        }
+
         let now = Instant::now();
         Ok(Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
@@ -331,8 +340,20 @@ impl UdpSocketState {
     }
 
     /// Resize the send buffer of `socket` to `bytes`
+    ///
+    /// On Apple platforms, `bytes` is silently raised to a safe minimum if smaller.
     #[inline]
     pub fn set_send_buffer_size(&self, socket: UdpSockRef<'_>, bytes: usize) -> io::Result<()> {
+        #[cfg(apple)]
+        let bytes = if bytes < Self::MIN_SAFE_SNDBUF {
+            crate::log::debug!(
+                "raising requested SO_SNDBUF from {bytes} to {}",
+                Self::MIN_SAFE_SNDBUF
+            );
+            Self::MIN_SAFE_SNDBUF
+        } else {
+            bytes
+        };
         socket.0.set_send_buffer_size(bytes)
     }
 
@@ -414,6 +435,12 @@ impl UdpSocketState {
         }
         f
     }
+
+    /// Smallest `SO_SNDBUF` that mitigates <https://feedbackassistant.apple.com/feedback/23671230>:
+    /// On macOS, a non-blocking SOCK_DGRAM `sendmsg`/`sendmsg_x` call with ancillary data returns
+    /// `EWOULDBLOCK` when the payload length is at or just under `SO_SNDBUF`.
+    #[cfg(apple)]
+    const MIN_SAFE_SNDBUF: usize = 65535 + cmsg::LEN;
 }
 
 #[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd")))]

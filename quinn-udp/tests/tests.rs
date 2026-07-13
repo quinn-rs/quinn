@@ -1,5 +1,9 @@
+#[cfg(apple)]
+use std::io::{self, IoSlice};
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 use std::net::{SocketAddr, SocketAddrV6};
+#[cfg(apple)]
+use std::os::fd::AsRawFd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::time::Duration;
 use std::{
@@ -9,6 +13,8 @@ use std::{
 };
 
 use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
+#[cfg(apple)]
+use socket2::MsgHdr;
 use socket2::Socket;
 
 #[test]
@@ -483,6 +489,120 @@ fn apple_fast_datapath() {
     }
     assert_eq!(total_received, segments, "should receive all segments");
 }
+
+#[test]
+#[cfg(apple)]
+fn sndbuf_cmsg_boundary() {
+    let send = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+    let dst = recv.local_addr().unwrap();
+    send.set_nonblocking(true).unwrap();
+
+    let _ = send.set_send_buffer_size(9216);
+    let sndbuf = send.send_buffer_size().unwrap();
+    let clen = tclass_cmsg_space();
+
+    let payload = vec![0u8; sndbuf];
+    for attempt in 1..=3 {
+        match raw_send_with_tclass_cmsg(&send, dst, &payload) {
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => wait_writable(&send),
+            other => panic!(
+                "expected macOS SO_SNDBUF/cmsg kernel bug to reproduce on attempt {attempt}, got {other:?}"
+            ),
+        }
+    }
+
+    let state = UdpSocketState::new((&send).into()).unwrap();
+    assert_min_sndbuf_enforced(&state, &send, dst, clen);
+}
+
+/// Asserts `UdpSocketState`'s `SO_SNDBUF` floor holds on `sendmsg_x`.
+#[test]
+#[cfg(apple_fast)]
+fn sndbuf_cmsg_boundary_fast_path() {
+    let send = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+    let dst = recv.local_addr().unwrap();
+    send.set_nonblocking(true).unwrap();
+
+    let state = UdpSocketState::new((&send).into()).unwrap();
+    // SAFETY: assumes sendmsg_x is available on the macOS test host.
+    unsafe { state.set_apple_fast_path() };
+    assert_min_sndbuf_enforced(&state, &send, dst, tclass_cmsg_space());
+}
+
+/// Asserts `UdpSocketState`'s `SO_SNDBUF` floor holds on `send`.
+#[cfg(apple)]
+fn assert_min_sndbuf_enforced(state: &UdpSocketState, send: &Socket, dst: SocketAddr, clen: usize) {
+    let _ = state.set_send_buffer_size(send.into(), 1);
+    let sndbuf = state.send_buffer_size(send.into()).unwrap();
+    assert!(sndbuf >= 65535 + clen);
+
+    let transmit = Transmit {
+        destination: dst,
+        ecn: Some(EcnCodepoint::Ect0),
+        contents: &vec![0u8; 60_000],
+        segment_size: None,
+        src_ip: None,
+    };
+    match state.try_send(send.into(), &transmit) {
+        Ok(()) => {}
+        Err(e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {}
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            panic!("regressed: permanently stuck EWOULDBLOCK sending a large datagram")
+        }
+        Err(e) => panic!("unexpected error: {e}"),
+    }
+}
+
+/// Sends `payload` with an `IPV6_TCLASS` cmsg attached via `Socket::sendmsg`.
+#[cfg(apple)]
+fn raw_send_with_tclass_cmsg(sock: &Socket, dst: SocketAddr, payload: &[u8]) -> io::Result<()> {
+    let addr = socket2::SockAddr::from(dst);
+    let iov = [IoSlice::new(payload)];
+
+    let mut cbuf = AlignedCmsgBuf([0u8; 32]); // room for one aligned c_int cmsg
+    let mut scratch: libc::msghdr = unsafe { std::mem::zeroed() };
+    scratch.msg_control = cbuf.0.as_mut_ptr() as *mut _;
+    scratch.msg_controllen = tclass_cmsg_space() as _;
+    unsafe {
+        let cmsg = libc::CMSG_FIRSTHDR(&scratch);
+        (*cmsg).cmsg_level = libc::IPPROTO_IPV6;
+        (*cmsg).cmsg_type = libc::IPV6_TCLASS;
+        (*cmsg).cmsg_len = libc::CMSG_LEN(size_of::<libc::c_int>() as _) as _;
+        std::ptr::write(
+            libc::CMSG_DATA(cmsg) as *mut libc::c_int,
+            EcnCodepoint::Ect0 as libc::c_int,
+        );
+    }
+
+    let msg = MsgHdr::new()
+        .with_addr(&addr)
+        .with_buffers(&iov)
+        .with_control(&cbuf.0[..tclass_cmsg_space()]);
+    sock.sendmsg(&msg, 0).map(|_| ())
+}
+
+/// Blocks (via `poll()`) until `sock` reports `POLLOUT`, or panics after 2s.
+#[cfg(apple)]
+fn wait_writable(sock: &Socket) {
+    let mut pfd = libc::pollfd {
+        fd: sock.as_raw_fd(),
+        events: libc::POLLOUT,
+        revents: 0,
+    };
+    let n = unsafe { libc::poll(&mut pfd, 1, 2000) };
+    assert!(n != 0, "poll() itself timed out waiting for POLLOUT");
+}
+
+#[cfg(apple)]
+fn tclass_cmsg_space() -> usize {
+    unsafe { libc::CMSG_SPACE(size_of::<libc::c_int>() as _) as usize }
+}
+
+#[cfg(apple)]
+#[repr(align(8))]
+struct AlignedCmsgBuf([u8; 32]);
 
 #[test]
 #[cfg(any(target_os = "linux", target_os = "android"))]
