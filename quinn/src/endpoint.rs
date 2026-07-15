@@ -809,6 +809,8 @@ struct RecvState {
     incoming: VecDeque<proto::Incoming>,
     connections: ConnectionSet,
     recv_buf: Box<[u8]>,
+    /// Reused buffer that received datagrams are copied into and split into owned slices.
+    datagrams: BytesMut,
     recv_limiter: WorkLimiter,
 }
 
@@ -818,12 +820,10 @@ impl RecvState {
         max_receive_segments: usize,
         endpoint: &proto::Endpoint,
     ) -> Self {
-        let recv_buf = vec![
-            0;
-            endpoint.config().get_max_udp_payload_size().min(64 * 1024) as usize
-                * max_receive_segments
-                * BATCH_SIZE
-        ];
+        let datagram_capacity = endpoint.config().get_max_udp_payload_size().min(64 * 1024)
+            as usize
+            * max_receive_segments;
+        let recv_buf = vec![0; datagram_capacity * BATCH_SIZE];
         Self {
             connections: ConnectionSet {
                 senders: FxHashMap::default(),
@@ -832,6 +832,7 @@ impl RecvState {
             },
             incoming: VecDeque::new(),
             recv_buf: recv_buf.into(),
+            datagrams: BytesMut::with_capacity(datagram_capacity),
             recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
         }
     }
@@ -862,8 +863,13 @@ impl RecvState {
             match socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
                     self.recv_limiter.record_work(msgs);
+                    let batch_len = metas.iter().take(msgs).map(|meta| meta.len).sum();
+                    self.datagrams.reserve(batch_len);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
-                        let mut data: BytesMut = buf[0..meta.len].into();
+                        self.datagrams.extend_from_slice(&buf[..meta.len]);
+                    }
+                    for meta in metas.iter().take(msgs) {
+                        let mut data = self.datagrams.split_to(meta.len);
                         while !data.is_empty() {
                             let buf = data.split_to(meta.stride.min(data.len()));
                             let mut response_buffer = Vec::new();
