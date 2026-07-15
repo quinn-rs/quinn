@@ -40,7 +40,7 @@ use rustc_hash::FxHashMap;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{Notify, futures::Notified, mpsc};
 use tracing::{Instrument, Span};
-use udp::{BATCH_SIZE, RecvMeta};
+use udp::{BATCH_SIZE, RecvMeta, is_msg_size_err};
 
 use crate::{
     ConnectionEvent, EndpointConfig, IO_LOOP_BOUND, RECV_TIME_BOUND, VarInt,
@@ -911,6 +911,13 @@ impl RecvState {
                 // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
                 // attacker
                 Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::ConnectionReset => {
+                    continue;
+                }
+                // Ignore EMSGSIZE as we're currently not handling ICMPv4 Fragmentation Needed
+                // and ICMPv6 Packet Too Big (PTB) messages since they cannot be authenticated,
+                // and Datagram Packetization Layer Path MTU Discovery (DPLPMTUD) works without
+                // it anyways.
+                Poll::Ready(Err(ref e)) if is_msg_size_err(e) => {
                     continue;
                 }
                 Poll::Ready(Err(e)) => {
