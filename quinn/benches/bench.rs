@@ -8,7 +8,7 @@ use bencher::{Bencher, benchmark_group, benchmark_main};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
-use tracing_futures::Instrument as _;
+use tracing::instrument::Instrument as _;
 
 use quinn::{Endpoint, TokioRuntime};
 

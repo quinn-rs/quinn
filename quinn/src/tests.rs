@@ -33,8 +33,8 @@ use tokio::{
     join,
     runtime::{Builder, Runtime},
 };
+use tracing::instrument::Instrument as _;
 use tracing::{error_span, info};
-use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
 use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
