@@ -187,13 +187,13 @@ impl Assembler {
             }
         }
 
-        if bytes.is_empty() {
-            return Ok(());
+        // No early return when empty: the dedup loop above may already have pushed chunks.
+        if !bytes.is_empty() {
+            let buffer = Buffer::new(offset, bytes, allocation_size);
+            self.buffered += buffer.bytes.len();
+            self.allocated += buffer.allocation_size;
+            self.data.push(buffer);
         }
-        let buffer = Buffer::new(offset, bytes, allocation_size);
-        self.buffered += buffer.bytes.len();
-        self.allocated += buffer.allocation_size;
-        self.data.push(buffer);
         // `self.buffered` also counts duplicate bytes, therefore we use
         // `self.end - self.bytes_read` as an upper bound of buffered unique
         // bytes. This will cause a defragmentation if the amount of duplicate
@@ -208,10 +208,11 @@ impl Assembler {
         // buffered data. The constants are chosen somewhat arbitrarily and try to
         // balance between defragmentation overhead and over-allocation.
         let threshold = 32768.max(buffered * 3 / 2);
-        if over_allocation > threshold {
+        // Small gapped frames hold over-allocation below the threshold, so bound the count too.
+        if over_allocation > threshold || self.data.len() > COMPACT_THRESHOLD {
             self.defragment();
             // ngtcp2 uses a threshold of 4000 -- try to be a little more conservative?
-            if self.data.len() > 1024 {
+            if self.data.len() > MAX_CHUNKS {
                 return Err(TooManyChunks);
             }
         }
@@ -349,6 +350,18 @@ pub struct IllegalOrderedRead;
 /// Error indicating that too many chunks are buffered due to maliciously small/gapped frames
 #[derive(Debug)]
 pub(crate) struct TooManyChunks;
+
+/// Bound on the number of distinct spans kept for a stream
+///
+/// Independent of how much memory those spans over-allocate. A frame is rejected only
+/// if compaction cannot get the count back down to this.
+const MAX_CHUNKS: usize = 1024;
+
+/// Chunk count past which `insert` compacts before deciding whether to reject
+///
+/// Above `MAX_CHUNKS` so a flood of mergeable frames cannot force a defragmentation
+/// per frame.
+const COMPACT_THRESHOLD: usize = 2 * MAX_CHUNKS;
 
 #[cfg(test)]
 mod test {
@@ -661,6 +674,75 @@ mod test {
             Some(Chunk::new(0, Bytes::from_static(b"abc")))
         );
         assert_eq!(x.read(3, false), None);
+    }
+
+    #[test]
+    fn bounded_chunks_under_low_over_allocation() {
+        // Gapped frames whose `allocation_size` equals their length hold
+        // `over_allocation` at zero, so that trigger never fires.
+        let mut x = Assembler::new();
+        // Withhold offset 0 so an ordered reader can never drain anything.
+        let mut offset = 1u64;
+        let mut result = Ok(());
+        for _ in 0..(MAX_CHUNKS * 8) {
+            result = x.insert(offset, Bytes::from_static(b"gap"), 3);
+            if result.is_err() {
+                break;
+            }
+            offset += 3 + 1; // 3 data bytes, 1 byte gap
+        }
+        assert_matches!(result, Err(TooManyChunks));
+        assert!(
+            x.data.len() <= COMPACT_THRESHOLD + 1,
+            "chunk count {} exceeded the bound",
+            x.data.len()
+        );
+    }
+
+    #[test]
+    fn bounded_chunks_unordered_overlap_flood() {
+        // Overlapping frames whose tail is already received: the dedup loop pushes
+        // the fresh head byte and leaves `bytes` empty, and `end` never rises, so
+        // the flood costs the peer no flow control.
+        let mut x = Assembler::new();
+        x.ensure_ordering(false).unwrap();
+        let top = 1_000_000u64;
+        x.insert(top, Bytes::from_static(b"ab"), 2).unwrap();
+        for k in 0..(4 * MAX_CHUNKS as u64) {
+            x.insert(top - k - 1, Bytes::from_static(b"ab"), 2).unwrap();
+            assert!(
+                x.data.len() <= COMPACT_THRESHOLD + 1,
+                "chunk count {} exceeded the bound at k={k}",
+                x.data.len()
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_chunks_duplicate_flood() {
+        // Duplicates against a stream already at the cap. Ordered mode does not dedup,
+        // so each one pushes a chunk; they must not be rejected, or compact every frame.
+        let mut x = Assembler::new();
+        // Withhold offset 0 so nothing can be drained.
+        for i in 0..MAX_CHUNKS as u64 {
+            x.insert(1 + i * 4, Bytes::from_static(b"abc"), 3).unwrap();
+        }
+        let mut max_len = x.data.len();
+        for _ in 0..(3 * MAX_CHUNKS) {
+            x.insert(1, Bytes::from_static(b"abc"), 3)
+                .expect("duplicate flood must not be rejected");
+            max_len = max_len.max(x.data.len());
+            assert!(
+                x.data.len() <= COMPACT_THRESHOLD + 1,
+                "chunk count {} exceeded the bound",
+                x.data.len()
+            );
+        }
+        // Compacting on every frame would pin the count at `MAX_CHUNKS`.
+        assert!(
+            max_len > MAX_CHUNKS,
+            "buffer compacted on every frame (max observed len {max_len})"
+        );
     }
 
     fn next_unordered(x: &mut Assembler) -> Chunk {
