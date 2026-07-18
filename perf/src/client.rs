@@ -1,6 +1,7 @@
 #[cfg(feature = "json-output")]
 use std::path::PathBuf;
 use std::{
+    hash::Hasher,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::Path,
     sync::Arc,
@@ -11,7 +12,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
 use quinn::{TokioRuntime, crypto::rustls::QuicClientConfig};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::enums::ApplicationProtocol;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
@@ -104,22 +105,18 @@ pub async fn run(opt: Opt) -> Result<()> {
 
     let endpoint = quinn::Endpoint::new(endpoint_cfg, None, socket, Arc::new(TokioRuntime))?;
 
-    let default_provider = rustls::crypto::ring::default_provider();
-    let provider = Arc::new(rustls::crypto::CryptoProvider {
-        cipher_suites: PERF_CIPHER_SUITES.into(),
-        ..default_provider
-    });
+    let mut provider = rustls_aws_lc_rs::DEFAULT_PROVIDER;
+    provider.tls13_cipher_suites = PERF_CIPHER_SUITES.into();
+    let provider = Arc::new(provider);
 
-    let mut crypto = rustls::ClientConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
+    let mut crypto = rustls::ClientConfig::builder(provider.clone())
         .dangerous()
         .with_custom_certificate_verifier(SkipServerVerification::new(provider))
-        .with_no_client_auth();
-    crypto.alpn_protocols = vec![b"perf".to_vec()];
+        .with_no_client_auth()?;
+    crypto.alpn_protocols = vec![ApplicationProtocol::from(b"perf")];
 
     if opt.common.keylog {
-        crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        crypto.key_log = Arc::new(rustls_util::KeyLogFile::new());
     }
 
     let transport = opt.common.build_transport_config(
@@ -381,47 +378,39 @@ impl SkipServerVerification {
     }
 }
 
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
+impl rustls::client::danger::ServerVerifier for SkipServerVerification {
+    fn verify_identity(
         &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        _identity: &rustls::client::danger::ServerIdentity<'_>,
+    ) -> Result<rustls::client::danger::PeerVerified, rustls::Error> {
+        Ok(rustls::client::danger::PeerVerified::assertion())
     }
 
     fn verify_tls12_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        input: &rustls::client::danger::SignatureVerificationInput<'_>,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
+        rustls::crypto::verify_tls12_signature(input, &self.0.signature_verification_algorithms)
     }
 
     fn verify_tls13_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        input: &rustls::client::danger::SignatureVerificationInput<'_>,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
+        rustls::crypto::verify_tls13_signature(input, &self.0.signature_verification_algorithms)
     }
 
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+    fn supported_verify_schemes(&self) -> Vec<rustls::crypto::SignatureScheme> {
         self.0.signature_verification_algorithms.supported_schemes()
+    }
+
+    fn request_ocsp_response(&self) -> bool {
+        false
+    }
+
+    fn hash_config(&self, h: &mut dyn Hasher) {
+        for scheme in self.supported_verify_schemes() {
+            h.write_u16(scheme.0);
+        }
     }
 }

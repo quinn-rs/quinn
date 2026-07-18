@@ -4,16 +4,26 @@
 
 use std::{
     error::Error,
+    hash::Hasher,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
 
 use proto::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
 mod common;
 use common::make_server_endpoint;
+
+#[cfg(feature = "rustls-aws-lc-rs")]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls_aws_lc_rs::DEFAULT_PROVIDER
+}
+
+#[cfg(all(not(feature = "rustls-aws-lc-rs"), feature = "rustls-ring"))]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls_ring::DEFAULT_PROVIDER
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
@@ -40,10 +50,10 @@ async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error + Send 
     let endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))?;
 
     endpoint.set_default_client_config(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
-        rustls::ClientConfig::builder()
+        rustls::ClientConfig::builder(Arc::new(default_provider()))
             .dangerous()
             .with_custom_certificate_verifier(SkipServerVerification::new())
-            .with_no_client_auth(),
+            .with_no_client_auth()?,
     )?)));
 
     // connect to server
@@ -68,51 +78,43 @@ struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
 
 impl SkipServerVerification {
     fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
+        Arc::new(Self(Arc::new(default_provider())))
     }
 }
 
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
+impl rustls::client::danger::ServerVerifier for SkipServerVerification {
+    fn verify_identity(
         &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        _identity: &rustls::client::danger::ServerIdentity<'_>,
+    ) -> Result<rustls::client::danger::PeerVerified, rustls::Error> {
+        Ok(rustls::client::danger::PeerVerified::assertion())
     }
 
     fn verify_tls12_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        input: &rustls::client::danger::SignatureVerificationInput<'_>,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
+        rustls::crypto::verify_tls12_signature(input, &self.0.signature_verification_algorithms)
     }
 
     fn verify_tls13_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
+        input: &rustls::client::danger::SignatureVerificationInput<'_>,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
+        rustls::crypto::verify_tls13_signature(input, &self.0.signature_verification_algorithms)
     }
 
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+    fn supported_verify_schemes(&self) -> Vec<rustls::crypto::SignatureScheme> {
         self.0.signature_verification_algorithms.supported_schemes()
+    }
+
+    fn request_ocsp_response(&self) -> bool {
+        false
+    }
+
+    fn hash_config(&self, h: &mut dyn Hasher) {
+        for scheme in self.supported_verify_schemes() {
+            h.write_u16(scheme.0);
+        }
     }
 }

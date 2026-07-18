@@ -1,16 +1,10 @@
-use std::{error::Error, sync::Arc};
+use std::{error::Error, hash::Hasher, sync::Arc};
 
-use quinn::{
-    ClientConfig,
-    crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
-};
+use quinn::{ClientConfig, crypto::rustls::QuicClientConfig};
 use rustls::{
-    DigitallySignedStruct, SignatureScheme,
     client::danger,
     crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature},
-    pki_types::{
-        CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime, pem::PemObject,
-    },
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, pem::PemObject},
 };
 
 #[allow(unused_variables)]
@@ -22,68 +16,61 @@ fn main() {
 }
 
 #[allow(dead_code)] // Included in `certificate.md`
-fn configure_client() -> Result<ClientConfig, NoInitialCipherSuite> {
-    let crypto = rustls::ClientConfig::builder()
+fn configure_client() -> Result<ClientConfig, Box<dyn Error>> {
+    let crypto = rustls::ClientConfig::builder(Arc::new(rustls_ring::DEFAULT_PROVIDER))
         .dangerous()
         .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_no_client_auth();
+        .with_no_client_auth()?;
 
     Ok(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
         crypto,
     )?)))
 }
 
-// Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
+// Implementation of `ServerVerifier` that verifies everything as trustworthy.
 #[derive(Debug)]
 struct SkipServerVerification(Arc<CryptoProvider>);
 
 impl SkipServerVerification {
     fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
+        Arc::new(Self(Arc::new(rustls_ring::DEFAULT_PROVIDER)))
     }
 }
 
-impl danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
+impl danger::ServerVerifier for SkipServerVerification {
+    fn verify_identity(
         &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<danger::ServerCertVerified, rustls::Error> {
-        Ok(danger::ServerCertVerified::assertion())
+        _identity: &danger::ServerIdentity<'_>,
+    ) -> Result<danger::PeerVerified, rustls::Error> {
+        Ok(danger::PeerVerified::assertion())
     }
+
     fn verify_tls12_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
+        input: &danger::SignatureVerificationInput<'_>,
     ) -> Result<danger::HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
+        verify_tls12_signature(input, &self.0.signature_verification_algorithms)
     }
 
     fn verify_tls13_signature(
         &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
+        input: &danger::SignatureVerificationInput<'_>,
     ) -> Result<danger::HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
+        verify_tls13_signature(input, &self.0.signature_verification_algorithms)
     }
 
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+    fn supported_verify_schemes(&self) -> Vec<rustls::crypto::SignatureScheme> {
         self.0.signature_verification_algorithms.supported_schemes()
+    }
+
+    fn request_ocsp_response(&self) -> bool {
+        false
+    }
+
+    fn hash_config(&self, h: &mut dyn Hasher) {
+        for scheme in self.supported_verify_schemes() {
+            h.write_u16(scheme.0);
+        }
     }
 }
 

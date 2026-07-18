@@ -28,10 +28,10 @@ platform-verifier = ["proto/platform-verifier"]
 # For backwards compatibility, `rustls` forwards to `rustls-ring`
 rustls = ["rustls-ring"]
 # Enable rustls with the `aws-lc-rs` crypto provider
-rustls-aws-lc-rs = ["dep:rustls", "aws-lc-rs", "proto/rustls-aws-lc-rs", "proto/aws-lc-rs"]
-rustls-aws-lc-rs-fips = ["dep:rustls", "aws-lc-rs-fips", "proto/rustls-aws-lc-rs-fips", "proto/aws-lc-rs-fips"]
+rustls-aws-lc-rs = ["__rustls", "dep:rustls-aws-lc-rs", "aws-lc-rs", "proto/rustls-aws-lc-rs", "proto/aws-lc-rs"]
+rustls-aws-lc-rs-fips = ["rustls-aws-lc-rs", "aws-lc-rs-fips", "proto/rustls-aws-lc-rs-fips", "proto/aws-lc-rs-fips"]
 # Enable rustls with the `ring` crypto provider
-rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
+rustls-ring = ["__rustls", "dep:rustls-ring", "ring", "proto/rustls-ring", "proto/ring"]
 # Enable the `ring` crypto provider.
 # Outside wasm*-unknown-unknown targets, this enables `Endpoint::client` and `Endpoint::server` conveniences.
 ring = ["proto/ring"]
@@ -41,14 +41,15 @@ runtime-smol = ["dep:async-io", "dep:smol"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 tracing-log = ["tracing/log", "proto/tracing-log", "udp/tracing-log"]
 # Enable rustls logging
-rustls-log = ["rustls?/logging"]
+rustls-log = ["rustls?/log"]
 # Enable qlog support
 qlog = ["proto/qlog"]
 
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at any time.
 
-__rustls-post-quantum-test =  ["rustls/prefer-post-quantum", "rustls-aws-lc-rs", "proto/__rustls-post-quantum-test"]
+__rustls-post-quantum-test =  ["rustls-aws-lc-rs", "proto/__rustls-post-quantum-test"]
+__rustls = ["dep:rustls"]
 
 [dependencies]
 async-io = { workspace = true, optional = true }
@@ -59,6 +60,8 @@ rustc-hash = { workspace = true }
 pin-project-lite = { workspace = true }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.12.0", default-features = false }
 rustls = { workspace = true, optional = true }
+rustls-aws-lc-rs = { workspace = true, optional = true }
+rustls-ring = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tracing =  { workspace = true }
@@ -78,6 +81,7 @@ bencher = { workspace = true }
 directories-next = { workspace = true }
 rand = { workspace = true }
 rcgen = { workspace = true }
+rustls-util = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "macros", "test-util"] }
 tracing-subscriber = { workspace = true }
@@ -92,23 +96,23 @@ workspace = true
 
 [[example]]
 name = "server"
-required-features = ["rustls-ring"]
+required-features = ["__rustls"]
 
 [[example]]
 name = "client"
-required-features = ["rustls-ring"]
+required-features = ["__rustls"]
 
 [[example]]
 name = "insecure_connection"
-required-features = ["rustls-ring"]
+required-features = ["__rustls"]
 
 [[example]]
 name = "single_socket"
-required-features = ["rustls-ring"]
+required-features = ["__rustls"]
 
 [[example]]
 name = "connection"
-required-features = ["rustls-ring"]
+required-features = ["__rustls"]
 
 [[test]]
 name = "post_quantum"
@@ -117,8 +121,8 @@ required-features = ["__rustls-post-quantum-test"]
 [[bench]]
 name = "bench"
 harness = false
-required-features = ["rustls-ring"]
+required-features = ["__rustls"]
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)
-features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-smol", "tracing-log", "rustls-log"]
+features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "runtime-tokio", "runtime-smol", "tracing-log", "rustls-log"]
