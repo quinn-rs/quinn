@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
 use crate::connection::RttEstimator;
+use crate::frame::EcnCounts;
 use crate::{Duration, Instant};
 
 /// CUBIC Constants.
@@ -40,6 +41,10 @@ pub(super) struct State {
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
     /// after this time is acknowledged, QUIC exits recovery.
     recovery_start_time: Option<Instant>,
+
+    /// The time when loss recovery started. Unlike `recovery_start_time`, this can be cleared
+    /// separately (e.g., on ECN events) to avoid blocking window growth for in-flight packets.
+    loss_recovery_start_time: Option<Instant>,
 }
 
 /// CUBIC Functions.
@@ -77,6 +82,8 @@ pub struct Cubic {
     config: Arc<CubicConfig>,
     current_mtu: u64,
     state: State,
+    /// Whether handling of ECN (specifically, ECT(0)) is allowed.
+    allow_ecn: bool,
     /// Copy of the controller state to restore when a spurious congestion event is detected.
     pre_congestion_state: Option<State>,
 }
@@ -90,6 +97,7 @@ impl Cubic {
                 ssthresh: u64::MAX,
                 ..Default::default()
             },
+            allow_ecn: false,
             current_mtu: current_mtu as u64,
             pre_congestion_state: None,
             config,
@@ -113,8 +121,8 @@ impl Controller for Cubic {
         if app_limited
             || self
                 .state
-                .recovery_start_time
-                .map(|recovery_start_time| sent <= recovery_start_time)
+                .loss_recovery_start_time
+                .map(|loss_recovery_start_time| sent <= loss_recovery_start_time)
                 .unwrap_or(false)
         {
             return;
@@ -187,6 +195,7 @@ impl Controller for Cubic {
         is_persistent_congestion: bool,
         is_ecn: bool,
         _lost_bytes: u64,
+        _diff: EcnCounts,
     ) {
         if self
             .state
@@ -203,6 +212,7 @@ impl Controller for Cubic {
         }
 
         self.state.recovery_start_time = Some(now);
+        self.state.loss_recovery_start_time = Some(now);
         let window = self.state.window as f64;
 
         // Fast convergence lowers W_max first; the 0.7 loss reduction still
@@ -223,6 +233,7 @@ impl Controller for Cubic {
 
         if is_persistent_congestion {
             self.state.recovery_start_time = None;
+            self.state.loss_recovery_start_time = None;
             self.state.w_max = self.state.window as f64;
 
             // 4.7 Timeout - reduce ssthresh based on BETA_CUBIC
@@ -245,9 +256,25 @@ impl Controller for Cubic {
         }
     }
 
+    fn exit_recovery(&mut self, _now: Instant) {
+        self.state.loss_recovery_start_time = None;
+    }
+
     fn on_mtu_update(&mut self, new_mtu: u16) {
         self.current_mtu = new_mtu as u64;
         self.state.window = self.state.window.max(self.minimum_window());
+    }
+
+    fn set_window(&mut self, size: u64) {
+        if (size as f64) < self.state.w_max {
+            self.state.w_max = size as f64 / BETA_CUBIC;
+            self.state.k = self.state.cubic_k(self.current_mtu);
+        }
+        self.state.window = size;
+    }
+
+    fn set_ssthresh(&mut self, size: u64) {
+        self.state.ssthresh = size;
     }
 
     fn window(&self) -> u64 {
@@ -268,6 +295,11 @@ impl Controller for Cubic {
 
     fn initial_window(&self) -> u64 {
         self.config.initial_window
+    }
+
+    fn enable_ect0(&mut self) -> bool {
+        self.allow_ecn = true;
+        true
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
@@ -300,7 +332,12 @@ impl Default for CubicConfig {
 }
 
 impl ControllerFactory for CubicConfig {
-    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+    fn build(
+        self: Arc<Self>,
+        now: Instant,
+        current_mtu: u16,
+        _config: &crate::TransportConfig,
+    ) -> Box<dyn Controller> {
         Box::new(Cubic::new(self, now, current_mtu))
     }
 }
@@ -319,7 +356,14 @@ mod tests {
         cubic.state.ssthresh = window;
         cubic.state.w_max = 12.0 * BASE_DATAGRAM_SIZE as f64;
 
-        cubic.on_congestion_event(now, now + Duration::from_millis(1), false, false, 0);
+        cubic.on_congestion_event(
+            now,
+            now + Duration::from_millis(1),
+            false,
+            false,
+            0,
+            EcnCounts::ZERO,
+        );
 
         assert_eq!(cubic.state.w_max, window as f64 * (1.0 + BETA_CUBIC) / 2.0);
         assert_eq!(cubic.state.ssthresh, (window as f64 * BETA_CUBIC) as u64);

@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
+use proto::{ClosedStream, ConnectionError, FinishError, PathStats, StreamId, Written};
 use thiserror::Error;
 
 use crate::{
@@ -293,6 +293,11 @@ impl SendStream {
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
         pin!(self.get_mut().write(buf)).as_mut().poll(cx)
+    }
+
+    /// Returns the path statistics of the underlying connection.
+    pub fn path_stats(&self) -> PathStats {
+        self.conn.state.lock("path_stats").inner.stats().path
     }
 }
 

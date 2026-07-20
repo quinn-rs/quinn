@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use proto::{Chunk, Chunks, ClosedStream, ConnectionError, ReadableError, StreamId};
+use proto::{Chunk, Chunks, ClosedStream, ConnectionError, PathStats, ReadableError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
@@ -416,6 +416,11 @@ impl RecvStream {
                 }
             },
         }
+    }
+
+    /// Returns the path statistics of the underlying connection.
+    pub fn path_stats(&self) -> PathStats {
+        self.conn.state.lock("path_stats").inner.stats().path
     }
 }
 

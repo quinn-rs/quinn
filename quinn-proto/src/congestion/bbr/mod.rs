@@ -9,6 +9,7 @@ use crate::congestion::ControllerMetrics;
 use crate::congestion::bbr::bw_estimation::BandwidthEstimation;
 use crate::congestion::bbr::min_max::MinMax;
 use crate::connection::RttEstimator;
+use crate::frame::EcnCounts;
 use crate::{Duration, Instant};
 
 use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
@@ -472,6 +473,7 @@ impl Controller for Bbr {
         _is_persistent_congestion: bool,
         _is_ecn: bool,
         lost_bytes: u64,
+        _diff: EcnCounts,
     ) {
         self.loss_state.lost_bytes += lost_bytes;
     }
@@ -481,6 +483,10 @@ impl Controller for Bbr {
         self.min_cwnd = calculate_min_window(self.current_mtu);
         self.init_cwnd = self.config.initial_window.max(self.min_cwnd);
         self.cwnd = self.cwnd.max(self.min_cwnd);
+    }
+
+    fn set_window(&mut self, size: u64) {
+        self.cwnd = size;
     }
 
     fn window(&self) -> u64 {
@@ -538,7 +544,12 @@ impl Default for BbrConfig {
 }
 
 impl ControllerFactory for BbrConfig {
-    fn build(self: Arc<Self>, _now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+    fn build(
+        self: Arc<Self>,
+        _now: Instant,
+        current_mtu: u16,
+        _config: &crate::TransportConfig,
+    ) -> Box<dyn Controller> {
         Box::new(Bbr::new(self, current_mtu))
     }
 }

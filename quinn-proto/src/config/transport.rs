@@ -8,9 +8,58 @@ use qlog::streamer::QlogStreamer;
 #[cfg(feature = "qlog")]
 use crate::QlogStream;
 use crate::{
-    Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded, congestion,
+    Duration, EcnCodepoint, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded,
+    congestion::{self, Controller},
     connection::qlog::QlogSink,
 };
+
+/// Mode of operation for Explicit Congestion Notification (ECN)
+///
+/// Determines how ECN is used (if at all) for outgoing packets, and how it is interpreted for
+/// incoming packets.
+#[derive(Clone, Copy, Debug)]
+pub enum EcnMode {
+    /// Disable ECN completely
+    Disabled,
+    /// Classic ECN based on RFC3168
+    ///
+    /// Causes outgoing packets to be marked with ECT(0).
+    Classic,
+    /// ECN for Low Latency, Low Loss, Scalable throughput based on RFC9331
+    ///
+    /// Causes outgoing packets to be marked with ECT(1).
+    L4S,
+}
+
+impl EcnMode {
+    /// Returns whether the ECN mode indicates an enabled configuration state (ECT(0) or ECT(1)).
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    /// Returns the appropriate ECN mode for the given congestion control algorithm.
+    pub fn supported_mode(&self, controller: &mut Box<dyn Controller>) -> Self {
+        match self {
+            Self::Classic if controller.enable_ect0() => Self::Classic,
+
+            // For L4S, the check for ECT(1) takes priority, and only when it's not
+            // supported by the controller, will it fall back to ECT(0) if supported.
+            Self::L4S if controller.enable_ect1() => Self::L4S,
+            Self::L4S if controller.enable_ect0() => Self::Classic,
+
+            _ => Self::Disabled,
+        }
+    }
+
+    /// Maps the ECN mode to the corresponding ECN codepoint if enabled, `None` otherwise.
+    pub fn codepoint(&self) -> Option<EcnCodepoint> {
+        match self {
+            Self::Disabled => None,
+            Self::Classic => Some(EcnCodepoint::Ect0),
+            Self::L4S => Some(EcnCodepoint::Ect1),
+        }
+    }
+}
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -52,6 +101,7 @@ pub struct TransportConfig {
     #[cfg(test)]
     pub(crate) deterministic_packet_numbers: bool,
 
+    pub(crate) ecn_mode: EcnMode,
     pub(crate) congestion_controller_factory: Arc<dyn congestion::ControllerFactory + Send + Sync>,
 
     pub(crate) enable_segmentation_offload: bool,
@@ -317,6 +367,15 @@ impl TransportConfig {
         self
     }
 
+    /// Whether to enable sending Explicit Congestion Notification (ECN) if remote peer supports it
+    ///
+    /// This allows congestion controllers to rely on ECN-CE marks (echoed by the remote peer
+    /// through ECN counters) instead of drops for detecting congestion on the path.
+    pub fn enable_ecn(&mut self, value: EcnMode) -> &mut Self {
+        self.ecn_mode = value;
+        self
+    }
+
     /// How to construct new `congestion::Controller`s
     ///
     /// Typically the refcounted configuration of a `congestion::Controller`,
@@ -396,6 +455,7 @@ impl Default for TransportConfig {
             #[cfg(test)]
             deterministic_packet_numbers: false,
 
+            ecn_mode: EcnMode::Classic,
             congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
             enable_segmentation_offload: true,
@@ -432,6 +492,7 @@ impl fmt::Debug for TransportConfig {
             datagram_send_buffer_size,
             #[cfg(test)]
                 deterministic_packet_numbers: _,
+            ecn_mode,
             congestion_controller_factory: _,
             enable_segmentation_offload,
             qlog_sink,
@@ -466,6 +527,7 @@ impl fmt::Debug for TransportConfig {
             .field("allow_spin", allow_spin)
             .field("datagram_receive_buffer_size", datagram_receive_buffer_size)
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
+            .field("ecn_mode", ecn_mode)
             // congestion_controller_factory not debug
             .field("enable_segmentation_offload", enable_segmentation_offload);
         if cfg!(feature = "qlog") {
@@ -611,7 +673,7 @@ impl QlogConfig {
             self.description,
             self.start_time,
             trace,
-            qlog::events::EventImportance::Core,
+            qlog::events::EventImportance::Extra,
             // `Instant` should have sub-microsecond precision on most platforms
             qlog::streamer::EventTimePrecision::NanoSeconds,
             writer,

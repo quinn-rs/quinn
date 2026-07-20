@@ -774,6 +774,7 @@ impl Connection {
                 buf,
                 buf_capacity,
                 datagram_start,
+                None,
                 ack_eliciting,
                 self,
             )?);
@@ -872,7 +873,7 @@ impl Connection {
                     return Some(Transmit {
                         destination: remote,
                         size: buf.len(),
-                        ecn: None,
+                        ecn: None, // TODO: should it use ECN???
                         segment_size: None,
                         src_ip: self.local_ip,
                     });
@@ -941,6 +942,12 @@ impl Connection {
 
         self.app_limited = buf.is_empty() && !congestion_blocked;
 
+        let ecn = if self.path.using_ecn {
+            self.path.ecn_mode.codepoint()
+        } else {
+            None
+        };
+
         // Send MTU probe if necessary
         if buf.is_empty() && self.state.is_established() {
             let space_id = SpaceId::Data;
@@ -959,6 +966,7 @@ impl Connection {
                 buf,
                 buf_capacity,
                 0,
+                ecn,
                 true,
                 self,
             )?;
@@ -998,11 +1006,7 @@ impl Connection {
         Some(Transmit {
             destination: self.path.remote,
             size: buf.len(),
-            ecn: if self.path.sending_ecn {
-                Some(EcnCodepoint::Ect0)
-            } else {
-                None
-            },
+            ecn,
             segment_size: match num_datagrams {
                 1 => None,
                 _ => Some(segment_size),
@@ -1043,6 +1047,7 @@ impl Connection {
             buf,
             buf_capacity,
             0,
+            None,
             false,
             self,
         )?;
@@ -1063,7 +1068,7 @@ impl Connection {
         Some(Transmit {
             destination,
             size: buf.len(),
-            ecn: None,
+            ecn: None, // NOTE: is there a reason not to use ECN here?
             segment_size: None,
             src_ip: self.local_ip,
         })
@@ -1266,6 +1271,7 @@ impl Connection {
     pub fn stats(&self) -> ConnectionStats {
         let mut stats = self.stats;
         stats.path.rtt = self.path.rtt.get();
+        stats.path.rttvar = self.path.rtt.var();
         stats.path.cwnd = self.path.congestion.window();
         stats.path.current_mtu = self.path.mtud.current_mtu();
 
@@ -1462,9 +1468,20 @@ impl Connection {
 
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let mut newly_acked = ArrayRangeSet::new();
+        let mut newly_acked_ect0 = 0u64;
+        let mut newly_acked_ect1 = 0u64;
         for range in ack.iter() {
             self.packet_number_filter.check_ack(space, range.clone())?;
-            for (pn, _) in self.spaces[space].sent_packets.range(range) {
+            for (pn, pkt_info) in self.spaces[space].sent_packets.range(range) {
+                match pkt_info.ecn {
+                    Some(EcnCodepoint::Ect0) => {
+                        newly_acked_ect0 += 1;
+                    }
+                    Some(EcnCodepoint::Ect1) => {
+                        newly_acked_ect1 += 1;
+                    }
+                    _ => {}
+                }
                 newly_acked.insert_one(pn);
             }
         }
@@ -1533,7 +1550,7 @@ impl Connection {
         }
 
         // Explicit congestion notification
-        if self.path.sending_ecn {
+        if self.path.using_ecn {
             if let Some(ecn) = ack.ecn {
                 // We only examine ECN counters from ACKs that we are certain we received in transmit
                 // order, allowing us to compute an increase in ECN counts to compare against the number
@@ -1541,12 +1558,15 @@ impl Connection {
                 // reordering.
                 if new_largest {
                     let sent = self.spaces[space].largest_acked_packet_sent;
-                    self.process_ecn(now, space, newly_acked.len() as u64, ecn, sent);
+                    self.process_ecn(now, space, newly_acked_ect0, newly_acked_ect1, ecn, sent);
                 }
-            } else {
-                // We always start out sending ECN, so any ack that doesn't acknowledge it disables it.
+            } else if newly_acked_ect0 > 0 || newly_acked_ect1 > 0 {
+                // We sent out packets marked with ECN, so any ack that doesn't acknowledge it disables it.
                 debug!("ECN not acknowledged by peer");
-                self.path.sending_ecn = false;
+                self.path.using_ecn = false;
+                self.config
+                    .qlog_sink
+                    .emit_ecn_state_update(false, now, self.orig_rem_cid);
             }
         }
 
@@ -1596,25 +1616,48 @@ impl Connection {
         &mut self,
         now: Instant,
         space: SpaceId,
-        newly_acked: u64,
+        newly_acked_ect0: u64,
+        newly_acked_ect1: u64,
         ecn: frame::EcnCounts,
         largest_sent_time: Instant,
     ) {
-        match self.spaces[space].detect_ecn(newly_acked, ecn) {
+        match self.spaces[space].detect_ecn(newly_acked_ect0, newly_acked_ect1, ecn) {
             Err(e) => {
                 debug!("halting ECN due to verification failure: {}", e);
-                self.path.sending_ecn = false;
+                // NOTE: negotiation may not be completely necessary, since this and another check
+                // essentially disables the use of ECN in case there's no ECN-echoing or if the
+                // echoing peer is faulty.
+                self.path.using_ecn = false;
+                self.config
+                    .qlog_sink
+                    .emit_ecn_state_update(false, now, self.orig_rem_cid);
+
                 // Wipe out the existing value because it might be garbage and could interfere with
                 // future attempts to use ECN on new paths.
                 self.spaces[space].ecn_feedback = frame::EcnCounts::ZERO;
             }
-            Ok(false) => {}
-            Ok(true) => {
-                self.stats.path.congestion_events += 1;
-                self.path
-                    .congestion
-                    .on_congestion_event(now, largest_sent_time, false, true, 0);
+            Ok(increment) if increment.ect1 > 0 || increment.ect0 > 0 || increment.ce > 0 => {
+                self.path.congestion.on_ecn_delivery(now, increment);
+                if increment.ce > 0 {
+                    debug!(
+                        "ECN counter increments: ECT(1) = {}, CE = {}",
+                        increment.ect1, increment.ce
+                    );
+                    self.stats.path.congestion_events += 1;
+                    self.path.congestion.on_congestion_event(
+                        now,
+                        largest_sent_time,
+                        false,
+                        true,
+                        0,
+                        increment,
+                    );
+                    self.config
+                        .qlog_sink
+                        .emit_ecn_event(increment, now, self.orig_rem_cid);
+                }
             }
+            _ => {}
         }
     }
 
@@ -1840,7 +1883,11 @@ impl Connection {
                     in_persistent_congestion,
                     false,
                     size_of_lost_packets,
+                    frame::EcnCounts::ZERO,
                 );
+                self.config
+                    .qlog_sink
+                    .emit_loss_event(size_of_lost_packets, now, self.orig_rem_cid);
             }
         }
 
@@ -3680,7 +3727,7 @@ impl Connection {
     /// Whether explicit congestion notification is in use on outgoing packets.
     #[cfg(test)]
     pub(crate) fn using_ecn(&self) -> bool {
-        self.path.sending_ecn
+        self.path.using_ecn
     }
 
     /// The number of received bytes in the current path
