@@ -863,6 +863,14 @@ impl RecvState {
             match socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
                     self.recv_limiter.record_work(msgs);
+                    // Copy the received batch into `datagrams` and split each datagram off as
+                    // an owned slice. We can't read directly into `datagrams` and drop
+                    // `recv_buf`: once a slice has been handed to a connection the allocation
+                    // is shared, so the next `reserve` must allocate fresh backing memory.
+                    // Reading in place would therefore mean reserving the worst-case iovec
+                    // envelope before every poll and reallocating it whenever a prior datagram
+                    // is still in flight. `recv_buf` stays an allocate-once scratch buffer, and
+                    // we reserve only the bytes actually received.
                     let batch_len = metas.iter().take(msgs).map(|meta| meta.len).sum();
                     self.datagrams.reserve(batch_len);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
