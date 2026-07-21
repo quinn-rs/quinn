@@ -3490,6 +3490,51 @@ fn voluntary_ack_with_large_datagrams() {
     );
 }
 
+#[test]
+fn ack_bundled_with_datagrams() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    // Send packet from client and then send from server. the packet from server should include ACKs
+    pair.client_datagrams(client_ch)
+        .send(vec![0; 1].into(), false)
+        .unwrap();
+    pair.drive_client();
+    pair.drive_server();
+
+    let server_tx_acks_before_datagram = pair.server_conn_mut(server_ch).stats().frame_tx.acks;
+    let server_tx_packets_before_datagram =
+        pair.server_conn_mut(server_ch).stats().udp_tx.datagrams;
+
+    pair.server_datagrams(server_ch)
+        .send(vec![0; 1].into(), false)
+        .unwrap();
+    pair.drive_server();
+
+    let server_tx_acks_after_datagram = pair.server_conn_mut(server_ch).stats().frame_tx.acks;
+
+    assert_eq!(
+        server_tx_acks_before_datagram + 1,
+        server_tx_acks_after_datagram,
+        "server should have sent ACK frame along with DATAGRAM frame"
+    );
+    assert_eq!(
+        server_tx_packets_before_datagram + 1,
+        pair.server_conn_mut(server_ch).stats().udp_tx.datagrams,
+        "server should not have sent two or more QUIC packets"
+    );
+
+    pair.drive();
+
+    // No more acks should be sent from server since ACK to the first packet has been sent with the datagram
+    assert_eq!(
+        server_tx_acks_after_datagram,
+        pair.server_conn_mut(server_ch).stats().frame_tx.acks,
+        "server should not sent ACK frames"
+    );
+}
+
 /// Verify that dropping oversized datagrams will trigger a DatagramsUnblocked event.
 #[test]
 fn oversized_datagrams_trigger_unblock() {
