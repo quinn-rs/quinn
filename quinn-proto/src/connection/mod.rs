@@ -795,13 +795,14 @@ impl Connection {
                 // especially important with ack delay, since the peer might not
                 // have gotten any other ACK for the data earlier on.
                 if !self.spaces[space_id].pending_acks.ranges().is_empty() {
-                    Self::populate_acks(
+                    Self::try_populate_acks(
                         now,
                         self.receiving_ecn,
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
+                        buf_capacity,
                     );
                 }
 
@@ -3198,6 +3199,8 @@ impl Connection {
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space.pending_acks.maybe_ack_non_eliciting();
 
+        let pre_payload_len = buf.len();
+
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
             buf.write(frame::FrameType::HANDSHAKE_DONE);
@@ -3225,13 +3228,14 @@ impl Connection {
 
         // ACK
         if space.pending_acks.can_send() {
-            Self::populate_acks(
+            Self::try_populate_acks(
                 now,
                 self.receiving_ecn,
                 &mut sent,
                 space,
                 buf,
                 &mut self.stats,
+                max_size,
             );
         }
 
@@ -3440,20 +3444,44 @@ impl Connection {
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
+        // Bundle ACK with other frames when there is room for them.
+        // We want to reuse encryption and underlying protocol overhead,
+        // but sending multiple ACKs for a single incoming packet is a waste of peer's resources,
+        // so we have next_bundled_ack_time to control when to send ACKs.
+        let any_frames_sent = buf.len() > pre_payload_len;
+        if any_frames_sent
+            && sent.largest_acked.is_none()
+            && space.pending_acks.can_send_with_other_frames()
+        {
+            Self::try_populate_acks(
+                now,
+                self.receiving_ecn,
+                &mut sent,
+                space,
+                buf,
+                &mut self.stats,
+                max_size,
+            );
+        }
+
         sent
     }
 
-    /// Write pending ACKs into a buffer
+    /// Tries to write pending ACKs into a buffer if there is enough space.
+    ///
+    /// If the ACK frame does not fit into the buffer, the ACK frame will not
+    /// be sent at all.
     ///
     /// This method assumes ACKs are pending, and should only be called if
     /// `!PendingAcks::ranges().is_empty()` returns `true`.
-    fn populate_acks(
+    fn try_populate_acks(
         now: Instant,
         receiving_ecn: bool,
         sent: &mut SentFrames,
         space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
+        max_size: usize,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3464,7 +3492,6 @@ impl Connection {
         } else {
             None
         };
-        sent.largest_acked = space.pending_acks.ranges().max();
 
         let delay_micros = space.pending_acks.ack_delay(now).as_micros() as u64;
 
@@ -3478,7 +3505,14 @@ impl Connection {
             delay_micros
         );
 
+        let no_acks_len = buf.len();
         frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        if buf.len() > max_size {
+            // The ACK frame is too large. Remove it.
+            buf.truncate(no_acks_len);
+            return;
+        }
+        sent.largest_acked = space.pending_acks.ranges().max();
         stats.frame_tx.acks += 1;
     }
 
