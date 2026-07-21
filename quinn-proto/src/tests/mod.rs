@@ -3466,7 +3466,14 @@ fn stream_gso() {
 fn datagram_gso() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    let (client_ch, _) = pair.connect();
+    let (client_ch, server_ch) = pair.connect();
+
+    // Sending ack-eliciting packet from server let client send ACK, which prevents
+    // sending bundled ACK for a while.
+    pair.server_datagrams(server_ch)
+        .send(Bytes::new(), false)
+        .unwrap();
+    pair.drive();
 
     let initial_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
     let initial_bytes = pair.client_conn_mut(client_ch).stats().udp_tx.bytes;
@@ -3485,10 +3492,10 @@ fn datagram_gso() {
     let final_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
     let final_bytes = pair.client_conn_mut(client_ch).stats().udp_tx.bytes;
     assert_eq!(final_ios - initial_ios, 1);
-    // Expected overhead: flags + CID + PN + tag + frame type + frame length + ACK frame = 1 + 8 + 1 + 16 + 1 + 2 + 9 = 38
+    // Expected overhead: flags + CID + PN + tag + frame type + frame length = 1 + 8 + 1 + 16 + 1 + 2 = 29
     assert_eq!(
         final_bytes - initial_bytes,
-        ((38 + DATAGRAM_LEN) * DATAGRAMS) as u64
+        ((29 + DATAGRAM_LEN) * DATAGRAMS) as u64
     );
 }
 
