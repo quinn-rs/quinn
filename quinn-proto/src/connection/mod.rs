@@ -2922,7 +2922,7 @@ impl Connection {
                             "STOP_SENDING on unopened stream",
                         ));
                     }
-                    self.streams.received_stop_sending(id, error_code);
+                    self.streams.received_stop_sending(id, error_code)?;
                 }
                 Frame::RetireConnectionId { sequence } => {
                     let allow_more_cids = self

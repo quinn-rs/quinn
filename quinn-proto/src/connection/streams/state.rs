@@ -356,14 +356,20 @@ impl StreamsState {
 
     /// Process incoming `STOP_SENDING` frame
     #[allow(unreachable_pub)] // fuzzing only
-    pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
+    pub fn received_stop_sending(
+        &mut self,
+        id: StreamId,
+        error_code: VarInt,
+    ) -> Result<(), TransportError> {
+        self.validate_remote_stream_limit(id)?;
+
         let max_send_data = self.max_send_data(id);
         let Some(stream) = self
             .send
             .get_mut(&id)
             .map(get_or_insert_send(max_send_data))
         else {
-            return;
+            return Ok(());
         };
 
         if stream.try_stop(error_code) {
@@ -371,6 +377,7 @@ impl StreamsState {
                 .push_back(StreamEvent::Stopped { id, error_code });
             self.on_stream_frame(false, id);
         }
+        Ok(())
     }
 
     pub(crate) fn reset_acked(&mut self, id: StreamId) {
@@ -749,6 +756,7 @@ impl StreamsState {
                 "MAX_STREAM_DATA on recv-only stream",
             ));
         }
+        self.validate_remote_stream_limit(id)?;
 
         let write_limit = self.write_limit();
         let max_send_data = self.max_send_data(id);
@@ -858,6 +866,18 @@ impl StreamsState {
     /// Whether a locally initiated stream has never been open
     pub(crate) fn is_local_unopened(&self, id: StreamId) -> bool {
         id.index() >= self.next[id.dir() as usize]
+    }
+
+    /// Check that a peer-initiated stream `id` referenced by a `STOP_SENDING`
+    /// or `MAX_STREAM_DATA` frame is within the concurrency limit we
+    /// advertised. The peer must not reference a stream it was never allowed
+    /// to open. Locally initiated streams are bounded separately, via
+    /// `is_local_unopened`.
+    fn validate_remote_stream_limit(&self, id: StreamId) -> Result<(), TransportError> {
+        if id.initiator() != self.side && id.index() >= self.max_remote[id.dir() as usize] {
+            return Err(TransportError::STREAM_LIMIT_ERROR(""));
+        }
+        Ok(())
     }
 
     pub(crate) fn set_max_concurrent(&mut self, dir: Dir, count: VarInt) {
@@ -1315,7 +1335,7 @@ mod tests {
         };
 
         let error_code = 0u32.into();
-        stream.state.received_stop_sending(id, error_code);
+        stream.state.received_stop_sending(id, error_code).unwrap();
         assert!(
             stream
                 .state
@@ -1330,8 +1350,40 @@ mod tests {
         assert_eq!(stream.write(&[]), Err(WriteError::ClosedStream));
 
         // A duplicate frame is a no-op
-        stream.state.received_stop_sending(id, error_code);
+        stream.state.received_stop_sending(id, error_code).unwrap();
         assert!(stream.state.events.is_empty());
+    }
+
+    #[test]
+    fn stop_sending_beyond_stream_limit() {
+        // `make` advertises a limit of 128 streams per direction, so the peer
+        // (the server) may only reference bidi streams 0..128.
+        let mut client = make(Side::Client);
+        client
+            .received_stop_sending(StreamId::new(Side::Server, Dir::Bi, 127), 0u32.into())
+            .unwrap();
+        assert_eq!(
+            client
+                .received_stop_sending(StreamId::new(Side::Server, Dir::Bi, 128), 0u32.into())
+                .unwrap_err()
+                .code,
+            TransportErrorCode::STREAM_LIMIT_ERROR
+        );
+    }
+
+    #[test]
+    fn max_stream_data_beyond_stream_limit() {
+        let mut client = make(Side::Client);
+        client
+            .received_max_stream_data(StreamId::new(Side::Server, Dir::Bi, 127), 42)
+            .unwrap();
+        assert_eq!(
+            client
+                .received_max_stream_data(StreamId::new(Side::Server, Dir::Bi, 128), 42)
+                .unwrap_err()
+                .code,
+            TransportErrorCode::STREAM_LIMIT_ERROR
+        );
     }
 
     #[test]
