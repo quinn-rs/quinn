@@ -191,6 +191,8 @@ pub struct Connection {
     permit_idle_reset: bool,
     /// Negotiated idle timeout
     idle_timeout: Option<Duration>,
+    /// The time we send next bundled ACK
+    next_bundled_ack_time: Option<Instant>,
     timers: TimerTable,
     /// Number of packets received which could not be authenticated
     authentication_failures: u64,
@@ -335,6 +337,7 @@ impl Connection {
             ack_frequency: AckFrequencyState::new(get_max_ack_delay(
                 &TransportParameters::default(),
             )),
+            next_bundled_ack_time: None,
 
             pto_count: 0,
 
@@ -901,6 +904,7 @@ impl Connection {
             if sent.largest_acked.is_some() {
                 self.spaces[space_id].pending_acks.acks_sent();
                 self.timers.stop(Timer::MaxAckDelay);
+                self.next_bundled_ack_time = Some(now + self.config.bundled_ack_interval);
             }
 
             // Keep information about the packet around until it gets finalized
@@ -3063,6 +3067,7 @@ impl Connection {
         {
             self.timers
                 .set(Timer::MaxAckDelay, now + self.ack_frequency.max_ack_delay);
+            self.next_bundled_ack_time = Some(now);
         }
 
         // Issue stream ID credit due to ACKs of outgoing finish/resets and incoming finish/resets
@@ -3451,6 +3456,7 @@ impl Connection {
         let any_frames_sent = buf.len() > buf_initial_len;
         if any_frames_sent
             && sent.largest_acked.is_none()
+            && self.next_bundled_ack_time.is_some_and(|time| time <= now)
             && space.pending_acks.can_send_with_other_frames()
         {
             Self::try_populate_acks(
