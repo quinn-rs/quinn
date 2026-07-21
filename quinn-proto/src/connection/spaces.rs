@@ -662,9 +662,14 @@ impl PendingAcks {
             .map(|earliest_unacked| earliest_unacked + max_ack_delay)
     }
 
-    /// Whether any ACK frames can be sent
+    /// Whether any ACK frames can be sent even if doing so requires a dedicated packet
     pub(super) fn can_send(&self) -> bool {
         self.immediate_ack_required && !self.ranges.is_empty()
+    }
+
+    /// Whether any ACK frames can be sent in data-initiated packets
+    pub(super) fn can_send_with_other_frames(&self) -> bool {
+        !self.ranges.is_empty()
     }
 
     /// Returns the delay since the packet with the largest packet number was received
