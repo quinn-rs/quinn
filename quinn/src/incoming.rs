@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use proto::{ConnectionError, ConnectionId, ServerConfig};
+use proto::{ConnectionError, ConnectionId, HandshakeBytesError, ServerConfig};
 use thiserror::Error;
 
 use crate::{
@@ -97,6 +97,17 @@ impl Incoming {
     /// The original destination CID when initiating the connection
     pub fn orig_dst_cid(&self) -> ConnectionId {
         self.0.as_ref().unwrap().inner.orig_dst_cid()
+    }
+
+    /// The TLS handshake bytes carried by the Initial packet.
+    ///
+    /// See [`proto::Incoming::handshake_bytes`] for the full description.
+    /// The returned bytes begin with the TLS handshake message header (`0x01`
+    /// for `ClientHello`) and can be passed to a TLS parser to inspect
+    /// extensions such as SNI or ALPN before deciding whether to
+    /// [`accept`](Self::accept) or [`ignore`](Self::ignore) the connection.
+    pub fn handshake_bytes(&self) -> Result<Vec<u8>, HandshakeBytesError> {
+        self.0.as_ref().unwrap().inner.handshake_bytes()
     }
 }
 
