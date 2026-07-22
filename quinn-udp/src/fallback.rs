@@ -4,7 +4,7 @@ use std::{
     time::Instant,
 };
 
-use super::{IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef, log_sendmsg_error};
+use super::{IO_ERROR_LOG_INTERVAL, RecvMeta, SendCount, Transmit, UdpSockRef, log_sendmsg_error};
 
 /// Fallback UDP socket interface that stubs out all special functionality
 ///
@@ -35,21 +35,30 @@ impl UdpSocketState {
     ///
     /// If you would like to handle these errors yourself, use [`UdpSocketState::try_send`]
     /// instead.
-    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        match send(socket, transmit) {
-            Ok(()) => Ok(()),
+    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<SendCount> {
+        let transmit = transmit.limit(1);
+
+        match send(socket, &transmit) {
+            Ok(sent) => Ok(SendCount::from_datagram_count(sent)),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
             Err(e) => {
-                log_sendmsg_error(&self.last_send_error, e, transmit);
+                log_sendmsg_error(&self.last_send_error, e, &transmit);
 
-                Ok(())
+                Ok(SendCount::from_datagram_count(1))
             }
         }
     }
 
-    /// Sends a [`Transmit`] on the given socket without any additional error handling.
-    pub fn try_send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        send(socket, transmit)
+    /// Sends the first datagram of a [`Transmit`] without any additional error handling.
+    pub fn try_send(
+        &self,
+        socket: UdpSockRef<'_>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<SendCount> {
+        let transmit = transmit.limit(1);
+        let sent = send(socket, &transmit)?;
+
+        Ok(SendCount::from_datagram_count(sent))
     }
 
     pub fn recv(
@@ -117,11 +126,13 @@ impl UdpSocketState {
     }
 }
 
-fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<usize> {
     socket.0.send_to(
         transmit.contents,
         &socket2::SockAddr::from(transmit.destination),
-    )
+    )?;
+
+    Ok(transmit.datagram_count())
 }
 
 pub(crate) const BATCH_SIZE: usize = 1;

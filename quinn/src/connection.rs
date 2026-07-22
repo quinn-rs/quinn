@@ -1014,8 +1014,9 @@ pub(crate) struct State {
     sender: Pin<Box<dyn UdpSender>>,
     runtime: Arc<dyn Runtime>,
     send_buffer: Vec<u8>,
-    /// We buffer a transmit when the underlying I/O would block
-    buffered_transmit: Option<proto::Transmit>,
+    /// A transmit buffered when I/O blocks or accepts only a prefix, and the byte offset of its
+    /// first unsent datagram.
+    buffered_transmit: Option<(proto::Transmit, usize)>,
 }
 
 impl State {
@@ -1062,7 +1063,7 @@ impl State {
 
         loop {
             // Retry the last transmit, or get a new one.
-            let t = match self.buffered_transmit.take() {
+            let (proto_transmit, mut offset) = match self.buffered_transmit.take() {
                 Some(t) => t,
                 None => {
                     self.send_buffer.clear();
@@ -1076,25 +1077,31 @@ impl State {
                                 None => 1,
                                 Some(s) => t.size.div_ceil(s), // round up
                             };
-                            t
+
+                            (t, 0)
                         }
                         None => break,
                     }
                 }
             };
 
-            let len = t.size;
-            match self
-                .sender
-                .as_mut()
-                .poll_send(&udp_transmit(&t, &self.send_buffer[..len]), cx)
-            {
+            let len = proto_transmit.size;
+            let transmit = udp_transmit(&proto_transmit, &self.send_buffer[offset..len]);
+            let previous_len = transmit.contents.len();
+
+            match self.sender.as_mut().poll_send(&transmit, cx) {
                 Poll::Pending => {
-                    self.buffered_transmit = Some(t);
+                    self.buffered_transmit = Some((proto_transmit, offset));
                     return Ok(false);
                 }
                 Poll::Ready(Err(e)) => return Err(e),
-                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Ok(sent)) => {
+                    if let Some(remainder) = transmit.advance(sent) {
+                        offset += previous_len - remainder.contents.len();
+                        self.buffered_transmit = Some((proto_transmit, offset));
+                        continue;
+                    }
+                }
             }
 
             if transmits >= MAX_TRANSMIT_DATAGRAMS {

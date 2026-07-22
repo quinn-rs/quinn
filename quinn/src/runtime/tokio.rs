@@ -59,7 +59,7 @@ impl UdpSenderHelperSocket for UdpSocket {
         self.inner.max_gso_segments()
     }
 
-    fn try_send(&self, transmit: &udp::Transmit<'_>) -> io::Result<()> {
+    fn try_send(&self, transmit: &udp::Transmit<'_>) -> io::Result<udp::SendCount> {
         self.io.try_io(Interest::WRITABLE, || {
             self.inner.send((&self.io).into(), transmit)
         })
