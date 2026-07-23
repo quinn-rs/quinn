@@ -82,6 +82,21 @@ jobs:
             . "$HOME/.cargo/env"
             cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
 
+  test-musl:
+    name: test on musl
+    runs-on: ubuntu-latest
+    env:
+      # `cc` looks for a target-prefixed compiler; point it at the one `musl-tools` installs.
+      CC_x86_64_unknown_linux_musl: musl-gcc
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-unknown-linux-musl
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked -p quinn-udp --target x86_64-unknown-linux-musl
+
   test:
     strategy:
       matrix:
