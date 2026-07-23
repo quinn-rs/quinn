@@ -78,9 +78,10 @@ impl<M: MsgHdr> Drop for Encoder<'_, M> {
 ///
 /// `cmsg` must refer to a native cmsg containing a payload of type `T`
 pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &impl CMsgHdr) -> T {
-    assert!(align_of::<T>() <= align_of::<C>());
     debug_assert_eq!(cmsg.len(), C::cmsg_len(size_of::<T>()));
-    ptr::read(cmsg.cmsg_data() as *const T)
+    // The payload is only aligned for `C`, which on musl is less strict than payloads such as
+    // `libc::timespec`, so it cannot be read through an aligned `ptr::read`.
+    ptr::read_unaligned(cmsg.cmsg_data() as *const T)
 }
 
 pub(crate) struct Iter<'a, M: MsgHdr> {
