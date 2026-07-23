@@ -158,7 +158,9 @@ impl Controller for Cubic {
                 let cubic_inc =
                     (w_cubic - cubic_cwnd as f64) / cubic_cwnd as f64 * self.current_mtu as f64;
 
-                cubic_cwnd += cubic_inc as u64;
+                // w_cubic grows cubically with the time since the last congestion
+                // event and can exceed `u64::MAX` after a long lossless period.
+                cubic_cwnd = cubic_cwnd.saturating_add(cubic_inc as u64);
             }
 
             // Update the increment and increase cwnd by MSS.
@@ -355,5 +357,25 @@ mod tests {
         // reset to zero.
         assert_eq!(cubic.state.window, window + BASE_DATAGRAM_SIZE);
         assert_eq!(cubic.state.cwnd_inc, BASE_DATAGRAM_SIZE + 1);
+    }
+
+    #[test]
+    fn congestion_avoidance_does_not_overflow_after_long_lossless_period() {
+        let now = Instant::now();
+        let rtt = RttEstimator::new(Duration::from_millis(100));
+        let config = Arc::new(CubicConfig::default());
+        let mut cubic = Cubic::new(config, now, BASE_DATAGRAM_SIZE as u16);
+
+        // Put CUBIC directly into congestion avoidance.
+        cubic.state.ssthresh = cubic.state.window;
+        cubic.state.recovery_start_time = Some(now);
+        let window = cubic.state.window;
+
+        // After ten days without a congestion event, w_cubic exceeds u64::MAX.
+        // Before this fix, computing the window increment overflowed.
+        let later = now + Duration::from_secs(10 * 24 * 60 * 60);
+        cubic.on_ack(later, later, BASE_DATAGRAM_SIZE, false, &rtt);
+
+        assert_eq!(cubic.state.window, window + BASE_DATAGRAM_SIZE);
     }
 }
