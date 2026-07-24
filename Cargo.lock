@@ -2015,6 +2015,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "rustversion",
  "slab",
  "thiserror 2.0.19",
  "tinyvec",
