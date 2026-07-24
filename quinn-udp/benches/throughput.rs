@@ -57,7 +57,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             1
         };
         let msg = vec![0xAB; min(MAX_DATAGRAM_SIZE, SEGMENT_SIZE * gso_segments)];
-        let transmit = Transmit {
+        let make_transmit = || Transmit {
             destination: dst_addr,
             ecn: None,
             contents: &msg,
@@ -82,14 +82,25 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
                 let mut sent: usize = 0;
                 let mut received: usize = 0;
+                let mut pending = make_transmit();
                 while sent < TOTAL_BYTES {
                     send_socket.writable().await.unwrap();
-                    send_socket
+                    let sent_datagrams = send_socket
                         .try_io(Interest::WRITABLE, || {
-                            send_state.send((&send_socket).into(), &transmit)
+                            send_state.send((&send_socket).into(), &pending)
                         })
                         .unwrap();
-                    sent += transmit.contents.len();
+                    let previous_len = pending.contents.len();
+                    match pending.advance(sent_datagrams) {
+                        Some(remainder) => {
+                            sent += previous_len - remainder.contents.len();
+                            pending = remainder;
+                        }
+                        None => {
+                            sent += previous_len;
+                            pending = make_transmit();
+                        }
+                    }
 
                     while received < sent {
                         recv_socket.readable().await.unwrap();

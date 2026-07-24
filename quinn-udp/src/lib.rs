@@ -35,6 +35,7 @@ use std::os::windows::io::AsSocket;
 use std::{
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
+    num::NonZeroUsize,
 };
 #[cfg(not(wasm_browser))]
 use std::{sync::Mutex, time::Instant};
@@ -158,13 +159,54 @@ pub struct Transmit<'a> {
     /// Contents of the datagram
     pub contents: &'a [u8],
     /// The segment size if this transmission contains multiple datagrams.
-    /// This is `None` if the transmit only contains a single datagram
+    ///
+    /// This is `None` if the transmit only contains a single datagram.
+    /// A value of zero is treated like `None`.
     pub segment_size: Option<usize>,
     /// Optional source IP address for the datagram
     pub src_ip: Option<IpAddr>,
 }
 
-impl Transmit<'_> {
+impl<'a> Transmit<'a> {
+    /// Returns the number of datagrams encoded by this transmit.
+    ///
+    /// A transmit without a `segment_size` always represents one datagram, including when its
+    /// contents are empty.
+    pub fn datagram_count(&self) -> usize {
+        match self.segment_size {
+            Some(size) if size != 0 && size < self.contents.len() => {
+                self.contents.len().div_ceil(size)
+            }
+            Some(_) | None => 1,
+        }
+    }
+
+    /// Advances this transmit by `sent` datagrams.
+    ///
+    /// Returns the unsent remainder, or `None` if the entire transmit was consumed. The returned
+    /// transmit borrows a suffix of the same payload; packet data is never copied.
+    pub fn advance(mut self, sent: SendCount) -> Option<Self> {
+        let sent = sent.get();
+        let segment_size = match self.segment_size {
+            Some(size) if size != 0 && size < self.contents.len() => size,
+            Some(_) | None => {
+                debug_assert_eq!(sent, 1, "a single-datagram transmit must consume once");
+                return None;
+            }
+        };
+
+        debug_assert!(sent <= self.contents.len().div_ceil(segment_size));
+
+        let offset = sent.saturating_mul(segment_size);
+        if offset >= self.contents.len() {
+            return None;
+        }
+
+        self.contents = &self.contents[offset..];
+
+        Some(self)
+    }
+
     /// Computes the effective segment-size of the packet.
     ///
     /// Some (older) network drivers don't like being told to do GSO even if
@@ -178,9 +220,61 @@ impl Transmit<'_> {
     #[cfg_attr(apple_fast, allow(dead_code))] // Used by prepare_msg, which is unused when apple_fast
     fn effective_segment_size(&self) -> Option<usize> {
         match self.segment_size? {
+            0 => None,
             size if size >= self.contents.len() => None,
             size => Some(size),
         }
+    }
+
+    /// Returns a transmit containing at most `max_datagrams.max(1)` leading datagrams.
+    #[cfg(not(wasm_browser))]
+    fn limit(&self, max_datagrams: usize) -> Self {
+        let max_datagrams = max_datagrams.max(1);
+
+        let segment_size = self.effective_segment_size();
+
+        let contents = match segment_size {
+            Some(size) => {
+                &self.contents[..self.contents.len().min(size.saturating_mul(max_datagrams))]
+            }
+            None => self.contents,
+        };
+
+        let segment_size = segment_size.filter(|&size| size < contents.len());
+
+        Self {
+            destination: self.destination,
+            ecn: self.ecn,
+            contents,
+            segment_size,
+            src_ip: self.src_ip,
+        }
+    }
+}
+
+/// Number of leading datagrams consumed by a send operation.
+///
+/// Pass this to [`Transmit::advance`] on the transmit supplied to the send operation. This consumes
+/// the previous transmit and returns its unsent remainder, if any.
+#[must_use = "send progress must be used to advance the transmitted packet"]
+#[derive(Clone, Copy, Debug)]
+#[repr(transparent)]
+pub struct SendCount(NonZeroUsize);
+
+impl SendCount {
+    /// Constructs a send count, or returns `None` if `value` is zero.
+    pub fn new(value: usize) -> Option<Self> {
+        Some(Self(NonZeroUsize::new(value)?))
+    }
+
+    #[cfg(not(wasm_browser))]
+    fn from_datagram_count(value: usize) -> Self {
+        Self::new(value).expect("a send operation must consume at least one datagram")
+    }
+
+    /// Returns the number of consumed datagrams.
+    pub const fn get(self) -> usize {
+        self.0.get()
     }
 }
 
@@ -372,6 +466,100 @@ mod tests {
             Some(5),
             "segment_size < content_len should yield effective segment_size"
         );
+        assert_eq!(
+            make_transmit(&[0u8; 10], Some(0)).effective_segment_size(),
+            None,
+            "zero is not a valid segment size"
+        );
+    }
+
+    #[test]
+    fn datagram_count() {
+        let contents = [0u8; 11];
+        let transmit = make_transmit(&contents, Some(5));
+
+        assert!(SendCount::new(0).is_none());
+
+        assert_eq!(transmit.datagram_count(), 3);
+        let sent = SendCount::new(1).unwrap();
+        assert_eq!(sent.get(), 1);
+
+        assert_eq!(make_transmit(&[], None).datagram_count(), 1);
+        assert_eq!(make_transmit(&contents, None).datagram_count(), 1);
+        assert_eq!(make_transmit(&contents, Some(0)).datagram_count(), 1);
+        assert_eq!(make_transmit(&contents, Some(20)).datagram_count(), 1);
+    }
+
+    #[test]
+    fn advance_returns_the_unsent_remainder() {
+        let contents = [0u8; 11];
+        let transmit = make_transmit(&contents, Some(5));
+
+        let transmit = transmit.advance(SendCount::new(1).unwrap()).unwrap();
+        assert_eq!(transmit.contents.len(), 6);
+        assert_eq!(transmit.datagram_count(), 2);
+
+        let transmit = transmit.advance(SendCount::new(1).unwrap()).unwrap();
+        assert_eq!(transmit.contents.len(), 1);
+        assert_eq!(transmit.datagram_count(), 1);
+        assert!(transmit.advance(SendCount::new(1).unwrap()).is_none());
+
+        assert!(
+            make_transmit(&[], None)
+                .advance(SendCount::new(1).unwrap())
+                .is_none()
+        );
+        assert!(
+            make_transmit(&contents, Some(0))
+                .advance(SendCount::new(1).unwrap())
+                .is_none()
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn advancing_by_too_large_a_send_count_triggers_debug_assertion() {
+        let contents = [0u8; 1];
+        let _ = make_transmit(&contents, None).advance(SendCount::new(2).unwrap());
+    }
+
+    #[test]
+    fn limit_is_infallible_for_degenerate_limits_and_segment_sizes() {
+        let contents = [0u8; 11];
+
+        for segment_size in [None, Some(0)] {
+            let transmit = make_transmit(&contents, segment_size);
+            let transmit = transmit.limit(0);
+
+            assert_eq!(transmit.contents, contents);
+            assert_eq!(transmit.datagram_count(), 1);
+            assert_eq!(transmit.segment_size, None);
+        }
+    }
+
+    #[test]
+    fn limit_preserves_a_datagram_prefix() {
+        let contents = [0u8; 11];
+        let transmit = make_transmit(&contents, Some(5));
+
+        let prefix = transmit.limit(2);
+        assert_eq!(prefix.contents.len(), 10);
+        assert_eq!(prefix.datagram_count(), 2);
+        assert_eq!(prefix.segment_size, Some(5));
+        assert_eq!(prefix.destination, transmit.destination);
+        assert_eq!(prefix.ecn, transmit.ecn);
+        assert_eq!(prefix.src_ip, transmit.src_ip);
+
+        let complete = transmit.limit(3);
+        assert_eq!(complete.contents.len(), 11);
+        assert_eq!(complete.datagram_count(), 3);
+        assert_eq!(complete.segment_size, Some(5));
+
+        let single = prefix.limit(1);
+        assert_eq!(single.contents.len(), 5);
+        assert_eq!(single.datagram_count(), 1);
+        assert_eq!(single.segment_size, None);
     }
 
     fn make_transmit(contents: &[u8], segment_size: Option<usize>) -> Transmit<'_> {

@@ -9,7 +9,7 @@ use std::{
     task::{self, Context, Poll},
 };
 
-use udp::{RecvMeta, Transmit};
+use udp::{RecvMeta, SendCount, Transmit};
 
 use crate::Instant;
 
@@ -93,11 +93,14 @@ pub trait UdpSender: Send + Sync + Debug + 'static {
     ///
     /// A single [`UdpSender`] will be re-used, even if `poll_send` returns `Poll::Ready` once,
     /// unlike [`Future::poll`], so calling it again after readiness should not panic.
+    ///
+    /// On success, returns the non-zero number of leading datagrams accepted from `transmit`. This
+    /// can be smaller than the number offered, in which case the caller will retry the remainder.
     fn poll_send(
         self: Pin<&mut Self>,
         transmit: &Transmit<'_>,
         cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>>;
+    ) -> Poll<io::Result<SendCount>>;
 
     /// Maximum number of datagrams that a [`Transmit`] may encode.
     fn max_transmit_segments(&self) -> usize {
@@ -162,7 +165,7 @@ where
         self: Pin<&mut Self>,
         transmit: &Transmit<'_>,
         cx: &mut Context<'_>,
-    ) -> Poll<io::Result<()>> {
+    ) -> Poll<io::Result<SendCount>> {
         let mut this = self.project();
         loop {
             if this.writable_fut.is_none() {
@@ -208,7 +211,7 @@ trait UdpSenderHelperSocket: Send + Sync + 'static {
     /// If not write-ready, this is allowed to return [`std::io::ErrorKind::WouldBlock`].
     ///
     /// The [`UdpSenderHelper`] will use this to implement [`UdpSender::poll_send`].
-    fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()>;
+    fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<SendCount>;
 
     /// See [`UdpSender::max_transmit_segments`].
     fn max_transmit_segments(&self) -> usize;
