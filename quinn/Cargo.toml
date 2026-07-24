@@ -57,7 +57,7 @@ bytes = { workspace = true }
 futures-io = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 pin-project-lite = { workspace = true }
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.12.0", default-features = false }
+proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.12.0", default-features = false, features = ["__internal_split_accept"] }
 rustls = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
 thiserror = { workspace = true }
