@@ -7,7 +7,9 @@ use super::{
     pacing::Pacer,
     spaces::{PacketSpace, SentPacket},
 };
-use crate::{Duration, Instant, TIMER_GRANULARITY, TransportConfig, congestion, packet::SpaceId};
+use crate::{
+    Duration, EcnMode, Instant, TIMER_GRANULARITY, TransportConfig, congestion, packet::SpaceId,
+};
 
 #[cfg(feature = "qlog")]
 use qlog::events::{ExData, quic::RecoveryMetricsUpdated};
@@ -16,8 +18,16 @@ use qlog::events::{ExData, quic::RecoveryMetricsUpdated};
 pub(super) struct PathData {
     pub(super) remote: SocketAddr,
     pub(super) rtt: RttEstimator,
-    /// Whether we're enabling ECN on outgoing packets
-    pub(super) sending_ecn: bool,
+    /// Configured ECN mode
+    ///
+    /// NOTE: this is a configuration value, not an operational status. It indicates what the user
+    /// wants to do, not what the path is actually doing.
+    pub(super) ecn_mode: EcnMode,
+    /// Whether we're actually marking outgoing packets with ECT and checking received ECN counts;
+    ///
+    /// NOTE: this is an operational status, a simple bool flag indicating if ECN is enabled on
+    /// this path
+    pub(super) using_ecn: bool,
     /// Congestion controller state
     pub(super) congestion: Box<dyn congestion::Controller>,
     /// Pacing state
@@ -63,18 +73,22 @@ impl PathData {
         now: Instant,
         config: &TransportConfig,
     ) -> Self {
-        let congestion = config
-            .congestion_controller_factory
-            .clone()
-            .build(now, config.get_initial_mtu());
+        let mut congestion = config.congestion_controller_factory.clone().build(
+            now,
+            config.get_initial_mtu(),
+            config,
+        );
+        let ecn_mode = config.ecn_mode.supported_mode(&mut congestion);
         Self {
             remote,
             rtt: RttEstimator::new(config.initial_rtt),
-            sending_ecn: true,
+            ecn_mode,
+            using_ecn: ecn_mode.is_enabled(),
             pacing: Pacer::new(
                 config.initial_rtt,
                 congestion.initial_window(),
                 config.get_initial_mtu(),
+                congestion.pacing_gain(),
                 config.max_outgoing_bytes_per_second,
                 now,
             ),
@@ -115,18 +129,22 @@ impl PathData {
         now: Instant,
     ) -> Self {
         let congestion = prev.congestion.clone_box();
-        let smoothed_rtt = prev.rtt.get();
         Self {
             remote,
             rtt: prev.rtt,
             pacing: Pacer::new(
-                smoothed_rtt,
+                prev.rtt.get(),
                 congestion.window(),
                 prev.current_mtu(),
+                congestion.pacing_gain(),
                 prev.pacing.max_bytes_per_second(),
                 now,
             ),
-            sending_ecn: true,
+            ecn_mode: prev.ecn_mode,
+            // Note that we can't rely on the previous path's `using_ecn` value here, as it may
+            // have been disabled due to ECN failure. We should re-enable it on the new path should
+            // the configuration allow it.
+            using_ecn: prev.ecn_mode.is_enabled(),
             congestion,
             challenge: None,
             challenge_pending: false,
@@ -148,10 +166,11 @@ impl PathData {
     /// This is useful when it is known the underlying path has changed.
     pub(super) fn reset(&mut self, now: Instant, config: &TransportConfig) {
         self.rtt = RttEstimator::new(config.initial_rtt);
-        self.congestion = config
-            .congestion_controller_factory
-            .clone()
-            .build(now, config.get_initial_mtu());
+        self.congestion = config.congestion_controller_factory.clone().build(
+            now,
+            config.get_initial_mtu(),
+            config,
+        );
         self.mtud.reset(config.get_initial_mtu(), config.min_mtu);
     }
 
@@ -323,6 +342,11 @@ impl RttEstimator {
     /// The current best RTT estimation.
     pub fn get(&self) -> Duration {
         self.smoothed.unwrap_or(self.latest)
+    }
+
+    /// The current best jitter estimation
+    pub fn var(&self) -> Duration {
+        self.var
     }
 
     /// Conservative estimate of RTT

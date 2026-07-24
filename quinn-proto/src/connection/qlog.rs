@@ -19,7 +19,7 @@ use qlog::{
 use tracing::warn;
 
 use crate::{
-    ConnectionId, Instant,
+    ConnectionId, EcnCounts, Instant,
     connection::{PathData, SentPacket},
     packet::SpaceId,
 };
@@ -172,6 +172,116 @@ impl QlogSink {
             };
 
             stream.emit_event(orig_rem_cid, EventData::QuicPacketReceived(event), now);
+        }
+    }
+
+    pub(super) fn emit_loss_event(
+        &self,
+        size_of_lost_packets: u64,
+        now: Instant,
+        orig_rem_cid: ConnectionId,
+    ) {
+        #[cfg(feature = "qlog")]
+        {
+            use qlog::events::quic::{CongestionStateUpdated, CongestionStateUpdatedTrigger};
+
+            let Some(stream) = self.stream.as_ref() else {
+                return;
+            };
+
+            let event = CongestionStateUpdated {
+                old: None,
+                new: format!("LOSS:size_of_lost_packets={}", size_of_lost_packets),
+                trigger: Some(CongestionStateUpdatedTrigger::Unknown),
+            };
+
+            stream.emit_event(
+                orig_rem_cid,
+                EventData::QuicCongestionStateUpdated(event),
+                now,
+            );
+        }
+    }
+
+    pub(super) fn emit_ecn_event(
+        &self,
+        increment: EcnCounts,
+        now: Instant,
+        orig_rem_cid: ConnectionId,
+    ) {
+        #[cfg(feature = "qlog")]
+        {
+            use qlog::events::quic::{CongestionStateUpdated, CongestionStateUpdatedTrigger};
+
+            let Some(stream) = self.stream.as_ref() else {
+                return;
+            };
+
+            let event = CongestionStateUpdated {
+                old: None,
+                new: format!(
+                    "ECN:ect0+={},ect1+={},ce+={}",
+                    increment.ect0, increment.ect1, increment.ce
+                ),
+                trigger: Some(CongestionStateUpdatedTrigger::Ecn),
+            };
+
+            stream.emit_event(
+                orig_rem_cid,
+                EventData::QuicCongestionStateUpdated(event),
+                now,
+            );
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn emit_l4s_event(&self, alpha: f64, now: Instant, orig_rem_cid: ConnectionId) {
+        #[cfg(feature = "qlog")]
+        {
+            use qlog::events::quic::{CongestionStateUpdated, CongestionStateUpdatedTrigger};
+
+            let Some(stream) = self.stream.as_ref() else {
+                return;
+            };
+
+            let event = CongestionStateUpdated {
+                old: None,
+                new: format!("ALPHA:alpha={:?}", alpha),
+                trigger: Some(CongestionStateUpdatedTrigger::Ecn),
+            };
+
+            stream.emit_event(
+                orig_rem_cid,
+                EventData::QuicCongestionStateUpdated(event),
+                now,
+            );
+        }
+    }
+
+    pub(super) fn emit_ecn_state_update(
+        &self,
+        ecn_capable: bool,
+        now: Instant,
+        orig_rem_cid: ConnectionId,
+    ) {
+        #[cfg(feature = "qlog")]
+        {
+            use qlog::events::quic::{EcnState, EcnStateUpdated};
+
+            let Some(stream) = self.stream.as_ref() else {
+                return;
+            };
+
+            let event = EcnStateUpdated {
+                old: None,
+                new: if ecn_capable {
+                    EcnState::Capable
+                } else {
+                    EcnState::Failed
+                },
+            };
+
+            stream.emit_event(orig_rem_cid, EventData::QuicEcnStateUpdated(event), now);
         }
     }
 }

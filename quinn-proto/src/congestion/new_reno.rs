@@ -4,6 +4,7 @@ use std::sync::Arc;
 use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
 use crate::Instant;
 use crate::connection::RttEstimator;
+use crate::frame::EcnCounts;
 
 /// A simple, standard congestion controller
 #[derive(Debug, Clone)]
@@ -16,19 +17,19 @@ pub struct NewReno {
     /// slow start and the window grows by the number of bytes acknowledged.
     ssthresh: u64,
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
-    /// after this time is acknowledged, QUIC exits recovery.
-    recovery_start_time: Instant,
+    /// after this time is acknowledged, QUIC exits recovery. `None` if not currently in recovery.
+    recovery_start_time: Option<Instant>,
     /// Bytes which had been acked by the peer since leaving slow start
     bytes_acked: u64,
 }
 
 impl NewReno {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<NewRenoConfig>, now: Instant, current_mtu: u16) -> Self {
+    pub fn new(config: Arc<NewRenoConfig>, _now: Instant, current_mtu: u16) -> Self {
         Self {
             window: config.initial_window,
             ssthresh: u64::MAX,
-            recovery_start_time: now,
+            recovery_start_time: None,
             current_mtu: current_mtu as u64,
             config,
             bytes_acked: 0,
@@ -49,7 +50,12 @@ impl Controller for NewReno {
         app_limited: bool,
         _rtt: &RttEstimator,
     ) {
-        if app_limited || sent <= self.recovery_start_time {
+        if app_limited
+            || self
+                .recovery_start_time
+                .map(|recovery_start_time| sent <= recovery_start_time)
+                .unwrap_or(false)
+        {
             return;
         }
 
@@ -89,12 +95,17 @@ impl Controller for NewReno {
         is_persistent_congestion: bool,
         _is_ecn: bool,
         _lost_bytes: u64,
+        _diff: EcnCounts,
     ) {
-        if sent <= self.recovery_start_time {
+        if self
+            .recovery_start_time
+            .map(|recovery_start_time| sent <= recovery_start_time)
+            .unwrap_or(false)
+        {
             return;
         }
 
-        self.recovery_start_time = now;
+        self.recovery_start_time = Some(now);
         self.window = (self.window as f32 * self.config.loss_reduction_factor) as u64;
         self.window = self.window.max(self.minimum_window());
         self.ssthresh = self.window;
@@ -104,9 +115,21 @@ impl Controller for NewReno {
         }
     }
 
+    fn exit_recovery(&mut self, _now: Instant) {
+        self.recovery_start_time = None;
+    }
+
     fn on_mtu_update(&mut self, new_mtu: u16) {
         self.current_mtu = new_mtu as u64;
         self.window = self.window.max(self.minimum_window());
+    }
+
+    fn set_window(&mut self, size: u64) {
+        self.window = size;
+    }
+
+    fn set_ssthresh(&mut self, size: u64) {
+        self.ssthresh = size;
     }
 
     fn window(&self) -> u64 {
@@ -167,7 +190,12 @@ impl Default for NewRenoConfig {
 }
 
 impl ControllerFactory for NewRenoConfig {
-    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+    fn build(
+        self: Arc<Self>,
+        now: Instant,
+        current_mtu: u16,
+        _config: &crate::TransportConfig,
+    ) -> Box<dyn Controller> {
         Box::new(NewReno::new(self, now, current_mtu))
     }
 }
