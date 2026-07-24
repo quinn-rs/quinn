@@ -517,7 +517,7 @@ impl Drop for RecvStream {
                     .blocked_readers
                     .contains_key(&self.stream),
                 "Stream {} should not have a blocked reader when all data read is true",
-                &self.stream
+                self.stream
             );
             return;
         }
