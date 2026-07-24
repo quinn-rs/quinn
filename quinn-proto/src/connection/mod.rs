@@ -192,6 +192,8 @@ pub struct Connection {
     permit_idle_reset: bool,
     /// Negotiated idle timeout
     idle_timeout: Option<Duration>,
+    /// The time we send next bundled ACK
+    next_bundled_ack_time: Option<Instant>,
     timers: TimerTable,
     /// Number of packets received which could not be authenticated
     authentication_failures: u64,
@@ -336,6 +338,7 @@ impl Connection {
             ack_frequency: AckFrequencyState::new(get_max_ack_delay(
                 &TransportParameters::default(),
             )),
+            next_bundled_ack_time: None,
 
             pto_count: 0,
 
@@ -790,13 +793,14 @@ impl Connection {
                 // especially important with ack delay, since the peer might not
                 // have gotten any other ACK for the data earlier on.
                 if !self.spaces[space_id].pending_acks.ranges().is_empty() {
-                    Self::populate_acks(
+                    Self::try_populate_acks(
                         now,
                         self.receiving_ecn,
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
+                        usize::MAX,
                     );
                 }
 
@@ -901,6 +905,7 @@ impl Connection {
             if sent.largest_acked.is_some() {
                 self.spaces[space_id].pending_acks.acks_sent();
                 self.timers.stop(Timer::MaxAckDelay);
+                self.next_bundled_ack_time = Some(now + self.config.bundled_ack_interval);
             }
 
             // Keep information about the packet around until it gets finalized
@@ -3068,6 +3073,7 @@ impl Connection {
         {
             self.timers
                 .set(Timer::MaxAckDelay, now + self.ack_frequency.max_ack_delay);
+            self.next_bundled_ack_time = Some(now);
         }
 
         // Issue stream ID credit due to ACKs of outgoing finish/resets and incoming finish/resets
@@ -3204,6 +3210,8 @@ impl Connection {
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space.pending_acks.maybe_ack_non_eliciting();
 
+        let buf_initial_len = buf.len();
+
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
             buf.write(frame::FrameType::HANDSHAKE_DONE);
@@ -3231,13 +3239,14 @@ impl Connection {
 
         // ACK
         if space.pending_acks.can_send() {
-            Self::populate_acks(
+            Self::try_populate_acks(
                 now,
                 self.receiving_ecn,
                 &mut sent,
                 space,
                 buf,
                 &mut self.stats,
+                max_size,
             );
         }
 
@@ -3446,6 +3455,27 @@ impl Connection {
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
+        // Bundle ACK with other frames when there is room for them.
+        // We want to reuse encryption and unnderlying protocol overhead,
+        // but sending multiple ACKs for a single incoming packet is a waste of peer's resources,
+        // so we have next_bundled_ack_time to control when to send ACKs.
+        let any_frames_sent = buf.len() > buf_initial_len;
+        if any_frames_sent
+            && sent.largest_acked.is_none()
+            && self.next_bundled_ack_time.is_some_and(|time| time <= now)
+            && space.pending_acks.can_send_with_other_frames()
+        {
+            Self::try_populate_acks(
+                now,
+                self.receiving_ecn,
+                &mut sent,
+                space,
+                buf,
+                &mut self.stats,
+                max_size,
+            );
+        }
+
         sent
     }
 
@@ -3453,13 +3483,14 @@ impl Connection {
     ///
     /// This method assumes ACKs are pending, and should only be called if
     /// `!PendingAcks::ranges().is_empty()` returns `true`.
-    fn populate_acks(
+    fn try_populate_acks(
         now: Instant,
         receiving_ecn: bool,
         sent: &mut SentFrames,
         space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
+        max_size: usize,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3470,7 +3501,6 @@ impl Connection {
         } else {
             None
         };
-        sent.largest_acked = space.pending_acks.ranges().max();
 
         let delay_micros = space.pending_acks.ack_delay(now).as_micros() as u64;
 
@@ -3484,7 +3514,14 @@ impl Connection {
             delay_micros
         );
 
+        let original_len = buf.len();
         frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        if buf.len() > max_size {
+            // The ACK frame is too large. Remove it.
+            buf.truncate(original_len);
+            return;
+        }
+        sent.largest_acked = space.pending_acks.ranges().max();
         stats.frame_tx.acks += 1;
     }
 
