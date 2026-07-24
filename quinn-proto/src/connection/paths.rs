@@ -69,7 +69,7 @@ impl PathData {
             .build(now, config.get_initial_mtu());
         Self {
             remote,
-            rtt: RttEstimator::new(config.initial_rtt),
+            rtt: RttEstimator::new(config.initial_rtt, config.max_rtt),
             sending_ecn: true,
             pacing: Pacer::new(
                 config.initial_rtt,
@@ -147,7 +147,7 @@ impl PathData {
     ///
     /// This is useful when it is known the underlying path has changed.
     pub(super) fn reset(&mut self, now: Instant, config: &TransportConfig) {
-        self.rtt = RttEstimator::new(config.initial_rtt);
+        self.rtt = RttEstimator::new(config.initial_rtt, config.max_rtt);
         self.congestion = config
             .congestion_controller_factory
             .clone()
@@ -308,15 +308,18 @@ pub struct RttEstimator {
     var: Duration,
     /// The minimum RTT seen in the connection, ignoring ack delay.
     min: Duration,
+    /// Upper bound applied to RTT samples, guarding the estimate against processing delays.
+    max: Duration,
 }
 
 impl RttEstimator {
-    pub(crate) fn new(initial_rtt: Duration) -> Self {
+    pub(crate) fn new(initial_rtt: Duration, max_rtt: Duration) -> Self {
         Self {
             latest: initial_rtt,
             smoothed: None,
             var: initial_rtt / 2,
             min: initial_rtt,
+            max: max_rtt,
         }
     }
 
@@ -344,6 +347,9 @@ impl RttEstimator {
     }
 
     pub(crate) fn update(&mut self, ack_delay: Duration, rtt: Duration) {
+        // Clamp the raw sample so that a delayed ack (e.g. from runtime starvation, or packets
+        // left unread in the socket buffer) cannot poison the estimate.
+        let rtt = cmp::min(rtt, self.max);
         self.latest = rtt;
         // min_rtt ignores ack delay.
         self.min = cmp::min(self.min, self.latest);
@@ -465,5 +471,32 @@ impl InFlight {
     fn remove(&mut self, packet: &SentPacket) {
         self.bytes -= u64::from(packet.size);
         self.ack_eliciting -= u64::from(packet.ack_eliciting);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rtt_estimator_clamps_samples_above_max() {
+        let max = Duration::from_millis(500);
+        let mut rtt = RttEstimator::new(Duration::from_millis(100), max);
+
+        // A wildly inflated sample (e.g. from runtime starvation) must not exceed `max`.
+        rtt.update(Duration::ZERO, Duration::from_secs(30));
+
+        assert_eq!(rtt.latest, max);
+        assert_eq!(rtt.get(), max);
+    }
+
+    #[test]
+    fn rtt_estimator_keeps_samples_below_max() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(100), Duration::from_secs(2));
+
+        let sample = Duration::from_millis(250);
+        rtt.update(Duration::ZERO, sample);
+
+        assert_eq!(rtt.latest, sample);
     }
 }

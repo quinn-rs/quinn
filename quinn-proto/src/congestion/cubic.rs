@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn congestion_avoidance_preserves_excess_cwnd_increment() {
         let now = Instant::now();
-        let rtt = RttEstimator::new(Duration::from_millis(100));
+        let rtt = RttEstimator::new(Duration::from_millis(100), Duration::from_secs(2));
         let config = Arc::new(CubicConfig::default());
         let mut cubic = Cubic::new(config, now, BASE_DATAGRAM_SIZE as u16);
 
