@@ -133,15 +133,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: rustup target add wasm32-unknown-unknown
+      - run: rustup target add wasm32-unknown-unknown wasm32-wasip2
       - uses: actions/setup-node@v7
         with:
           node-version: 20
       - uses: bytecodealliance/actions/wasm-tools/setup@v1
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
       - uses: cargo-bins/cargo-binstall@main
 
       - run: cargo test --locked -p quinn-proto --target wasm32-unknown-unknown --no-run
       - run: cargo check --locked -p quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
+      # Runs `fallback.rs`, which no other CI target so much as compiles. wasip2 is the only
+      # target that both selects it and has real sockets, so it is where the backend can be
+      # tested rather than just built. wasmtime denies network access unless asked.
+      - run: cargo test --locked -p quinn-udp --target wasm32-wasip2 --tests
+        env:
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: wasmtime run -S inherit-network
       - run: cargo rustc --locked -p quinn --target wasm32-unknown-unknown --no-default-features --features=tracing-log,platform-verifier,rustls-ring --crate-type=cdylib
 
       # If the Wasm file contains any 'import "env"' declarations, then
