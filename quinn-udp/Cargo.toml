@@ -31,7 +31,10 @@ socket2 = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true }
 
-[dev-dependencies]
+# Only the benchmark uses these, but cargo builds every dev-dependency for every test target, and
+# tokio refuses to compile for wasm with the features the benchmark needs. Scoping them off wasm
+# lets `tests/tests.rs` build for wasm32-wasip2; `cargo bench` is unaffected everywhere else.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["async_tokio"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
 

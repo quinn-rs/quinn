@@ -1,9 +1,18 @@
 #[cfg(apple)]
 use std::io::{self, IoSlice};
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(target_os = "wasi")]
+use std::mem::ManuallyDrop;
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "wasi",
+    solarish
+)))]
 use std::net::{SocketAddr, SocketAddrV6};
 #[cfg(apple)]
 use std::os::fd::AsRawFd;
+#[cfg(target_os = "wasi")]
+use std::os::fd::{AsRawFd, FromRawFd};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::time::Duration;
 use std::{
@@ -12,7 +21,9 @@ use std::{
     slice,
 };
 
-use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
+#[cfg(not(target_os = "wasi"))]
+use quinn_udp::EcnCodepoint;
+use quinn_udp::{RecvMeta, Transmit, UdpSocketState};
 #[cfg(apple)]
 use socket2::MsgHdr;
 use socket2::Socket;
@@ -62,7 +73,10 @@ fn basic_src_ip() {
     );
 }
 
+// WASI selects `fallback.rs`, which sets no ECN codepoint on send and always reports `None` on
+// receive, so the four ECN tests cannot pass there.
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn ecn_v6() {
     let send = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
     let recv = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
@@ -82,7 +96,12 @@ fn ecn_v6() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "wasi",
+    solarish
+)))]
 fn ecn_v4() {
     let send = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
     let recv = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
@@ -102,7 +121,12 @@ fn ecn_v4() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "wasi",
+    solarish
+)))]
 fn ecn_v6_dualstack() {
     let recv = Socket::new(
         socket2::Domain::IPV6,
@@ -148,7 +172,12 @@ fn ecn_v6_dualstack() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "wasi",
+    solarish
+)))]
 fn ecn_v4_mapped_v6() {
     let send = Socket::new(
         socket2::Domain::IPV6,
@@ -295,7 +324,7 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit<'_>) {
     let recv_state = UdpSocketState::new(recv.into()).unwrap();
 
     // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
-    recv.set_nonblocking(false).unwrap();
+    set_blocking(recv);
 
     send_state.try_send(send.into(), &transmit).unwrap();
 
@@ -389,6 +418,25 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit<'_>) {
         }
     }
     assert_eq!(datagrams, expected_datagrams);
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn set_blocking(socket: &Socket) {
+    socket.set_nonblocking(false).unwrap();
+}
+
+/// Clears the non-blocking flag through `std`, the only way to reach the call WASI accepts.
+///
+/// socket2 uses `fcntl(F_SETFL, O_NONBLOCK)`, which WASI rejects with `EINVAL`; wasi-libc maps
+/// only `ioctl(FIONBIO)` onto the `wasi:sockets` blocking flag, and that is what `std` calls.
+/// `fallback::UdpSocketState::new` carries the same workaround, and both go away together if
+/// socket2 ever makes the call `std` makes.
+#[cfg(target_os = "wasi")]
+fn set_blocking(socket: &Socket) {
+    // Safety: `socket` outlives the borrow, and `ManuallyDrop` stops `borrowed` from closing a
+    // descriptor it does not own.
+    let borrowed = ManuallyDrop::new(unsafe { UdpSocket::from_raw_fd(socket.as_raw_fd()) });
+    borrowed.set_nonblocking(false).unwrap();
 }
 
 fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
