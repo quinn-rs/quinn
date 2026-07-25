@@ -1,3 +1,7 @@
+#[cfg(target_os = "wasi")]
+use std::mem::{ManuallyDrop, MaybeUninit};
+#[cfg(target_os = "wasi")]
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::{
     io::{self, IoSliceMut},
     sync::Mutex,
@@ -17,6 +21,20 @@ pub struct UdpSocketState {
 
 impl UdpSocketState {
     pub fn new(socket: UdpSockRef<'_>) -> io::Result<Self> {
+        // socket2 sets the non-blocking flag with `fcntl(F_SETFL, O_NONBLOCK)`, which WASI
+        // rejects with `EINVAL`. wasi-libc only maps `ioctl(FIONBIO)` onto the `wasi:sockets`
+        // blocking flag, and that is the call `std`'s own `set_nonblocking` makes, so go
+        // through `std` here.
+        #[cfg(target_os = "wasi")]
+        {
+            // Safety: the caller owns the descriptor for at least as long as `socket` borrows
+            // it, and `ManuallyDrop` stops `borrowed` from closing it.
+            let borrowed = ManuallyDrop::new(unsafe {
+                std::net::UdpSocket::from_raw_fd(socket.0.as_raw_fd())
+            });
+            borrowed.set_nonblocking(true)?;
+        }
+        #[cfg(not(target_os = "wasi"))]
         socket.0.set_nonblocking(true)?;
         let now = Instant::now();
         Ok(Self {
@@ -58,14 +76,27 @@ impl UdpSocketState {
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
-        // Safety: both `IoSliceMut` and `MaybeUninitSlice` promise to have the
-        // same layout, that of `iovec`/`WSABUF`. Furthermore `recv_vectored`
-        // promises to not write unitialised bytes to the `bufs` and pass it
-        // directly to the `recvmsg` system call, so this is safe.
-        let bufs = unsafe {
-            &mut *(bufs as *mut [IoSliceMut<'_>] as *mut [socket2::MaybeUninitSlice<'_>])
+        // WASI has no vectored reads, so socket2 does not offer `recv_from_vectored` there.
+        // `BATCH_SIZE` is 1, so reading a single datagram into the first buffer loses nothing.
+        #[cfg(target_os = "wasi")]
+        let (len, addr) = {
+            // Safety: `MaybeUninit<u8>` has the same layout as `u8`, and `recv_from` does not
+            // write uninitialised bytes into the prefix it reports as filled.
+            let buf = unsafe { &mut *(&mut *bufs[0] as *mut [u8] as *mut [MaybeUninit<u8>]) };
+            socket.0.recv_from(buf)?
         };
-        let (len, _flags, addr) = socket.0.recv_from_vectored(bufs)?;
+        #[cfg(not(target_os = "wasi"))]
+        let (len, addr) = {
+            // Safety: both `IoSliceMut` and `MaybeUninitSlice` promise to have the
+            // same layout, that of `iovec`/`WSABUF`. Furthermore `recv_vectored`
+            // promises to not write unitialised bytes to the `bufs` and pass it
+            // directly to the `recvmsg` system call, so this is safe.
+            let bufs = unsafe {
+                &mut *(bufs as *mut [IoSliceMut<'_>] as *mut [socket2::MaybeUninitSlice<'_>])
+            };
+            let (len, _flags, addr) = socket.0.recv_from_vectored(bufs)?;
+            (len, addr)
+        };
         meta[0] = RecvMeta {
             len,
             stride: len,

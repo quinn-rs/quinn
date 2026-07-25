@@ -28,8 +28,8 @@
 #![warn(clippy::use_self)]
 
 use core::time::Duration;
-#[cfg(unix)]
-use std::os::unix::io::AsFd;
+#[cfg(any(unix, target_os = "wasi"))]
+use std::os::fd::AsFd;
 #[cfg(windows)]
 use std::os::windows::io::AsSocket;
 use std::{
@@ -297,7 +297,7 @@ fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit<
 #[cfg(not(wasm_browser))]
 pub struct UdpSockRef<'a>(socket2::SockRef<'a>);
 
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "wasi"))]
 impl<'s, S> From<&'s S> for UdpSockRef<'s>
 where
     S: AsFd,
