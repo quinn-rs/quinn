@@ -28,13 +28,19 @@
 #![warn(clippy::use_self)]
 
 use core::time::Duration;
-#[cfg(unix)]
-use std::os::unix::io::AsFd;
+#[cfg(any(unix, target_os = "wasi"))]
+use std::os::fd::AsFd;
 #[cfg(windows)]
 use std::os::windows::io::AsSocket;
 use std::{
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
+};
+#[cfg(target_os = "wasi")]
+use std::{
+    mem::ManuallyDrop,
+    net::UdpSocket,
+    os::fd::{AsRawFd, FromRawFd},
 };
 #[cfg(not(wasm_browser))]
 use std::{sync::Mutex, time::Instant};
@@ -58,9 +64,8 @@ mod linux;
 #[path = "windows.rs"]
 mod imp;
 
-// No ECN support
-#[cfg(not(any(wasm_browser, unix, windows)))]
-#[path = "fallback.rs"]
+#[cfg(target_os = "wasi")]
+#[path = "wasi.rs"]
 mod imp;
 
 #[allow(unused_imports, unused_macros)]
@@ -297,7 +302,26 @@ fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit<
 #[cfg(not(wasm_browser))]
 pub struct UdpSockRef<'a>(socket2::SockRef<'a>);
 
-#[cfg(unix)]
+#[cfg(not(wasm_browser))]
+impl UdpSockRef<'_> {
+    /// Configures the socket for non-blocking or blocking operation.
+    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        #[cfg(not(target_os = "wasi"))]
+        self.0.set_nonblocking(nonblocking)?;
+
+        #[cfg(target_os = "wasi")]
+        {
+            // socket2 uses `fcntl`, which WASI rejects; `std` uses `ioctl(FIONBIO)`.
+            // Safety: `self` outlives the borrow, and `ManuallyDrop` prevents a second close.
+            let borrowed = ManuallyDrop::new(unsafe { UdpSocket::from_raw_fd(self.0.as_raw_fd()) });
+            borrowed.set_nonblocking(nonblocking)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(any(unix, target_os = "wasi"))]
 impl<'s, S> From<&'s S> for UdpSockRef<'s>
 where
     S: AsFd,
