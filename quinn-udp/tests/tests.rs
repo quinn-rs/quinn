@@ -1,6 +1,11 @@
 #[cfg(apple)]
 use std::io::{self, IoSlice};
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "wasi",
+    solarish
+)))]
 use std::net::{SocketAddr, SocketAddrV6};
 #[cfg(apple)]
 use std::os::fd::AsRawFd;
@@ -12,7 +17,9 @@ use std::{
     slice,
 };
 
-use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
+#[cfg(not(target_os = "wasi"))]
+use quinn_udp::EcnCodepoint;
+use quinn_udp::{RecvMeta, Transmit, UdpSockRef, UdpSocketState};
 #[cfg(apple)]
 use socket2::MsgHdr;
 use socket2::Socket;
@@ -62,7 +69,9 @@ fn basic_src_ip() {
     );
 }
 
+// The WASI backend sets no ECN codepoint and always reports `None`.
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn ecn_v6() {
     let send = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
     let recv = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
@@ -82,7 +91,12 @@ fn ecn_v6() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "wasi",
+    solarish
+)))]
 fn ecn_v4() {
     let send = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
     let recv = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
@@ -102,7 +116,12 @@ fn ecn_v4() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "wasi",
+    solarish
+)))]
 fn ecn_v6_dualstack() {
     let recv = Socket::new(
         socket2::Domain::IPV6,
@@ -148,7 +167,12 @@ fn ecn_v6_dualstack() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
+#[cfg(not(any(
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "wasi",
+    solarish
+)))]
 fn ecn_v4_mapped_v6() {
     let send = Socket::new(
         socket2::Domain::IPV6,
@@ -295,7 +319,8 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit<'_>) {
     let recv_state = UdpSocketState::new(recv.into()).unwrap();
 
     // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
-    recv.set_nonblocking(false).unwrap();
+    UdpSockRef::from(send).set_nonblocking(false).unwrap();
+    UdpSockRef::from(recv).set_nonblocking(false).unwrap();
 
     send_state.try_send(send.into(), &transmit).unwrap();
 
