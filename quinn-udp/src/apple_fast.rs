@@ -57,7 +57,7 @@ fn send_via_sendmsg_x(
             &mut iovs[i],
             &mut ctrls[i],
             true,
-            state.sendmsg_einval(),
+            state,
         );
         hdrs[i].msg_datalen = chunk.len();
         state.check_send_buffer_limit(chunk.len(), &hdrs[i])?;
@@ -78,7 +78,7 @@ fn prepare_msg_x(
     iov: &mut libc::iovec,
     ctrl: &mut cmsg::Aligned<[u8; cmsg::LEN]>,
     #[allow(unused_variables)] encode_src_ip: bool,
-    sendmsg_einval: bool,
+    state: &UdpSocketState,
 ) {
     iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
     iov.iov_len = transmit.contents.len();
@@ -93,15 +93,15 @@ fn prepare_msg_x(
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = cmsg::LEN as _;
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
-    let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
+    let tos = state.tos_base() as libc::c_int | transmit.ecn.map_or(0, |x| x as libc::c_int);
     let is_ipv4 = transmit.destination.is_ipv4()
         || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
     if is_ipv4 {
-        if !sendmsg_einval {
-            encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
+        if !state.sendmsg_einval() {
+            encoder.push(libc::IPPROTO_IP, libc::IP_TOS, tos as IpTosTy);
         }
     } else {
-        encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
+        encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, tos);
     }
 
     if let Some(ip) = &transmit.src_ip {
