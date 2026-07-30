@@ -759,7 +759,12 @@ fn test_dscp_preserved(ipv4: bool) {
     let recv = UdpSocket::bind((loopback, 0)).unwrap();
     recv.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let (level, name) = match ipv4 {
+        // `libc` lacks `IP_RECVTOS` on solarish, where `dscp_preserved_v4` is
+        // disabled
+        #[cfg(not(solarish))]
         true => (libc::IPPROTO_IP, libc::IP_RECVTOS),
+        #[cfg(solarish)]
+        true => unreachable!("dscp_preserved_v4 is disabled on solarish"),
         false => (libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS),
     };
     set_socket_int_option(&recv, level, name, 1);
@@ -802,7 +807,22 @@ fn test_dscp_preserved(ipv4: bool) {
         wire_tos >> 2,
         wire_tos & 0b11,
     );
-    assert_eq!(wire_tos & 0b11, ecn as u8, "ECN bits should still be set");
+    // On Android API level <= 25 the IPv4 `IP_TOS` control message is not
+    // supported: `sendmsg` fails with `EINVAL` and quinn-udp resends without
+    // the cmsg, so the socket-level DSCP survives but the ECN codepoint is
+    // lost (mirrors the ECN exemption in `test_send_recv`)
+    if ipv4
+        && cfg!(target_os = "android")
+        && std::env::var("API_LEVEL")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .expect("API_LEVEL environment variable to be set on Android")
+            <= 25
+    {
+        assert_eq!(wire_tos & 0b11, 0, "no ECN expected on Android API <= 25");
+    } else {
+        assert_eq!(wire_tos & 0b11, ecn as u8, "ECN bits should still be set");
+    }
 }
 
 /// Sets a `c_int`-valued socket option via `setsockopt`, panicking on failure
@@ -849,9 +869,16 @@ fn recv_tos(sock: &UdpSocket) -> u8 {
     let mut cmsg = unsafe { libc::CMSG_FIRSTHDR(&hdr) };
     while !cmsg.is_null() {
         let c = unsafe { &*cmsg };
-        let is_tos = (c.cmsg_level == libc::IPPROTO_IP
-            && (c.cmsg_type == libc::IP_TOS || c.cmsg_type == libc::IP_RECVTOS))
-            || (c.cmsg_level == libc::IPPROTO_IPV6 && c.cmsg_type == libc::IPV6_TCLASS);
+        // FreeBSD types the received cmsg `IP_RECVTOS` rather than `IP_TOS`;
+        // `libc` lacks the constant on solarish, where only the v6 variant of
+        // the DSCP test runs
+        #[cfg(not(solarish))]
+        let is_v4_tos = c.cmsg_level == libc::IPPROTO_IP
+            && (c.cmsg_type == libc::IP_TOS || c.cmsg_type == libc::IP_RECVTOS);
+        #[cfg(solarish)]
+        let is_v4_tos = false;
+        let is_tos =
+            is_v4_tos || (c.cmsg_level == libc::IPPROTO_IPV6 && c.cmsg_type == libc::IPV6_TCLASS);
         if is_tos {
             // Delivered as a single byte on BSD/macOS and a host-order int on
             // Linux; either way the value is in the first byte on
