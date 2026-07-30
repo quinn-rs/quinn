@@ -610,6 +610,9 @@ fn recv_transport_error() {
     let sock = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
 
     let state = UdpSocketState::new((&sock).into()).unwrap();
+    state
+        .enable_transport_errors((&sock).into())
+        .expect("failed to enable transport error recv");
 
     // Pick an unused port by binding then dropping.
     let unused_port = {
@@ -672,6 +675,9 @@ fn recv_transport_error_ipv6() {
     let sock = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
 
     let state = UdpSocketState::new((&sock).into()).unwrap();
+    state
+        .enable_transport_errors((&sock).into())
+        .expect("failed to enable transport error recv");
 
     let unused_port = {
         let tmp = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
@@ -715,4 +721,80 @@ fn recv_transport_error_ipv6() {
     if let Some(addr) = err.addr {
         assert_eq!(addr.ip(), dst.ip());
     }
+}
+
+/// Draining the error queue prevents queued ICMP errors from absorbing unrelated sends
+///
+/// When `enable_transport_errors` is active, callers are expected to drain pending
+/// errors via `recv_transport_error` before transmitting. This test confirms that
+/// doing so allows a subsequent send to succeed and deliver its payload.
+#[test]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn draining_error_queue_before_send_prevents_absorption() {
+    let sock = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
+
+    let state = UdpSocketState::new((&sock).into()).unwrap();
+    state
+        .enable_transport_errors((&sock).into())
+        .expect("failed to enable transport error recv");
+
+    // Pick an unused port by binding then dropping.
+    let unused_port = {
+        let tmp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        tmp.local_addr().unwrap().port()
+    };
+
+    // Enqueue an ICMP port-unreachable error
+    let dst = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, unused_port));
+    state
+        .try_send(
+            (&sock).into(),
+            &Transmit {
+                destination: dst,
+                ecn: None,
+                contents: b"hello",
+                segment_size: None,
+                src_ip: None,
+            },
+        )
+        .unwrap();
+
+    std::thread::sleep(Duration::from_millis(20));
+
+    // Drain the error queue before sending — this is the intended usage pattern
+    let mut got_error = false;
+    for _ in 0..10 {
+        match state.recv_transport_error((&sock).into()) {
+            Ok(Some(_)) => {
+                got_error = true;
+                break;
+            }
+            _ => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+    assert!(got_error, "expected one queued error");
+
+    let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    receiver.set_nonblocking(true).unwrap();
+
+    state
+        .try_send(
+            (&sock).into(),
+            &Transmit {
+                destination: receiver.local_addr().unwrap(),
+                ecn: None,
+                contents: b"connection close",
+                segment_size: None,
+                src_ip: None,
+            },
+        )
+        .expect("send failed after draining the error queue");
+
+    std::thread::sleep(Duration::from_millis(20));
+
+    let mut buf = [0u8; 64];
+    let n = receiver
+        .recv(&mut buf)
+        .expect("packet was not delivered after draining the error queue");
+    assert_eq!(&buf[..n], b"connection close");
 }
