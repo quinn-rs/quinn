@@ -7,13 +7,14 @@ use rustls::crypto::ring::default_provider;
 
 use std::{
     convert::TryInto,
+    fmt,
     future::Future,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     pin::pin,
     str,
     sync::{
-        Arc,
+        Arc, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -22,11 +23,16 @@ use std::{
 use crate::runtime::TokioRuntime;
 use crate::{Duration, Instant};
 use bytes::Bytes;
-use proto::{RandomConnectionIdGenerator, crypto::rustls::QuicClientConfig};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use proto::{
+    RandomConnectionIdGenerator,
+    crypto::rustls::{QuicClientConfig, QuicServerConfig},
+};
+use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
 use rustls::{
     RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    server::{ClientHello, ResolvesServerCert},
+    sign::CertifiedKey,
 };
 use tokio::time::{sleep, timeout};
 use tokio::{
@@ -312,6 +318,153 @@ impl EndpointFactory {
 
         endpoint
     }
+}
+
+struct BlockingCertResolver {
+    certified_key: Arc<CertifiedKey>,
+    entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    released: Mutex<bool>,
+    release_changed: Condvar,
+}
+
+impl BlockingCertResolver {
+    fn new(certified_key: Arc<CertifiedKey>, entered: tokio::sync::oneshot::Sender<()>) -> Self {
+        Self {
+            certified_key,
+            entered: Mutex::new(Some(entered)),
+            released: Mutex::new(false),
+            release_changed: Condvar::new(),
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.release_changed.notify_all();
+    }
+}
+
+impl fmt::Debug for BlockingCertResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BlockingCertResolver")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ResolvesServerCert for BlockingCertResolver {
+    fn resolve(&self, _client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        let should_block = if let Some(entered) = self.entered.lock().unwrap().take() {
+            let _ = entered.send(());
+            true
+        } else {
+            false
+        };
+        if should_block {
+            let mut released = self.released.lock().unwrap();
+            while !*released {
+                released = self.release_changed.wait(released).unwrap();
+            }
+        }
+        Some(self.certified_key.clone())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn synchronous_cert_resolution_does_not_stall_endpoint_io() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let server = factory.endpoint();
+    let client_1 = factory.endpoint();
+    let mut retransmit_transport = TransportConfig::default();
+    retransmit_transport.initial_rtt(Duration::from_millis(10));
+    let client_2 = factory.endpoint_with_config(retransmit_transport);
+    let client_3 = factory.endpoint();
+    let server_addr = server.local_addr().unwrap();
+
+    let (client_1_connection, server_1_connection) =
+        tokio::try_join!(client_1.connect(server_addr, "localhost").unwrap(), async {
+            server.accept().await.unwrap().await
+        })
+        .unwrap();
+
+    let provider = default_provider();
+    let signing_key = provider
+        .key_provider
+        .load_private_key(PrivateKeyDer::Pkcs8(
+            factory.cert.signing_key.serialize_der().into(),
+        ))
+        .unwrap();
+    let certified_key = Arc::new(CertifiedKey::new(
+        vec![factory.cert.cert.der().clone()],
+        signing_key,
+    ));
+    let (resolver_entered_tx, resolver_entered_rx) = tokio::sync::oneshot::channel();
+    let resolver = Arc::new(BlockingCertResolver::new(
+        certified_key,
+        resolver_entered_tx,
+    ));
+    let crypto = rustls::ServerConfig::builder_with_provider(Arc::new(provider))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_cert_resolver(resolver.clone());
+    server.set_server_config(Some(crate::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(crypto).unwrap(),
+    ))));
+
+    let server_for_accept = server.clone();
+    let server_accept = tokio::spawn(async move {
+        server_for_accept
+            .accept()
+            .await
+            .unwrap()
+            .await
+            .expect("second server connection")
+    });
+    let second_connect = tokio::spawn(async move {
+        client_2
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .expect("second client connection")
+    });
+
+    tokio::time::timeout(Duration::from_secs(2), resolver_entered_rx)
+        .await
+        .expect("resolver was not invoked")
+        .expect("resolver entry sender dropped");
+
+    let existing_connection_io = async {
+        let mut send = client_1_connection.open_uni().await.unwrap();
+        send.write_all(b"still-live").await.unwrap();
+        send.finish().unwrap();
+        let mut recv = server_1_connection.accept_uni().await.unwrap();
+        assert_eq!(recv.read_to_end(64).await.unwrap(), b"still-live");
+    };
+    tokio::time::timeout(Duration::from_millis(500), existing_connection_io)
+        .await
+        .expect("existing connection stalled during certificate resolution");
+
+    let server_for_concurrent_accept = server.clone();
+    let concurrent_handshake = async move {
+        tokio::try_join!(client_3.connect(server_addr, "localhost").unwrap(), async {
+            server_for_concurrent_accept.accept().await.unwrap().await
+        })
+    };
+    tokio::time::timeout(Duration::from_millis(500), concurrent_handshake)
+        .await
+        .expect("new handshake stalled during unrelated certificate resolution")
+        .expect("concurrent handshake failed");
+
+    // Keep the first handshake blocked long enough for its Initial PTO to fire. The retransmitted
+    // Initial must stay in the pending connection's bounded buffer and be replayed at finalization.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    resolver.release();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        server_accept.await.unwrap();
+        second_connect.await.unwrap();
+    })
+    .await
+    .expect("connection did not recover after certificate resolution");
 }
 
 #[tokio::test]

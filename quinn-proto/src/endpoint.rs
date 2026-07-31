@@ -343,7 +343,8 @@ impl Endpoint {
         trace!(initial_dcid = %remote_id);
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
+        let route = RouteDatagramTo::Connection(ch);
+        let loc_cid = self.new_cid(route);
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -373,6 +374,7 @@ impl Endpoint {
                 token_store: config.token_store,
                 server_name: server_name.into(),
             },
+            route,
         );
         Ok((ch, conn))
     }
@@ -399,8 +401,8 @@ impl Endpoint {
         ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
     }
 
-    /// Generate and reserve a local connection ID
-    fn new_cid(&mut self, route_to: RouteDatagramTo) -> ConnectionId {
+    /// Generate a connection ID and reserve it for `route`
+    fn new_cid(&mut self, route: RouteDatagramTo) -> ConnectionId {
         loop {
             let cid = self.local_cid_generator.generate_cid();
             if cid.is_empty() {
@@ -409,7 +411,7 @@ impl Endpoint {
                 return cid;
             }
             if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
-                e.insert(route_to);
+                e.insert(route);
                 break cid;
             }
         }
@@ -530,15 +532,34 @@ impl Endpoint {
     // box err to avoid clippy::result_large_err
     pub fn accept(
         &mut self,
-        mut incoming: Incoming,
+        incoming: Incoming,
         now: Instant,
         buf: &mut Vec<u8>,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
+        let mut prepared = self.prepare_accept(incoming, now, buf, server_config)?;
+        prepared.process_first_packet();
+        self.finish_accept(prepared, buf)
+    }
+
+    /// Prepare an incoming connection without processing its TLS ClientHello.
+    ///
+    /// The returned value keeps all packets for this connection routed to the bounded incoming
+    /// buffer. Call [`PreparedAccept::process_first_packet`] without holding an endpoint-wide lock,
+    /// then pass it to [`Endpoint::finish_accept`] while holding that lock again.
+    ///
+    /// This is an implementation detail used by `quinn` to keep synchronous TLS certificate
+    /// resolution from blocking unrelated endpoint I/O.
+    #[doc(hidden)]
+    pub fn prepare_accept(
+        &mut self,
+        mut incoming: Incoming,
+        now: Instant,
+        buf: &mut Vec<u8>,
+        server_config: Option<Arc<ServerConfig>>,
+    ) -> Result<PreparedAccept, Box<AcceptError>> {
         let remote_address_validated = incoming.remote_address_validated();
         incoming.improper_drop_warner.dismiss();
-        let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
-        self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
 
         let packet_number = incoming.packet.header.number.expand(0);
         let InitialHeader {
@@ -558,7 +579,7 @@ impl Endpoint {
             })
         {
             debug!("abandoning accept of stale initial");
-            self.index.remove_initial(dst_cid);
+            self.clean_up_incoming_parts(dst_cid, incoming.incoming_idx);
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::TimedOut,
                 response: None,
@@ -567,7 +588,7 @@ impl Endpoint {
 
         if self.cids_exhausted() {
             debug!("refusing connection");
-            self.index.remove_initial(dst_cid);
+            self.clean_up_incoming_parts(dst_cid, incoming.incoming_idx);
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::CidsExhausted,
                 response: Some(self.initial_close(
@@ -593,7 +614,7 @@ impl Endpoint {
             .is_err()
         {
             debug!(packet_number, "failed to authenticate initial packet");
-            self.index.remove_initial(dst_cid);
+            self.clean_up_incoming_parts(dst_cid, incoming.incoming_idx);
             return Err(Box::new(AcceptError {
                 cause: TransportError::PROTOCOL_VIOLATION("authentication failed").into(),
                 response: None,
@@ -601,7 +622,8 @@ impl Endpoint {
         };
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
+        let pending_route = RouteDatagramTo::Incoming(incoming.incoming_idx);
+        let loc_cid = self.new_cid(pending_route);
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -615,7 +637,7 @@ impl Endpoint {
         params.retry_src_cid = incoming.token.retry_src_cid;
         let mut pref_addr_cid = None;
         if server_config.has_preferred_address() {
-            let cid = self.new_cid(RouteDatagramTo::Connection(ch));
+            let cid = self.new_cid(pending_route);
             pref_addr_cid = Some(cid);
             params.preferred_address = Some(PreferredAddress {
                 address_v4: server_config.preferred_address_v4,
@@ -627,7 +649,7 @@ impl Endpoint {
 
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
-        let mut conn = self.add_connection(
+        let conn = self.add_connection(
             ch,
             version,
             dst_cid,
@@ -642,35 +664,65 @@ impl Endpoint {
                 pref_addr_cid,
                 path_validated: remote_address_validated,
             },
+            pending_route,
         );
-        self.index.insert_initial(dst_cid, ch);
 
-        match conn.handle_first_packet(
-            incoming.received_at,
-            incoming.addresses.remote,
-            incoming.ecn,
+        Ok(PreparedAccept {
+            handle: ch,
+            connection: conn,
+            version,
+            initial_dst_cid: dst_cid,
+            remote_cid: src_cid,
+            received_at: incoming.received_at,
+            addresses: incoming.addresses,
+            ecn: incoming.ecn,
             packet_number,
-            incoming.packet,
-            incoming.rest,
-        ) {
+            packet: Some(incoming.packet),
+            rest: incoming.rest,
+            crypto: incoming.crypto,
+            incoming_idx: incoming.incoming_idx,
+            first_packet_result: None,
+        })
+    }
+
+    /// Finalize a prepared incoming connection after its first packet has been processed.
+    #[doc(hidden)]
+    // AcceptError cannot be made smaller without semver breakage
+    #[allow(clippy::result_large_err)]
+    pub fn finish_accept(
+        &mut self,
+        mut prepared: PreparedAccept,
+        buf: &mut Vec<u8>,
+    ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
+        let incoming_buffer = self.incoming_buffers.remove(prepared.incoming_idx);
+        self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
+
+        match prepared
+            .first_packet_result
+            .take()
+            .expect("PreparedAccept::process_first_packet must be called before finish_accept")
+        {
             Ok(()) => {
-                trace!(id = ch.0, icid = %dst_cid, "new connection");
+                self.activate_connection(prepared.handle, prepared.initial_dst_cid);
+                trace!(id = prepared.handle.0, icid = %prepared.initial_dst_cid, "new connection");
 
                 for event in incoming_buffer.datagrams {
-                    conn.handle_event(ConnectionEvent(ConnectionEventInner::Datagram(event)))
+                    prepared
+                        .connection
+                        .handle_event(ConnectionEvent(ConnectionEventInner::Datagram(event)))
                 }
 
-                Ok((ch, conn))
+                Ok((prepared.handle, prepared.connection))
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
+                self.handle_event(prepared.handle, EndpointEvent(EndpointEventInner::Drained));
                 let response = match e {
                     ConnectionError::TransportError(ref e) => Some(self.initial_close(
-                        version,
-                        incoming.addresses,
-                        &incoming.crypto,
-                        src_cid,
+                        prepared.version,
+                        prepared.addresses,
+                        &prepared.crypto,
+                        prepared.remote_cid,
                         e.clone(),
                         buf,
                     )),
@@ -678,6 +730,21 @@ impl Endpoint {
                 };
                 Err(Box::new(AcceptError { cause: e, response }))
             }
+        }
+    }
+
+    fn activate_connection(&mut self, ch: ConnectionHandle, initial_dst_cid: ConnectionId) {
+        let meta = &self.connections[ch];
+        self.index.insert_initial(initial_dst_cid, ch);
+        for cid in meta.loc_cids.values().filter(|cid| !cid.is_empty()) {
+            self.index
+                .connection_ids
+                .insert(*cid, RouteDatagramTo::Connection(ch));
+        }
+        if meta.loc_cids.values().any(|cid| cid.is_empty()) {
+            self.index
+                .incoming_connection_remotes
+                .insert(meta.addresses, RouteDatagramTo::Connection(ch));
         }
     }
 
@@ -784,8 +851,12 @@ impl Endpoint {
 
     /// Clean up endpoint data structures associated with an `Incoming`.
     fn clean_up_incoming(&mut self, incoming: &Incoming) {
-        self.index.remove_initial(incoming.packet.header.dst_cid);
-        let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
+        self.clean_up_incoming_parts(incoming.packet.header.dst_cid, incoming.incoming_idx);
+    }
+
+    fn clean_up_incoming_parts(&mut self, dst_cid: ConnectionId, incoming_idx: usize) {
+        self.index.remove_initial(dst_cid);
+        let incoming_buffer = self.incoming_buffers.remove(incoming_idx);
         self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
     }
 
@@ -801,6 +872,7 @@ impl Endpoint {
         tls: Box<dyn crypto::Session>,
         transport_config: Arc<TransportConfig>,
         side_args: SideArgs,
+        route: RouteDatagramTo,
     ) -> Connection {
         let mut rng_seed = [0; 32];
         self.rng.fill_bytes(&mut rng_seed);
@@ -824,7 +896,7 @@ impl Endpoint {
             side_args,
         );
 
-        self.register_connection(ch, init_cid, loc_cid, pref_addr_cid, addresses, side);
+        self.register_connection(ch, init_cid, loc_cid, pref_addr_cid, addresses, side, route);
 
         conn
     }
@@ -838,6 +910,7 @@ impl Endpoint {
         pref_addr_cid: Option<ConnectionId>,
         addresses: FourTuple,
         side: Side,
+        route: RouteDatagramTo,
     ) {
         let mut cids_issued = 0;
         let mut loc_cids = FxHashMap::default();
@@ -861,7 +934,7 @@ impl Endpoint {
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
-        self.index.insert_conn(addresses, loc_cid, ch, side);
+        self.index.insert_conn(addresses, loc_cid, route, side);
     }
 
     fn initial_close(
@@ -1002,7 +1075,7 @@ struct ConnectionIndex {
     /// Identifies incoming connections with zero-length CIDs
     ///
     /// Uses a standard `HashMap` to protect against hash collision attacks.
-    incoming_connection_remotes: HashMap<FourTuple, ConnectionHandle>,
+    incoming_connection_remotes: HashMap<FourTuple, RouteDatagramTo>,
     /// Identifies outgoing connections with zero-length CIDs
     ///
     /// We don't yet support explicit source addresses for client connections, and zero-length CIDs
@@ -1053,23 +1126,24 @@ impl ConnectionIndex {
         &mut self,
         addresses: FourTuple,
         dst_cid: ConnectionId,
-        connection: ConnectionHandle,
+        route: RouteDatagramTo,
         side: Side,
     ) {
         match dst_cid.len() {
             0 => match side {
                 Side::Server => {
-                    self.incoming_connection_remotes
-                        .insert(addresses, connection);
+                    self.incoming_connection_remotes.insert(addresses, route);
                 }
                 Side::Client => {
+                    let RouteDatagramTo::Connection(connection) = route else {
+                        unreachable!("outgoing connections cannot be pending");
+                    };
                     self.outgoing_connection_remotes
                         .insert(addresses.remote, connection);
                 }
             },
             _ => {
-                self.connection_ids
-                    .insert(dst_cid, RouteDatagramTo::Connection(connection));
+                self.connection_ids.insert(dst_cid, route);
             }
         }
     }
@@ -1108,8 +1182,8 @@ impl ConnectionIndex {
             }
         }
         if datagram.dst_cid().is_empty() {
-            if let Some(&ch) = self.incoming_connection_remotes.get(addresses) {
-                return Some(RouteDatagramTo::Connection(ch));
+            if let Some(&route) = self.incoming_connection_remotes.get(addresses) {
+                return Some(route);
             }
             if let Some(&ch) = self.outgoing_connection_remotes.get(&addresses.remote) {
                 return Some(RouteDatagramTo::Connection(ch));
@@ -1237,6 +1311,67 @@ impl fmt::Debug for Incoming {
             .field("token", &self.token)
             .field("incoming_idx", &self.incoming_idx)
             // improper drop warner contains no information
+            .finish_non_exhaustive()
+    }
+}
+
+/// A connection whose endpoint state is reserved but whose first packet has not yet been
+/// finalized.
+///
+/// This type is an implementation detail used by `quinn` to process TLS setup without holding the
+/// endpoint-wide state lock.
+#[doc(hidden)]
+#[must_use = "a prepared accept must be processed and passed to Endpoint::finish_accept"]
+pub struct PreparedAccept {
+    handle: ConnectionHandle,
+    connection: Connection,
+    version: u32,
+    initial_dst_cid: ConnectionId,
+    remote_cid: ConnectionId,
+    received_at: Instant,
+    addresses: FourTuple,
+    ecn: Option<EcnCodepoint>,
+    packet_number: u64,
+    packet: Option<InitialPacket>,
+    rest: Option<BytesMut>,
+    crypto: Keys,
+    incoming_idx: usize,
+    first_packet_result: Option<Result<(), ConnectionError>>,
+}
+
+impl PreparedAccept {
+    /// Process the first packet, including the TLS ClientHello and certificate resolution.
+    #[doc(hidden)]
+    pub fn process_first_packet(&mut self) {
+        assert!(
+            self.first_packet_result.is_none(),
+            "PreparedAccept::process_first_packet called more than once"
+        );
+        let packet = self
+            .packet
+            .take()
+            .expect("PreparedAccept first packet is missing");
+        self.first_packet_result = Some(self.connection.handle_first_packet(
+            self.received_at,
+            self.addresses.remote,
+            self.ecn,
+            self.packet_number,
+            packet,
+            self.rest.take(),
+        ));
+    }
+}
+
+impl fmt::Debug for PreparedAccept {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("PreparedAccept")
+            .field("handle", &self.handle)
+            .field("version", &self.version)
+            .field("initial_dst_cid", &self.initial_dst_cid)
+            .field("remote_cid", &self.remote_cid)
+            .field("addresses", &self.addresses)
+            .field("incoming_idx", &self.incoming_idx)
+            .field("processed", &self.first_packet_result.is_some())
             .finish_non_exhaustive()
     }
 }

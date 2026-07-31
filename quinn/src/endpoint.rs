@@ -447,13 +447,31 @@ impl EndpointInner {
         incoming: proto::Incoming,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
-        let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
-        let now = state.runtime.now();
-        match state
-            .inner
-            .accept(incoming, now, &mut response_buffer, server_config)
-        {
+        let mut prepared = {
+            let mut state = self.state.lock().unwrap();
+            let now = state.runtime.now();
+            match state
+                .inner
+                .prepare_accept(incoming, now, &mut response_buffer, server_config)
+            {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    if let Some(transmit) = error.response {
+                        respond(transmit, &response_buffer, &mut state.sender);
+                    }
+                    return Err(error.cause);
+                }
+            }
+        };
+
+        // rustls invokes synchronous certificate resolvers while processing the ClientHello.
+        // Keep this outside the endpoint state lock so a slow resolver cannot stall UDP intake or
+        // unrelated connections. The proto endpoint buffers retransmits until finalization.
+        prepared.process_first_packet();
+
+        let mut state = self.state.lock().unwrap();
+        match state.inner.finish_accept(prepared, &mut response_buffer) {
             Ok((handle, conn)) => {
                 state.stats.accepted_handshakes += 1;
                 let sender = state.socket.create_sender();
