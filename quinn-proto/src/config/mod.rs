@@ -310,7 +310,7 @@ impl ServerConfig {
         self
     }
 
-    /// Maximum number of [`Incoming`][crate::Incoming] to allow to exist at a time
+    /// Maximum number of incoming connection attempts to hold before they become active
     ///
     /// An [`Incoming`][crate::Incoming] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
