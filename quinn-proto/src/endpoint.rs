@@ -668,15 +668,6 @@ impl Endpoint {
             },
         );
 
-        self.register_connection(
-            ch,
-            dst_cid,
-            loc_cid,
-            pref_addr_cid,
-            incoming.addresses,
-            Side::Server,
-        );
-
         match conn.handle_first_packet(
             incoming.received_at,
             incoming.addresses.remote,
@@ -686,6 +677,14 @@ impl Endpoint {
             incoming.rest,
         ) {
             Ok(()) => {
+                self.register_connection(
+                    ch,
+                    dst_cid,
+                    loc_cid,
+                    pref_addr_cid,
+                    incoming.addresses,
+                    Side::Server,
+                );
                 trace!(id = ch.0, icid = %dst_cid, "new connection");
 
                 for event in incoming_buffer.datagrams {
@@ -696,7 +695,6 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 let response = match &e {
                     ConnectionError::TransportError(e) => Some(self.initial_close(
                         version,
@@ -708,6 +706,11 @@ impl Endpoint {
                     )),
                     _ => None,
                 };
+                self.index.remove_initial(dst_cid);
+                self.index.retire(loc_cid);
+                if let Some(cid) = pref_addr_cid {
+                    self.index.retire(cid);
+                }
                 Err(Box::new(AcceptError { cause: e, response }))
             }
         }
