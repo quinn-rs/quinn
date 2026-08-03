@@ -628,21 +628,37 @@ impl Endpoint {
 
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
-        let mut conn = self.add_connection(
-            ch,
-            version,
+        let mut rng_seed = [0; 32];
+        self.rng.fill_bytes(&mut rng_seed);
+        let mut conn = Connection::new(
+            self.config.clone(),
+            transport_config,
             dst_cid,
             loc_cid,
             src_cid,
-            incoming.addresses,
-            incoming.received_at,
+            incoming.addresses.remote,
+            incoming.addresses.local_ip,
             tls,
-            transport_config,
+            self.local_cid_generator.cid_len(),
+            self.local_cid_generator.cid_lifetime(),
+            incoming.received_at,
+            version,
+            self.allow_mtud,
+            rng_seed,
             SideArgs::Server {
                 server_config,
                 pref_addr_cid,
                 path_validated: remote_address_validated,
             },
+        );
+
+        self.register_connection(
+            ch,
+            dst_cid,
+            loc_cid,
+            pref_addr_cid,
+            incoming.addresses,
+            Side::Server,
         );
 
         match conn.handle_first_packet(
