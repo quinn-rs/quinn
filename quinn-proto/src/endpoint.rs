@@ -861,21 +861,25 @@ impl Endpoint {
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
-        match loc_cid.len() {
-            0 => match side {
-                Side::Server => {
-                    self.index.incoming_connection_remotes.insert(addresses, ch);
+        let conn_meta = &self.connections[ch];
+        for cid in conn_meta.loc_cids.values() {
+            if cid.is_empty() {
+                match conn_meta.side {
+                    Side::Server => {
+                        self.index
+                            .incoming_connection_remotes
+                            .insert(conn_meta.addresses, ch);
+                    }
+                    Side::Client => {
+                        self.index
+                            .outgoing_connection_remotes
+                            .insert(conn_meta.addresses.remote, ch);
+                    }
                 }
-                Side::Client => {
-                    self.index
-                        .outgoing_connection_remotes
-                        .insert(addresses.remote, ch);
-                }
-            },
-            _ => {
+            } else {
                 self.index
                     .connection_ids
-                    .insert(loc_cid, RouteDatagramTo::Connection(ch));
+                    .insert(*cid, RouteDatagramTo::Connection(ch));
             }
         }
     }
