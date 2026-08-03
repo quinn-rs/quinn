@@ -619,11 +619,7 @@ impl Endpoint {
             });
         };
 
-        incoming.improper_drop_warner.dismiss();
-        let incoming_buffer = self.remove_incoming_buffer(incoming.incoming_idx);
-
-        let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
+        let loc_cid = self.new_cid(RouteDatagramTo::Incoming(incoming.incoming_idx));
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -637,7 +633,7 @@ impl Endpoint {
         params.retry_src_cid = incoming.token.retry_src_cid;
         let mut pref_addr_cid = None;
         if server_config.has_preferred_address() {
-            let cid = self.new_cid(RouteDatagramTo::Connection(ch));
+            let cid = self.new_cid(RouteDatagramTo::Incoming(incoming.incoming_idx));
             pref_addr_cid = Some(cid);
             params.preferred_address = Some(PreferredAddress {
                 address_v4: server_config.preferred_address_v4,
@@ -646,6 +642,8 @@ impl Endpoint {
                 stateless_reset_token: ResetToken::new(&*self.config.reset_key, cid),
             });
         }
+
+        incoming.improper_drop_warner.dismiss();
 
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
@@ -682,6 +680,8 @@ impl Endpoint {
             incoming.rest,
         ) {
             Ok(()) => {
+                let incoming_buffer = self.remove_incoming_buffer(incoming.incoming_idx);
+                let ch = ConnectionHandle(self.connections.vacant_key());
                 self.register_connection(
                     ch,
                     dst_cid,
@@ -716,6 +716,7 @@ impl Endpoint {
                 if let Some(cid) = pref_addr_cid {
                     self.index.retire(cid);
                 }
+                self.remove_incoming_buffer(incoming.incoming_idx);
                 Err(AcceptError { cause: e, response })
             }
         }
