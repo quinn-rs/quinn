@@ -445,25 +445,54 @@ impl EndpointInner {
         incoming: proto::Incoming,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
-        let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
-        let now = state.runtime.now();
-        match state
-            .inner
-            .accept(incoming, now, &mut response_buffer, server_config)
-        {
-            Ok((handle, conn)) => {
+
+        // Phase 1: acquire lock, do the minimum work that needs endpoint state.
+        let accepting = {
+            let mut state = self.state.lock().unwrap();
+            let now = state.runtime.now();
+            match state
+                .inner
+                .start_accept(incoming, now, &mut response_buffer, server_config)
+            {
+                Ok(accepting) => accepting,
+                Err(error) => {
+                    if let Some(transmit) = error.response {
+                        respond(transmit, &response_buffer, &mut state.sender);
+                    }
+                    return Err(error.cause);
+                }
+            }
+        };
+
+        // Phase 2: do the expensive connection construction and first-packet handling
+        // without holding the lock.
+        let result = accepting.finish_without_endpoint();
+
+        // Phase 3: re-acquire the lock to finalize the reserved endpoint state.
+        let mut state = self.state.lock().unwrap();
+        match result {
+            Ok(accepted) => {
                 state.stats.accepted_handshakes += 1;
                 let sender = state.socket.create_sender();
                 let runtime = state.runtime.clone();
-                Ok(state
+                let (handle, conn) = state.inner.finish_accept(accepted);
+                let connecting = state
                     .recv_state
                     .connections
-                    .insert(handle, conn, sender, runtime))
+                    .insert(handle, conn, sender, runtime);
+                Ok(connecting)
             }
             Err(error) => {
+                let error = state.inner.finish_accept_error(error, &mut response_buffer);
                 if let Some(transmit) = error.response {
                     respond(transmit, &response_buffer, &mut state.sender);
+                }
+                // If this failed accept was the endpoint's last in-flight work, wake idle
+                // waiters explicitly: the accept never became a connection, so no Drained
+                // event will fire to do it.
+                if state.is_idle() {
+                    self.shared.idle.notify_waiters();
                 }
                 Err(error.cause)
             }
@@ -588,7 +617,7 @@ impl State {
     }
 
     fn is_idle(&self) -> bool {
-        self.recv_state.connections.is_empty()
+        self.recv_state.connections.is_empty() && self.inner.pending_accepts() == 0
     }
 }
 
