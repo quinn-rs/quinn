@@ -861,7 +861,23 @@ impl Endpoint {
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
-        self.index.insert_conn(addresses, loc_cid, ch, side);
+        match loc_cid.len() {
+            0 => match side {
+                Side::Server => {
+                    self.index.incoming_connection_remotes.insert(addresses, ch);
+                }
+                Side::Client => {
+                    self.index
+                        .outgoing_connection_remotes
+                        .insert(addresses.remote, ch);
+                }
+            },
+            _ => {
+                self.index
+                    .connection_ids
+                    .insert(loc_cid, RouteDatagramTo::Connection(ch));
+            }
+        }
     }
 
     fn initial_close(
@@ -1045,33 +1061,6 @@ impl ConnectionIndex {
         }
         self.connection_ids_initial
             .insert(dst_cid, RouteDatagramTo::Connection(connection));
-    }
-
-    /// Associate a connection with its first locally-chosen destination CID if used, or otherwise
-    /// its current 4-tuple
-    fn insert_conn(
-        &mut self,
-        addresses: FourTuple,
-        dst_cid: ConnectionId,
-        connection: ConnectionHandle,
-        side: Side,
-    ) {
-        match dst_cid.len() {
-            0 => match side {
-                Side::Server => {
-                    self.incoming_connection_remotes
-                        .insert(addresses, connection);
-                }
-                Side::Client => {
-                    self.outgoing_connection_remotes
-                        .insert(addresses.remote, connection);
-                }
-            },
-            _ => {
-                self.connection_ids
-                    .insert(dst_cid, RouteDatagramTo::Connection(connection));
-            }
-        }
     }
 
     /// Discard a connection ID
