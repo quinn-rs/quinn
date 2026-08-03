@@ -784,8 +784,13 @@ impl Endpoint {
     /// Remove endpoint state associated with an `Incoming`.
     fn remove_incoming_state(&mut self, incoming: &Incoming) {
         self.index.remove_initial(incoming.packet.header.dst_cid);
-        let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
+        self.remove_incoming_buffer(incoming.incoming_idx);
+    }
+
+    fn remove_incoming_buffer(&mut self, incoming_idx: usize) -> IncomingBuffer {
+        let incoming_buffer = self.incoming_buffers.remove(incoming_idx);
         self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
+        incoming_buffer
     }
 
     fn add_connection(
