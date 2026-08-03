@@ -728,7 +728,7 @@ impl Endpoint {
 
     /// Reject this incoming connection attempt
     pub fn refuse(&mut self, incoming: Incoming, buf: &mut Vec<u8>) -> Transmit {
-        self.clean_up_incoming(&incoming);
+        self.remove_incoming_state(&incoming);
         incoming.improper_drop_warner.dismiss();
 
         self.initial_close(
@@ -752,7 +752,7 @@ impl Endpoint {
         let server_config = self.incoming_buffers[incoming.incoming_idx]
             .server_config
             .clone();
-        self.clean_up_incoming(&incoming);
+        self.remove_incoming_state(&incoming);
         incoming.improper_drop_warner.dismiss();
 
         // First Initial
@@ -799,12 +799,12 @@ impl Endpoint {
     /// Doing this actively, rather than merely dropping the [`Incoming`], is necessary to prevent
     /// memory leaks due to state within [`Endpoint`] tracking the incoming connection.
     pub fn ignore(&mut self, incoming: Incoming) {
-        self.clean_up_incoming(&incoming);
+        self.remove_incoming_state(&incoming);
         incoming.improper_drop_warner.dismiss();
     }
 
-    /// Clean up endpoint data structures associated with an `Incoming`.
-    fn clean_up_incoming(&mut self, incoming: &Incoming) {
+    /// Remove endpoint state associated with an `Incoming`.
+    fn remove_incoming_state(&mut self, incoming: &Incoming) {
         self.index.remove_initial(incoming.packet.header.dst_cid);
         let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
         self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
