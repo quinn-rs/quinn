@@ -350,7 +350,7 @@ impl Endpoint {
         loop {
             {
                 let endpoint = &mut *self.inner.state.lock().unwrap();
-                if endpoint.recv_state.connections.is_empty() {
+                if endpoint.is_idle() {
                     break;
                 }
                 // Construct future while lock is held to avoid race
@@ -407,9 +407,7 @@ impl Future for EndpointDriver {
             self.0.shared.incoming.notify_waiters();
         }
 
-        if self.0.shared.ref_count.load(Ordering::Relaxed) == 0
-            && endpoint.recv_state.connections.is_empty()
-        {
+        if self.0.shared.ref_count.load(Ordering::Relaxed) == 0 && endpoint.is_idle() {
             Poll::Ready(Ok(()))
         } else {
             drop(endpoint);
@@ -522,6 +520,10 @@ pub(crate) struct Shared {
 }
 
 impl State {
+    fn is_idle(&self) -> bool {
+        self.recv_state.connections.is_empty()
+    }
+
     fn drive_recv(&mut self, cx: &mut Context<'_>, now: Instant) -> Result<bool, io::Error> {
         let get_time = || self.runtime.now();
         self.recv_state.recv_limiter.start_cycle(get_time);
@@ -569,7 +571,7 @@ impl State {
 
             if event.is_drained() {
                 self.recv_state.connections.senders.remove(&ch);
-                if self.recv_state.connections.is_empty() {
+                if self.is_idle() {
                     shared.idle.notify_waiters();
                 }
             }
