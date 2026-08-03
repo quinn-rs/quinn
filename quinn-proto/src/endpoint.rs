@@ -536,9 +536,6 @@ impl Endpoint {
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
         let remote_address_validated = incoming.remote_address_validated();
-        incoming.improper_drop_warner.dismiss();
-        let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
-        self.all_incoming_buffers_total_bytes -= incoming_buffer.total_bytes;
 
         let packet_number = incoming.packet.header.number.expand(0);
         let InitialHeader {
@@ -558,7 +555,7 @@ impl Endpoint {
             })
         {
             debug!("abandoning accept of stale initial");
-            self.index.remove_initial(dst_cid);
+            self.ignore(incoming);
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::TimedOut,
                 response: None,
@@ -567,17 +564,18 @@ impl Endpoint {
 
         if self.cids_exhausted() {
             debug!("refusing connection");
-            self.index.remove_initial(dst_cid);
+            let response = self.initial_close(
+                version,
+                incoming.addresses,
+                &incoming.crypto,
+                src_cid,
+                TransportError::CONNECTION_REFUSED(""),
+                buf,
+            );
+            self.ignore(incoming);
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::CidsExhausted,
-                response: Some(self.initial_close(
-                    version,
-                    incoming.addresses,
-                    &incoming.crypto,
-                    src_cid,
-                    TransportError::CONNECTION_REFUSED(""),
-                    buf,
-                )),
+                response: Some(response),
             }));
         }
 
@@ -593,12 +591,15 @@ impl Endpoint {
             .is_err()
         {
             debug!(packet_number, "failed to authenticate initial packet");
-            self.index.remove_initial(dst_cid);
+            self.ignore(incoming);
             return Err(Box::new(AcceptError {
                 cause: TransportError::PROTOCOL_VIOLATION("authentication failed").into(),
                 response: None,
             }));
         };
+
+        incoming.improper_drop_warner.dismiss();
+        let incoming_buffer = self.remove_incoming_buffer(incoming.incoming_idx);
 
         let ch = ConnectionHandle(self.connections.vacant_key());
         let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
