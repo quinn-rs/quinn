@@ -292,7 +292,7 @@ impl Header {
                 number,
                 version,
             }) => {
-                w.write(u8::from(LongHeaderType::Initial) | number.tag());
+                w.write(LongHeaderType::Initial.encode(version) | number.tag());
                 w.write(version);
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
@@ -313,7 +313,7 @@ impl Header {
                 number,
                 version,
             } => {
-                w.write(u8::from(LongHeaderType::Standard(ty)) | number.tag());
+                w.write(LongHeaderType::Standard(ty).encode(version) | number.tag());
                 w.write(version);
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
@@ -330,7 +330,7 @@ impl Header {
                 ref src_cid,
                 version,
             } => {
-                w.write(u8::from(LongHeaderType::Retry));
+                w.write(LongHeaderType::Retry.encode(version));
                 w.write(version);
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
@@ -617,7 +617,7 @@ impl ProtectedHeader {
                 });
             }
 
-            match LongHeaderType::from_byte(first)? {
+            match LongHeaderType::from_byte(first, version)? {
                 LongHeaderType::Initial => {
                     let token_len = buf.get_var()? as usize;
                     let token_start = buf.position() as usize;
@@ -814,10 +814,15 @@ pub(crate) enum LongHeaderType {
 }
 
 impl LongHeaderType {
-    fn from_byte(b: u8) -> Result<Self, PacketDecodeError> {
+    fn from_byte(b: u8, version: u32) -> Result<Self, PacketDecodeError> {
         use {LongHeaderType::*, LongType::*};
         debug_assert!(b & LONG_HEADER_FORM != 0, "not a long packet");
+        let v2 = version == crate::QUIC_V2_VERSION;
         Ok(match (b & 0x30) >> 4 {
+            0x0 if v2 => Retry,
+            0x1 if v2 => Initial,
+            0x2 if v2 => Standard(ZeroRtt),
+            0x3 if v2 => Standard(Handshake),
             0x0 => Initial,
             0x1 => Standard(ZeroRtt),
             0x2 => Standard(Handshake),
@@ -825,17 +830,20 @@ impl LongHeaderType {
             _ => unreachable!(),
         })
     }
-}
 
-impl From<LongHeaderType> for u8 {
-    fn from(ty: LongHeaderType) -> Self {
+    fn encode(self, version: u32) -> u8 {
         use {LongHeaderType::*, LongType::*};
-        match ty {
-            Initial => LONG_HEADER_FORM | FIXED_BIT,
-            Standard(ZeroRtt) => LONG_HEADER_FORM | FIXED_BIT | (0x1 << 4),
-            Standard(Handshake) => LONG_HEADER_FORM | FIXED_BIT | (0x2 << 4),
-            Retry => LONG_HEADER_FORM | FIXED_BIT | (0x3 << 4),
-        }
+        let type_bits = match (version == crate::QUIC_V2_VERSION, self) {
+            (true, Retry) => 0x0,
+            (true, Initial) => 0x1,
+            (true, Standard(ZeroRtt)) => 0x2,
+            (true, Standard(Handshake)) => 0x3,
+            (false, Initial) => 0x0,
+            (false, Standard(ZeroRtt)) => 0x1,
+            (false, Standard(Handshake)) => 0x2,
+            (false, Retry) => 0x3,
+        };
+        LONG_HEADER_FORM | FIXED_BIT | (type_bits << 4)
     }
 }
 
@@ -931,6 +939,65 @@ mod tests {
             for actual in expected..1024 {
                 assert_eq!(actual, PacketNumber::new(actual, expected).expand(expected));
             }
+        }
+    }
+
+    #[test]
+    fn v2_long_header_type_bits() {
+        const VERSION: u32 = crate::QUIC_V2_VERSION;
+        let cases = [
+            (
+                Header::Initial(InitialHeader {
+                    dst_cid: ConnectionId::new(&[]),
+                    src_cid: ConnectionId::new(&[]),
+                    token: Bytes::new(),
+                    number: PacketNumber::U8(0),
+                    version: VERSION,
+                }),
+                0x10,
+                LongHeaderType::Initial,
+            ),
+            (
+                Header::Long {
+                    ty: LongType::ZeroRtt,
+                    dst_cid: ConnectionId::new(&[]),
+                    src_cid: ConnectionId::new(&[]),
+                    number: PacketNumber::U8(0),
+                    version: VERSION,
+                },
+                0x20,
+                LongHeaderType::Standard(LongType::ZeroRtt),
+            ),
+            (
+                Header::Long {
+                    ty: LongType::Handshake,
+                    dst_cid: ConnectionId::new(&[]),
+                    src_cid: ConnectionId::new(&[]),
+                    number: PacketNumber::U8(0),
+                    version: VERSION,
+                },
+                0x30,
+                LongHeaderType::Standard(LongType::Handshake),
+            ),
+            (
+                Header::Retry {
+                    dst_cid: ConnectionId::new(&[]),
+                    src_cid: ConnectionId::new(&[]),
+                    version: VERSION,
+                },
+                0x00,
+                LongHeaderType::Retry,
+            ),
+        ];
+
+        for (header, type_bits, expected_type) in cases {
+            let mut buf = Vec::new();
+            header.encode(&mut buf);
+            assert_eq!(buf[0] & 0x30, type_bits);
+            assert_eq!(
+                LongHeaderType::from_byte(buf[0], VERSION).unwrap(),
+                expected_type
+            );
         }
     }
 

@@ -179,6 +179,52 @@ fn draft_version_compat() {
 }
 
 #[test]
+fn v2_compat() {
+    let _guard = subscribe();
+
+    let mut client_config = client_config();
+    client_config.version(QUIC_V2_VERSION);
+
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert!(pair.client_conn_mut(client_ch).using_ecn());
+    assert!(pair.server_conn_mut(server_ch).using_ecn());
+}
+
+#[test]
+fn v2_compat_with_retry() {
+    let _guard = subscribe();
+
+    let mut pair = Pair::default();
+    pair.server.handle_incoming = Box::new(validate_incoming);
+
+    let mut client_config = client_config();
+    client_config.version(QUIC_V2_VERSION);
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert!(pair.client_conn_mut(client_ch).using_ecn());
+    assert!(pair.server_conn_mut(server_ch).using_ecn());
+}
+
+#[test]
+fn v2_retry_integrity_vector() {
+    use crate::crypto::ServerConfig as _;
+
+    // RFC 9369, Appendix A.4
+    let crypto = server_crypto();
+    let orig_dst_cid = ConnectionId::new(&hex!("8394c8f03e515708"));
+    let packet = hex!("cf6b3343cf0008f067a5502a4262b5746f6b656ec8646ce8bfe33952d955543665dcc7b6");
+
+    assert_eq!(
+        crypto.retry_tag(QUIC_V2_VERSION, orig_dst_cid, &packet[..20]),
+        packet[20..]
+    );
+}
+
+#[test]
 fn server_stateless_reset() {
     let _guard = subscribe();
     let mut key_material = vec![0; 64];

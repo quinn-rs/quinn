@@ -156,9 +156,13 @@ pub mod fuzzing {
     }
 }
 
-/// The QUIC protocol version implemented.
+/// The QUIC version 2 protocol codepoint, as specified by RFC 9369.
+pub(crate) const QUIC_V2_VERSION: u32 = 0x6b33_43cf;
+
+/// The QUIC protocol versions implemented.
 pub const DEFAULT_SUPPORTED_VERSIONS: &[u32] = &[
     0x00000001,
+    QUIC_V2_VERSION,
     0xff00_001d,
     0xff00_001e,
     0xff00_001f,
