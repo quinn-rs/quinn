@@ -1077,4 +1077,56 @@ mod tests {
             }
         }
     }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    #[test]
+    fn v2_server_initial_rfc_vector() {
+        use crate::Side;
+        use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
+        #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
+        use rustls::crypto::aws_lc_rs::default_provider;
+        #[cfg(feature = "rustls-ring")]
+        use rustls::crypto::ring::default_provider;
+        use rustls::quic::Version;
+
+        // RFC 9369, Appendix A.3
+        let dcid = ConnectionId::new(&hex!("8394c8f03e515708"));
+        let provider = default_provider();
+        let suite = initial_suite_from_provider(&std::sync::Arc::new(provider)).unwrap();
+        let server = initial_keys(Version::V2, dcid, Side::Server, &suite);
+        let mut buf = Vec::new();
+        let header = Header::Initial(InitialHeader {
+            dst_cid: ConnectionId::new(&[]),
+            src_cid: ConnectionId::new(&hex!("f067a5502a4262b5")),
+            token: Bytes::new(),
+            number: PacketNumber::U16(1),
+            version: crate::QUIC_V2_VERSION,
+        });
+        let encode = header.encode(&mut buf);
+        let header_len = buf.len();
+        buf.extend_from_slice(&hex!(
+            "02000000000600405a020000560303eefce7f7b37ba1d1632e96677825ddf739
+             88cfc79825df566dc5430b9a045a1200130100002e00330024001d00209d3c94
+             0d89690b84d08a60993c144eca684d1081287c834d5311bcf32bb9da1a002b00
+             020304"
+        ));
+        buf.resize(buf.len() + server.packet.local.tag_len(), 0);
+        encode.finish(
+            &mut buf,
+            &*server.header.local,
+            Some((1, &*server.packet.local)),
+        );
+
+        assert_eq!(header_len, 20);
+        assert_eq!(
+            buf,
+            hex!(
+                "dc6b3343cf0008f067a5502a4262b5004075d92faaf16f05d8a4398c47089698
+                 baeea26b91eb761d9b89237bbf87263017915358230035f7fd3945d88965cf17
+                 f9af6e16886c61bfc703106fbaf3cb4cfa52382dd16a393e42757507698075b2
+                 c984c707f0a0812d8cd5a6881eaf21ceda98f4bd23f6fe1a3e2c43edd9ce7ca8
+                 4bed8521e2e140"
+            )
+        );
+    }
 }
