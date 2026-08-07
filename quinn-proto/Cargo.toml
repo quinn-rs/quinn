@@ -40,6 +40,10 @@ qlog = ["dep:qlog"]
 # Don't rely on these whatsoever. They may disappear at any time.
 
 __rustls-post-quantum-test =  []
+# Re-exports the split-accept state types so `quinn` can store values returned
+# by `Endpoint::start_accept` and `Accepting::finish_without_endpoint`.
+# The hooks are doc-hidden internal API and are not covered by semver.
+__internal_split_accept = []
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }

@@ -73,6 +73,9 @@ mod endpoint;
 pub use crate::endpoint::{
     AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, Incoming, RetryError,
 };
+#[cfg(feature = "__internal_split_accept")]
+#[doc(hidden)]
+pub use crate::endpoint::{Accepted, Accepting, AcceptingError};
 
 mod packet;
 pub use packet::{
