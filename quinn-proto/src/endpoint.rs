@@ -553,7 +553,8 @@ impl Endpoint {
     /// Reserves CIDs and routing state, but does NOT create the connection, process the first
     /// packet, or replay buffered datagrams. This is the minimum work that must happen under the
     /// endpoint lock.
-    fn start_accept(
+    #[doc(hidden)]
+    pub fn start_accept(
         &mut self,
         mut incoming: Incoming,
         now: Instant,
@@ -682,7 +683,8 @@ impl Endpoint {
         })
     }
 
-    fn finish_accept(&mut self, accepted: Accepted) -> (ConnectionHandle, Connection) {
+    #[doc(hidden)]
+    pub fn finish_accept(&mut self, accepted: Accepted) -> (ConnectionHandle, Connection) {
         let Accepted {
             reservation,
             mut conn,
@@ -708,7 +710,8 @@ impl Endpoint {
 
     /// Clean up after a failed [`Accepting::finish_without_endpoint`] and optionally generate a
     /// close response.
-    fn finish_accept_error(
+    #[doc(hidden)]
+    pub fn finish_accept_error(
         &mut self,
         error: Box<AcceptingError>,
         buf: &mut Vec<u8>,
@@ -1375,12 +1378,18 @@ struct AcceptReservation {
     pref_addr_cid: Option<ConnectionId>,
 }
 
-struct Accepted {
+/// Internal split-accept success state used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; re-exported only with __internal_split_accept
+pub struct Accepted {
     reservation: AcceptReservation,
     conn: Connection,
 }
 
-struct Accepting {
+/// Internal split-accept handle used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; re-exported only with __internal_split_accept
+pub struct Accepting {
     reservation: AcceptReservation,
     version: u32,
     src_cid: ConnectionId,
@@ -1405,7 +1414,8 @@ impl Accepting {
     ///
     /// On success, returns the connection plus the reservation that still needs to be activated
     /// under the endpoint lock.
-    fn finish_without_endpoint(self) -> Result<Accepted, Box<AcceptingError>> {
+    #[doc(hidden)]
+    pub fn finish_without_endpoint(self) -> Result<Accepted, Box<AcceptingError>> {
         self.incoming.improper_drop_warner.dismiss();
 
         let transport_config = self.server_config.transport.clone();
@@ -1459,7 +1469,10 @@ impl Accepting {
     }
 }
 
-struct AcceptingError {
+/// Internal split-accept failure state used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; re-exported only with __internal_split_accept
+pub struct AcceptingError {
     cause: ConnectionError,
     reservation: AcceptReservation,
     version: u32,
