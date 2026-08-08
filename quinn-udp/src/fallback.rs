@@ -58,21 +58,27 @@ impl UdpSocketState {
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
-        // Safety: both `IoSliceMut` and `MaybeUninitSlice` promise to have the
-        // same layout, that of `iovec`/`WSABUF`. Furthermore `recv_vectored`
-        // promises to not write unitialised bytes to the `bufs` and pass it
-        // directly to the `recvmsg` system call, so this is safe.
-        let bufs = unsafe {
-            &mut *(bufs as *mut [IoSliceMut<'_>] as *mut [socket2::MaybeUninitSlice<'_>])
+        if bufs.is_empty() || meta.is_empty() {
+            return Ok(0);
+        }
+        // socket2::recv_from requires &mut [MaybeUninit<u8>]; IoSliceMut is [u8].
+        let buf = unsafe {
+            std::slice::from_raw_parts_mut(
+                bufs[0].as_mut_ptr() as *mut std::mem::MaybeUninit<u8>,
+                bufs[0].len(),
+            )
         };
-        let (len, _flags, addr) = socket.0.recv_from_vectored(bufs)?;
+        let (len, addr) = socket.0.recv_from(buf)?;
         meta[0] = RecvMeta {
             len,
             stride: len,
-            addr: addr.as_socket().unwrap(),
+            addr: addr
+                .as_socket()
+                .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], 0))),
             ecn: None,
             dst_ip: None,
             interface_index: None,
+            timestamp: None,
         };
         Ok(1)
     }
@@ -121,7 +127,8 @@ fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     socket.0.send_to(
         transmit.contents,
         &socket2::SockAddr::from(transmit.destination),
-    )
+    )?;
+    Ok(())
 }
 
 pub(crate) const BATCH_SIZE: usize = 1;
