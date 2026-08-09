@@ -2029,9 +2029,12 @@ fn datagram_send_recv() {
 #[test]
 fn datagram_recv_buffer_overflow() {
     let _guard = subscribe();
-    const WINDOW: usize = 100;
+    const PAYLOAD_WINDOW: usize = 100;
+    const METADATA_WINDOW: usize = 2 * size_of::<Datagram>();
+    const WINDOW: usize = PAYLOAD_WINDOW + METADATA_WINDOW;
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
+            // Account for exactly two datagrams of metadata space
             datagram_receive_buffer_size: Some(WINDOW),
             ..TransportConfig::default()
         }),
@@ -2045,9 +2048,9 @@ fn datagram_recv_buffer_overflow() {
         Some(WINDOW - Datagram::SIZE_BOUND)
     );
 
-    const DATA1: &[u8] = &[0xAB; (WINDOW / 3) + 1];
-    const DATA2: &[u8] = &[0xBC; (WINDOW / 3) + 1];
-    const DATA3: &[u8] = &[0xCD; (WINDOW / 3) + 1];
+    const DATA1: &[u8] = &[0xAB; (PAYLOAD_WINDOW / 3) + 1];
+    const DATA2: &[u8] = &[0xBC; (PAYLOAD_WINDOW / 3) + 1];
+    const DATA3: &[u8] = &[0xCD; (PAYLOAD_WINDOW / 3) + 1];
     pair.client_datagrams(client_ch)
         .send(DATA1.into(), true)
         .unwrap();
