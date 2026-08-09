@@ -116,12 +116,14 @@ impl DatagramState {
             Some(x) => *x,
         };
 
-        if datagram.data.len() > window {
+        let size_with_overhead = datagram.data.len() + size_of::<Datagram>();
+
+        if size_with_overhead > window {
             return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
         }
 
         let was_empty = self.incoming.is_empty();
-        while datagram.data.len() + self.incoming.payload_bytes > window {
+        while self.incoming.memory_used() + size_with_overhead > window {
             debug!("dropping stale datagram");
             self.recv();
         }
@@ -221,6 +223,11 @@ impl DatagramBuffer {
         self.queue.push_front(datagram);
     }
 
+    fn memory_used(&self) -> usize {
+        self.payload_bytes
+            .saturating_add(self.queue.len() * size_of::<Datagram>())
+    }
+
     pub(super) fn can_send_1rtt(&self, max_size: usize) -> bool {
         self.queue.front().is_some_and(|x| x.size(true) <= max_size)
     }
@@ -263,6 +270,22 @@ mod tests {
 
         assert!(state.outgoing.is_empty());
         assert_eq!(state.outgoing.payload_bytes, usize::MAX - 2);
+    }
+
+    #[test]
+    fn empty_frame_flood_limit() {
+        let mut state = DatagramState::default();
+        let datagram = Datagram { data: Bytes::new() };
+        let window = 100;
+        loop {
+            let initial_count = state.incoming.queue.len();
+            state.received(datagram.clone(), &Some(window)).unwrap();
+            assert!(state.incoming.queue.len() * size_of::<Datagram>() <= window);
+            if state.incoming.queue.len() == initial_count {
+                // Datagrams are getting dropped
+                break;
+            }
+        }
     }
 }
 
