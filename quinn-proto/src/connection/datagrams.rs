@@ -122,12 +122,14 @@ impl DatagramState {
             Some(x) => *x,
         };
 
-        if datagram.data.len() > window {
+        let size_with_overhead = datagram.data.len() + size_of::<Datagram>();
+
+        if size_with_overhead > window {
             return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
         }
 
         let was_empty = self.incoming.is_empty();
-        while datagram.data.len() + self.incoming.payload_bytes > window {
+        while self.incoming.memory_used() + size_with_overhead > window {
             debug!("dropping stale datagram");
             self.recv();
         }
@@ -204,6 +206,11 @@ impl DatagramBuffer {
     fn push_front(&mut self, datagram: Datagram) {
         self.payload_bytes += datagram.data.len();
         self.queue.push_front(datagram);
+    }
+
+    fn memory_used(&self) -> usize {
+        self.payload_bytes
+            .saturating_add(self.queue.len() * size_of::<Datagram>())
     }
 
     pub(super) fn can_send_1rtt(&self, max_size: usize) -> bool {
