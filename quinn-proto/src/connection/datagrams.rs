@@ -36,23 +36,24 @@ impl Datagrams<'_> {
             return Err(SendDatagramError::TooLarge);
         }
         if drop {
-            while self.conn.datagrams.outgoing_total > self.conn.config.datagram_send_buffer_size {
+            while self.conn.datagrams.outgoing.payload_bytes
+                > self.conn.config.datagram_send_buffer_size
+            {
                 let prev = self
                     .conn
                     .datagrams
                     .outgoing
                     .pop_front()
-                    .expect("datagrams.outgoing_total desynchronized");
+                    .expect("datagrams.outgoing.payload_bytes desynchronized");
                 trace!(len = prev.data.len(), "dropping outgoing datagram");
-                self.conn.datagrams.outgoing_total -= prev.data.len();
+                self.conn.datagrams.outgoing.payload_bytes -= prev.data.len();
             }
-        } else if self.conn.datagrams.outgoing_total + data.len()
+        } else if self.conn.datagrams.outgoing.payload_bytes + data.len()
             > self.conn.config.datagram_send_buffer_size
         {
             self.conn.datagrams.send_blocked = true;
             return Err(SendDatagramError::Blocked(data));
         }
-        self.conn.datagrams.outgoing_total += data.len();
         self.conn.datagrams.outgoing.push_back(Datagram { data });
         Ok(())
     }
@@ -95,18 +96,14 @@ impl Datagrams<'_> {
         self.conn
             .config
             .datagram_send_buffer_size
-            .saturating_sub(self.conn.datagrams.outgoing_total)
+            .saturating_sub(self.conn.datagrams.outgoing.payload_bytes)
     }
 }
 
 #[derive(Default)]
 pub(super) struct DatagramState {
-    /// Number of bytes of datagrams that have been received by the local transport but not
-    /// delivered to the application
-    pub(super) recv_buffered: usize,
-    pub(super) incoming: VecDeque<Datagram>,
-    pub(super) outgoing: VecDeque<Datagram>,
-    pub(super) outgoing_total: usize,
+    pub(super) incoming: DatagramBuffer,
+    pub(super) outgoing: DatagramBuffer,
     pub(super) send_blocked: bool,
 }
 
@@ -129,13 +126,12 @@ impl DatagramState {
             return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
         }
 
-        let was_empty = self.recv_buffered == 0;
-        while datagram.data.len() + self.recv_buffered > window {
+        let was_empty = self.incoming.is_empty();
+        while datagram.data.len() + self.incoming.payload_bytes > window {
             debug!("dropping stale datagram");
             self.recv();
         }
 
-        self.recv_buffered += datagram.data.len();
         self.incoming.push_back(datagram);
         Ok(was_empty)
     }
@@ -145,7 +141,7 @@ impl DatagramState {
     /// Used to ensure that reductions in MTU don't get us stuck in a state where we have a datagram
     /// queued but can't send it.
     pub(super) fn drop_oversized(&mut self, max_payload: usize) {
-        self.outgoing.retain(|datagram| {
+        self.outgoing.queue.retain(|datagram| {
             let result = datagram.data.len() < max_payload;
             if !result {
                 trace!(
@@ -153,7 +149,7 @@ impl DatagramState {
                     datagram.data.len(),
                     max_payload
                 );
-                self.outgoing_total -= datagram.data.len();
+                self.outgoing.payload_bytes -= datagram.data.len();
             }
             result
         });
@@ -177,16 +173,45 @@ impl DatagramState {
         }
 
         trace!(len = datagram.data.len(), "DATAGRAM");
-
-        self.outgoing_total -= datagram.data.len();
         datagram.encode(true, buf);
         true
     }
 
     pub(super) fn recv(&mut self) -> Option<Bytes> {
         let x = self.incoming.pop_front()?.data;
-        self.recv_buffered -= x.len();
         Some(x)
+    }
+}
+
+#[derive(Default)]
+pub(super) struct DatagramBuffer {
+    queue: VecDeque<Datagram>,
+    payload_bytes: usize,
+}
+
+impl DatagramBuffer {
+    fn push_back(&mut self, datagram: Datagram) {
+        self.payload_bytes += datagram.data.len();
+        self.queue.push_back(datagram);
+    }
+
+    fn pop_front(&mut self) -> Option<Datagram> {
+        let datagram = self.queue.pop_front()?;
+        self.payload_bytes -= datagram.data.len();
+        Some(datagram)
+    }
+
+    fn push_front(&mut self, datagram: Datagram) {
+        self.payload_bytes += datagram.data.len();
+        self.queue.push_front(datagram);
+    }
+
+    pub(super) fn can_send_1rtt(&self, max_size: usize) -> bool {
+        self.queue.front().is_some_and(|x| x.size(true) <= max_size)
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.queue.is_empty()
     }
 }
 
