@@ -91,6 +91,7 @@ impl Datagrams<'_> {
             .config
             .datagram_send_buffer_size
             .saturating_sub(self.conn.datagrams.outgoing.payload_bytes)
+            .saturating_sub(size_of::<Datagram>())
     }
 }
 
@@ -142,7 +143,7 @@ impl DatagramState {
     }
 
     fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
-        let Some(total) = self.outgoing.payload_bytes.checked_add(datagram_len) else {
+        let Some(total) = self.outgoing.memory_used().checked_add(datagram_len) else {
             return false;
         };
 
@@ -251,7 +252,7 @@ mod tests {
             data: Bytes::from_static(&[0; 2]),
         });
 
-        state.make_space_for(4, 10);
+        state.make_space_for(4, 10 + 2 * size_of::<Datagram>());
 
         assert_eq!(state.outgoing.queue.len(), 1);
         assert_eq!(state.outgoing.queue[0].data.len(), 2);
