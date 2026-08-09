@@ -36,7 +36,7 @@ impl Datagrams<'_> {
             return Err(SendDatagramError::TooLarge);
         }
         if drop {
-            while self.conn.datagrams.outgoing.payload_bytes
+            while self.conn.datagrams.outgoing.memory_used()
                 > self.conn.config.datagram_send_buffer_size
             {
                 let prev = self
@@ -48,7 +48,7 @@ impl Datagrams<'_> {
                 trace!(len = prev.data.len(), "dropping outgoing datagram");
                 self.conn.datagrams.outgoing.payload_bytes -= prev.data.len();
             }
-        } else if self.conn.datagrams.outgoing.payload_bytes + data.len()
+        } else if self.conn.datagrams.outgoing.payload_bytes + data.len() + size_of::<Datagram>()
             > self.conn.config.datagram_send_buffer_size
         {
             self.conn.datagrams.send_blocked = true;
@@ -97,6 +97,7 @@ impl Datagrams<'_> {
             .config
             .datagram_send_buffer_size
             .saturating_sub(self.conn.datagrams.outgoing.payload_bytes)
+            .saturating_sub(size_of::<Datagram>())
     }
 }
 
