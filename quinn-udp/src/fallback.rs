@@ -1,5 +1,6 @@
 use std::{
     io::{self, IoSliceMut},
+    mem::MaybeUninit,
     sync::Mutex,
     time::Instant,
 };
@@ -61,10 +62,21 @@ impl UdpSocketState {
         if bufs.is_empty() || meta.is_empty() {
             return Ok(0);
         }
-        // socket2::recv_from requires &mut [MaybeUninit<u8>]; IoSliceMut is [u8].
+
+        // `recv_from_vectored` is not available on every target that uses this backend: socket2
+        // gates it out on redox, wasi and horizon, since they have no `recvmsg`. We only ever
+        // receive one datagram at a time here (`BATCH_SIZE` is 1), so read into the first buffer
+        // with plain `recv_from` instead, which is available everywhere.
+        //
+        // Safety: `recv_from` takes `&mut [MaybeUninit<u8>]`, and `MaybeUninit<u8>` has the same
+        // size and alignment as `u8`, so the pointer and length taken from `bufs[0]` describe a
+        // valid slice of the same region. Treating initialised memory as possibly-uninitialised is
+        // always sound, and `recv_from` promises not to write uninitialised bytes, so `bufs[0]`
+        // stays fully initialised. The mutable borrow of `bufs` lasts for the whole call, so
+        // nothing else can access the region while `buf` is alive.
         let buf = unsafe {
             std::slice::from_raw_parts_mut(
-                bufs[0].as_mut_ptr() as *mut std::mem::MaybeUninit<u8>,
+                bufs[0].as_mut_ptr().cast::<MaybeUninit<u8>>(),
                 bufs[0].len(),
             )
         };
@@ -72,9 +84,7 @@ impl UdpSocketState {
         meta[0] = RecvMeta {
             len,
             stride: len,
-            addr: addr
-                .as_socket()
-                .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], 0))),
+            addr: addr.as_socket().unwrap(),
             ecn: None,
             dst_ip: None,
             interface_index: None,
