@@ -507,6 +507,10 @@ impl TestEndpoint {
             .unwrap()
     }
 
+    pub(super) fn disable_new_connections(&mut self) {
+        self.endpoint.set_server_config(None);
+    }
+
     pub(super) fn finish_split_accept(&mut self, accepting: Accepting) -> ConnectionHandle {
         let Ok(accepted) = accepting.finish_without_endpoint() else {
             panic!("split accept unexpectedly failed")
