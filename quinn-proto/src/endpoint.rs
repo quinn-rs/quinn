@@ -1020,7 +1020,8 @@ impl Endpoint {
     }
 
     /// Number of incoming accepts that have reserved endpoint state but have not yet been
-    /// finalized into active outer connections.
+    /// finalized into active connections.
+    #[doc(hidden)]
     pub fn pending_accepts(&self) -> usize {
         self.pending_accepts
     }
