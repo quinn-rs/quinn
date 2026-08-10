@@ -61,7 +61,9 @@ impl UdpSenderHelperSocket for UdpSocket {
     }
 
     fn try_send(&self, transmit: &udp::Transmit<'_>) -> io::Result<()> {
-        self.inner.send((&self.io).into(), transmit)
+        self.inner.try_send((&self.io).into(), transmit)?;
+
+        Ok(())
     }
 }
 
