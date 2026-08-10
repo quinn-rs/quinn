@@ -212,16 +212,15 @@ impl Endpoint {
             match route_to {
                 RouteDatagramTo::Incoming(incoming_idx) => {
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
-                    let config = &self.server_config.as_ref().unwrap();
 
                     if incoming_buffer
                         .total_bytes
                         .checked_add(datagram_len as u64)
-                        .is_some_and(|n| n <= config.incoming_buffer_size)
+                        .is_some_and(|n| n <= incoming_buffer.size_limit)
                         && self
                             .all_incoming_buffers_total_bytes
                             .checked_add(datagram_len as u64)
-                            .is_some_and(|n| n <= config.incoming_buffer_size_total)
+                            .is_some_and(|n| n <= incoming_buffer.total_size_limit)
                     {
                         incoming_buffer.datagrams.push(event);
                         incoming_buffer.total_bytes += datagram_len as u64;
@@ -507,7 +506,12 @@ impl Endpoint {
             }
         };
 
-        let incoming_idx = self.incoming_buffers.insert(IncomingBuffer::default());
+        let incoming_idx = self.incoming_buffers.insert(IncomingBuffer {
+            datagrams: Vec::new(),
+            total_bytes: 0,
+            size_limit: server_config.incoming_buffer_size,
+            total_size_limit: server_config.incoming_buffer_size_total,
+        });
         self.index
             .insert_initial_incoming(header.dst_cid, incoming_idx);
 
@@ -1078,10 +1082,13 @@ impl fmt::Debug for Endpoint {
 }
 
 /// Buffered Initial and 0-RTT messages for a pending incoming connection
-#[derive(Default)]
 struct IncomingBuffer {
     datagrams: Vec<DatagramConnectionEvent>,
     total_bytes: u64,
+    /// Limits captured when the attempt first arrived, so replacing the endpoint's server
+    /// configuration only affects new incoming attempts.
+    size_limit: u64,
+    total_size_limit: u64,
 }
 
 /// Part of protocol state incoming datagrams can be routed to

@@ -926,6 +926,10 @@ fn accepting_state_buffers_retransmitted_initials() {
     assert_eq!(pair.server.open_connections(), 0);
     assert_eq!(pair.server.pending_accepts(), 1);
 
+    // Removing the server configuration only prevents new attempts; it does not close the
+    // endpoint. An accept that already captured its configuration must keep buffering.
+    pair.server.disable_new_connections();
+
     // With no server response, the client's next wakeup is its loss timer. Advancing to it and
     // driving the client emits a retransmitted Initial for the same connection attempt.
     pair.time = pair.client.next_wakeup().unwrap();
