@@ -7,6 +7,7 @@ use std::{
     net::SocketAddr,
     pin::Pin,
     task::{self, Context, Poll},
+    time::Duration,
 };
 
 use udp::{RecvMeta, Transmit};
@@ -118,6 +119,7 @@ pin_project_lite::pin_project! {
     /// used in its dyn-compatible form as a `Pin<Box<dyn UdpSender>>`.
     struct UdpSenderHelper<Socket, MakeWritableFutFn, WritableFut> {
         socket: Socket,
+        last_send_error: Option<Instant>,
         make_writable_fut_fn: MakeWritableFutFn,
         #[pin]
         writable_fut: Option<WritableFut>,
@@ -145,6 +147,7 @@ impl<Socket, MakeWritableFutFn, WriteableFut>
     fn new(inner: Socket, make_fut: MakeWritableFutFn) -> Self {
         Self {
             socket: inner,
+            last_send_error: None,
             make_writable_fut_fn: make_fut,
             writable_fut: None,
         }
@@ -188,8 +191,11 @@ where
                 // registers us for a wakeup, or the send succeeds if this really was just a
                 // transient failure.
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                // In all other cases, either propagate the error or we're Ok
-                result => return Poll::Ready(result),
+                Err(e) => {
+                    log_sendmsg_error(this.last_send_error, &e, transmit);
+                    return Poll::Ready(Ok(()));
+                }
+                Ok(()) => return Poll::Ready(Ok(())),
             }
         }
     }
@@ -197,6 +203,39 @@ where
     fn max_transmit_segments(&self) -> usize {
         self.socket.max_transmit_segments()
     }
+}
+
+/// Limits I/O error logging to one message per minute.
+const IO_ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+fn log_sendmsg_error(
+    last_send_error: &mut Option<Instant>,
+    error: &io::Error,
+    transmit: &Transmit<'_>,
+) {
+    #[cfg(unix)]
+    // Unix `EMSGSIZE` is expected for MTU probes.
+    if udp::is_msg_size_err(error) {
+        return;
+    }
+
+    let now = Instant::now();
+    if last_send_error
+        .is_some_and(|last| now.saturating_duration_since(last) <= IO_ERROR_LOG_INTERVAL)
+    {
+        return;
+    }
+    *last_send_error = Some(now);
+
+    tracing::warn!(
+        "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, ecn: {:?}, len: {:?}, segment_size: {:?} }}",
+        error,
+        transmit.destination,
+        transmit.src_ip,
+        transmit.ecn,
+        transmit.contents.len(),
+        transmit.segment_size
+    );
 }
 
 /// Parts of the [`UdpSender`] trait that aren't asynchronous or require storing wakers.
@@ -247,3 +286,45 @@ pub use tokio::TokioRuntime;
 mod smol;
 #[cfg(feature = "runtime-smol")]
 pub use smol::*;
+
+#[cfg(all(test, any(feature = "runtime-tokio", feature = "runtime-smol")))]
+mod tests {
+    use std::{future, task::Waker};
+
+    use super::*;
+
+    #[test]
+    fn non_would_block_send_errors_are_logged_and_ignored() {
+        let mut sender = Box::pin(UdpSenderHelper::new(TestSocket, writable));
+        let transmit = Transmit {
+            destination: SocketAddr::from(([127, 0, 0, 1], 4433)),
+            ecn: None,
+            contents: &[],
+            segment_size: None,
+            src_ip: None,
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+
+        let result = sender.as_mut().poll_send(&transmit, &mut cx);
+
+        assert!(matches!(result, Poll::Ready(Ok(()))));
+        assert!(sender.last_send_error.is_some());
+    }
+
+    #[derive(Debug)]
+    struct TestSocket;
+
+    impl UdpSenderHelperSocket for TestSocket {
+        fn try_send(&self, _transmit: &Transmit<'_>) -> io::Result<()> {
+            Err(io::ErrorKind::PermissionDenied.into())
+        }
+
+        fn max_transmit_segments(&self) -> usize {
+            1
+        }
+    }
+
+    fn writable(_: &TestSocket) -> future::Ready<io::Result<()>> {
+        future::ready(Ok(()))
+    }
+}
