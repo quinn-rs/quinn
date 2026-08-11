@@ -4035,6 +4035,7 @@ mod state {
 
 /// Events of interest to the application
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     /// The connection's handshake data is ready
     HandshakeDataReady,

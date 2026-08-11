@@ -1254,6 +1254,7 @@ impl State {
                         .remote_address
                         .send_replace(self.inner.remote_address());
                 }
+                _ => {}
             }
         }
     }
