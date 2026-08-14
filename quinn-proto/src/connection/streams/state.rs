@@ -870,6 +870,10 @@ impl StreamsState {
         self.allocated_remote_count[dir as usize]
     }
 
+    pub(crate) fn max_locally_initiated_concurrent(&self, dir: Dir) -> u64 {
+        self.max[dir as usize]
+    }
+
     pub(crate) fn set_send_window(&mut self, send_window: u64) {
         self.send_window = send_window;
     }

@@ -1419,6 +1419,11 @@ impl Connection {
         self.streams.max_concurrent(dir)
     }
 
+    /// Current number of locally initiated streams that may be concurrently open
+    pub fn max_locally_initiated_concurrent_streams(&self, dir: Dir) -> u64 {
+        self.streams.max_locally_initiated_concurrent(dir)
+    }
+
     /// See [`TransportConfig::send_window()`]
     pub fn set_send_window(&mut self, send_window: u64) {
         self.streams.set_send_window(send_window);
