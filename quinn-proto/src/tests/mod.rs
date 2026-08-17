@@ -1362,6 +1362,57 @@ fn connection_close_sends_acks() {
     );
 }
 
+/// A connection closed while its congestion window is saturated must still deliver
+/// CONNECTION_CLOSE to the peer promptly, rather than leaving the peer to discover the close via
+/// its idle timeout (see https://github.com/quinn-rs/quinn/issues/2785)
+#[test]
+fn connection_close_while_congestion_blocked() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    // Saturate the congestion window with unacknowledged stream data by transmitting from the
+    // client without driving the server, so no ACKs come back and in-flight bytes stay pinned at
+    // the window
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, s)
+        .write(&[42; 1024 * 1024])
+        .unwrap();
+    pair.drive_client();
+
+    // Close while the window is full and stream data is still pending
+    const REASON: &[u8] = b"whee";
+    let close_time = pair.time;
+    pair.client.connections.get_mut(&client_ch).unwrap().close(
+        pair.time,
+        VarInt(42),
+        REASON.into(),
+    );
+
+    // Step the simulation by hand so we can catch the exact moment the server hears about the
+    // close: check for the event after each packet exchange, before the clock jumps ahead
+    let mut result = None;
+    loop {
+        pair.drive_client();
+        pair.drive_server();
+        while let Some(event) = pair.server_conn_mut(server_ch).poll() {
+            if let Event::ConnectionLost { reason } = event {
+                result = Some((reason, pair.time));
+            }
+        }
+        if result.is_some() || !pair.step() {
+            break;
+        }
+    }
+    let (reason, delivered_at) = result.expect("server never learned of the close");
+    assert_matches!(reason, ConnectionError::ApplicationClosed(
+        ApplicationClose { error_code: VarInt(42), ref reason }
+    ) if reason == REASON);
+    // Close packets aren't congestion controlled and the test link has no latency, so the close
+    // should arrive the moment it was issued — any delay means a timer had to rescue it
+    assert_eq!(delivered_at, close_time);
+}
+
 #[test]
 fn server_hs_retransmit() {
     let _guard = subscribe();

@@ -594,8 +594,13 @@ impl Connection {
                 }
 
                 // Congestion control and pacing checks
-                // Tail loss probes must not be blocked by congestion, or a deadlock could arise
-                if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
+                // Tail loss probes must not be blocked by congestion, or a deadlock could arise.
+                // Close packets contain only ACKs and CONNECTION_CLOSE, neither of which is
+                // congestion controlled, and must not be blocked either: `ack_eliciting` reflects
+                // pending frames that will never be sent once closing, and a closed connection no
+                // longer processes ACKs, so the window could never drain
+                // (see https://github.com/quinn-rs/quinn/issues/2785)
+                if ack_eliciting && self.spaces[space_id].loss_probes == 0 && !close {
                     // Assume the current packet will get padded to fill the segment
                     let untracked_bytes = if let Some(builder) = &builder_storage {
                         buf_capacity - builder.partial_encode.start
