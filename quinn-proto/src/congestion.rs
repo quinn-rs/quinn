@@ -72,12 +72,14 @@ pub trait Controller: Send + Sync {
     /// Number of ack-eliciting bytes that may be in flight
     fn window(&self) -> u64;
 
-    /// Retrieve implementation-specific metrics used to populate `qlog` traces when they are enabled
+    /// Retrieve implementation-specific metrics used to populate connection statistics and `qlog`
+    /// traces when they are enabled
     fn metrics(&self) -> ControllerMetrics {
         ControllerMetrics {
             congestion_window: self.window(),
             ssthresh: None,
             pacing_rate: None,
+            bandwidth_estimate: None,
         }
     }
 
@@ -101,6 +103,8 @@ pub struct ControllerMetrics {
     pub ssthresh: Option<u64>,
     /// Pacing rate (bits/s)
     pub pacing_rate: Option<u64>,
+    /// Estimated sustainable path bandwidth (bits/s)
+    pub bandwidth_estimate: Option<u64>,
 }
 
 /// Constructs controllers on demand
