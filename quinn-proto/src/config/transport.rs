@@ -233,8 +233,9 @@ impl TransportConfig {
 
     /// Specifies the ACK frequency config (see [`AckFrequencyConfig`] for details)
     ///
-    /// The provided configuration will be ignored if the peer does not support the acknowledgement
-    /// frequency QUIC extension.
+    /// The configuration is also used as the local endpoint's initial acknowledgement policy for
+    /// application-data packets. A valid `ACK_FREQUENCY` frame received from the peer may
+    /// subsequently replace it.
     ///
     /// Defaults to `None`, which disables controlling the peer's acknowledgement frequency. Even
     /// if set to `None`, the local side still supports the acknowledgement frequency QUIC

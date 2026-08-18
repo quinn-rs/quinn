@@ -267,6 +267,17 @@ impl Connection {
             crypto: Some(crypto.initial_keys(init_cid, side)),
             ..PacketSpace::new(now)
         };
+        let mut data_space = PacketSpace::new(now);
+        let mut ack_frequency =
+            AckFrequencyState::new(get_max_ack_delay(&TransportParameters::default()));
+        if let Some(ack_frequency_config) = &config.ack_frequency_config {
+            data_space
+                .pending_acks
+                .set_ack_frequency_config(ack_frequency_config);
+            if let Some(max_ack_delay) = ack_frequency_config.max_ack_delay {
+                ack_frequency.set_max_ack_delay(max_ack_delay);
+            }
+        }
         let state = State::Handshake(state::Handshake {
             rem_cid_set: side.is_server(),
             expected_token: Bytes::new(),
@@ -309,7 +320,7 @@ impl Connection {
             endpoint_events: VecDeque::new(),
             spin_enabled: config.allow_spin && rng.random_ratio(7, 8),
             spin: false,
-            spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
+            spaces: [initial_space, PacketSpace::new(now), data_space],
             highest_space: SpaceId::Initial,
             prev_crypto: None,
             next_crypto: None,
@@ -333,9 +344,7 @@ impl Connection {
             path_responses: PathResponses::default(),
             close: false,
 
-            ack_frequency: AckFrequencyState::new(get_max_ack_delay(
-                &TransportParameters::default(),
-            )),
+            ack_frequency,
 
             pto_count: 0,
 
