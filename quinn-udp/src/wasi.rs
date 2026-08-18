@@ -3,7 +3,7 @@ use std::{
     mem::MaybeUninit,
 };
 
-use super::{RecvMeta, Transmit, UdpSockRef};
+use super::{RecvMeta, SendCount, Transmit, UdpSockRef};
 
 /// UDP socket interface for WASI
 ///
@@ -19,9 +19,16 @@ impl UdpSocketState {
         Ok(Self { _private: () })
     }
 
-    /// Sends a [`Transmit`] on the given socket without any additional error handling.
-    pub fn try_send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        send(socket, transmit)
+    /// Sends the first datagram of a [`Transmit`] without any additional error handling.
+    pub fn try_send(
+        &self,
+        socket: UdpSockRef<'_>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<SendCount> {
+        let transmit = transmit.limit(1);
+        let sent = send(socket, &transmit)?;
+
+        Ok(SendCount::from_datagram_count(sent))
     }
 
     pub fn recv(
@@ -87,12 +94,13 @@ impl UdpSocketState {
     }
 }
 
-fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<usize> {
     socket.0.send_to(
         transmit.contents,
         &socket2::SockAddr::from(transmit.destination),
     )?;
-    Ok(())
+
+    Ok(transmit.datagram_count())
 }
 
 pub(crate) const BATCH_SIZE: usize = 1;

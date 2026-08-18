@@ -11,7 +11,7 @@ use libc::{c_int, c_uint};
 use windows_sys::Win32::Networking::WinSock;
 
 use crate::{
-    EcnCodepoint, RecvMeta, Transmit, UdpSockRef,
+    EcnCodepoint, RecvMeta, SendCount, Transmit, UdpSockRef,
     cmsg::{self, CMsgHdr},
     log::debug,
 };
@@ -176,14 +176,21 @@ impl UdpSocketState {
         )
     }
 
-    /// Sends a [`Transmit`] on the given socket without any additional error handling.
-    pub fn try_send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        send(
+    /// Sends a prefix of a [`Transmit`] without any additional error handling.
+    pub fn try_send(
+        &self,
+        socket: UdpSockRef<'_>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<SendCount> {
+        let transmit = transmit.limit(self.max_gso_segments());
+        let sent = send(
             socket,
-            transmit,
+            &transmit,
             self.ecn_v4_supported,
             self.ecn_v6_supported,
-        )
+        )?;
+
+        Ok(SendCount::from_datagram_count(sent))
     }
 
     pub fn recv(
@@ -347,7 +354,7 @@ fn send(
     transmit: &Transmit<'_>,
     ecn_v4_supported: bool,
     ecn_v6_supported: bool,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     // we cannot use [`socket2::sendmsg()`] and [`socket2::MsgHdr`] as we do not have access
     // to the inner field which holds the WSAMSG
     let mut ctrl_buf = cmsg::Aligned([0; CMSG_LEN]);
@@ -416,7 +423,7 @@ fn send(
     }
 
     // Segment size is a u32 https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsasetudpsendmessagesize
-    if let Some(segment_size) = transmit.effective_segment_size() {
+    if let Some(segment_size) = transmit.segment_size {
         encoder.push(
             WinSock::IPPROTO_UDP,
             WinSock::UDP_SEND_MSG_SIZE,
@@ -439,7 +446,7 @@ fn send(
     };
 
     match rc {
-        0 => Ok(()),
+        0 => Ok(transmit.datagram_count()),
         _ => Err(io::Error::last_os_error()),
     }
 }
