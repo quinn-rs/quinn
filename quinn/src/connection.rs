@@ -592,6 +592,11 @@ impl Connection {
         self.0.state.lock("rtt").inner.rtt()
     }
 
+    /// Minimum RTT seen on this path, ignoring ack delay
+    pub fn min_rtt(&self) -> Duration {
+        self.0.state.lock("min_rtt").inner.min_rtt()
+    }
+
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
         self.0.state.lock("stats").inner.stats()
