@@ -136,6 +136,8 @@ impl std::fmt::Debug for FrameStats {
 pub struct PathStats {
     /// Current best estimate of this connection's latency (round-trip-time)
     pub rtt: Duration,
+    /// Current best estimate of this connection's latency variation (jitter)
+    pub rttvar: Duration,
     /// Current congestion window of the connection
     pub cwnd: u64,
     /// Congestion controller's estimate of sustainable path bandwidth, in bits per second
@@ -143,7 +145,8 @@ pub struct PathStats {
     /// `None` when the congestion controller does not provide an estimate.
     pub bandwidth_estimate: Option<u64>,
     /// Congestion events on the connection
-    pub congestion_events: u64,
+    pub congestion_events: u64, // TODO: consider replacing this with a more fine-grade
+    // counter that distinguishes between drop and mark events
     /// Spurious congestion events on the connection
     pub spurious_congestion_events: u64,
     /// The amount of packets lost on this path

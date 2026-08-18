@@ -189,6 +189,10 @@ fn stats_include_congestion_controller_bandwidth_estimate() {
         fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
             self
         }
+
+        fn set_window(&mut self, _size: u64) {
+            // ignore
+        }
     }
 
     struct TestControllerFactory;
@@ -198,6 +202,7 @@ fn stats_include_congestion_controller_bandwidth_estimate() {
             self: Arc<Self>,
             _now: Instant,
             _current_mtu: u16,
+            _config: &TransportConfig,
         ) -> Box<dyn congestion::Controller> {
             Box::new(TestController)
         }

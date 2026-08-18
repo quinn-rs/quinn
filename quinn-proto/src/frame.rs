@@ -414,10 +414,14 @@ impl Ack {
     }
 }
 
+/// Encapsulates the number of ECT(0), ECT(1) and CE marked packets in a certain context.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) struct EcnCounts {
+pub struct EcnCounts {
+    /// The number of ECT(0) packets
     pub ect0: u64,
+    /// The number of ECT(1) packets
     pub ect1: u64,
+    /// The number of CE packets
     pub ce: u64,
 }
 
