@@ -42,8 +42,6 @@ use std::{
     net::UdpSocket,
     os::fd::{AsRawFd, FromRawFd},
 };
-#[cfg(not(wasm_browser))]
-use std::{sync::Mutex, time::Instant};
 #[cfg(windows)]
 use windows_sys::Win32::Networking::WinSock;
 
@@ -259,40 +257,6 @@ pub fn is_msg_size_err(err: &io::Error) -> bool {
         false
     }
 }
-
-/// Log at most 1 IO error per minute
-#[cfg(not(wasm_browser))]
-const IO_ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
-
-/// Logs a warning message when sendmsg fails
-///
-/// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
-/// has elapsed since the last error was logged.
-#[cfg(all(not(wasm_browser), any(feature = "tracing-log", feature = "log")))]
-fn log_sendmsg_error(
-    last_send_error: &Mutex<Instant>,
-    err: impl core::fmt::Debug,
-    transmit: &Transmit<'_>,
-) {
-    let now = Instant::now();
-    let last_send_error = &mut *last_send_error.lock().expect("poisend lock");
-    if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {
-        *last_send_error = now;
-        log::warn!(
-            "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, ecn: {:?}, len: {:?}, segment_size: {:?} }}",
-            err,
-            transmit.destination,
-            transmit.src_ip,
-            transmit.ecn,
-            transmit.contents.len(),
-            transmit.segment_size
-        );
-    }
-}
-
-// No-op
-#[cfg(not(any(wasm_browser, feature = "tracing-log", feature = "log")))]
-fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit<'_>) {}
 
 /// A borrowed UDP socket
 ///
