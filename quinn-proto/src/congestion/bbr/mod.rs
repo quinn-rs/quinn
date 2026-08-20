@@ -313,21 +313,21 @@ impl Bbr {
         let mut target_window = self.get_target_cwnd(self.cwnd_gain);
         if self.is_at_full_bandwidth {
             // Add the max recently measured ack aggregation to CWND.
-            target_window += self.ack_aggregation.max_ack_height.get();
+            target_window = target_window.saturating_add(self.ack_aggregation.max_ack_height.get());
         } else {
             // Add the most recent excess acked.  Because CWND never decreases in
             // STARTUP, this will automatically create a very localized max filter.
-            target_window += excess_acked;
+            target_window = target_window.saturating_add(excess_acked);
         }
         // Instead of immediately setting the target CWND as the new one, BBR grows
         // the CWND towards |target_window| by only increasing it |bytes_acked| at a
         // time.
         if self.is_at_full_bandwidth {
-            self.cwnd = target_window.min(self.cwnd + bytes_acked);
+            self.cwnd = target_window.min(self.cwnd.saturating_add(bytes_acked));
         } else if (self.cwnd_gain < target_window as f32) || (self.acked_bytes < self.init_cwnd) {
             // If the connection is not yet out of startup phase, do not decrease
             // the window.
-            self.cwnd += bytes_acked;
+            self.cwnd = self.cwnd.saturating_add(bytes_acked);
         }
 
         // Enforce the limits on the congestion window.
@@ -342,7 +342,7 @@ impl Bbr {
         }
         // Set up the initial recovery window.
         if self.recovery_window == 0 {
-            self.recovery_window = self.min_cwnd.max(in_flight + bytes_acked);
+            self.recovery_window = self.min_cwnd.max(in_flight.saturating_add(bytes_acked));
             return;
         }
 
@@ -357,14 +357,14 @@ impl Bbr {
         // In CONSERVATION mode, just subtracting losses is sufficient.  In GROWTH,
         // release additional |bytes_acked| to achieve a slow-start-like behavior.
         if self.recovery_state == RecoveryState::Growth {
-            self.recovery_window += bytes_acked;
+            self.recovery_window = self.recovery_window.saturating_add(bytes_acked);
         }
 
         // Sanity checks.  Ensure that we always allow to send at least an MSS or
         // |bytes_acked| in response, whichever is larger.
         self.recovery_window = self
             .recovery_window
-            .max(in_flight + bytes_acked)
+            .max(in_flight.saturating_add(bytes_acked))
             .max(self.min_cwnd);
     }
 
@@ -407,7 +407,7 @@ impl Controller for Bbr {
     ) {
         self.max_bandwidth
             .on_ack(now, sent, bytes, self.round_count, app_limited);
-        self.acked_bytes += bytes;
+        self.acked_bytes = self.acked_bytes.saturating_add(bytes);
         if self.is_min_rtt_expired(now, app_limited) || self.min_rtt > rtt.min() {
             self.min_rtt = rtt.min();
         }
@@ -560,11 +560,10 @@ impl AckAggregationState {
     ) -> u64 {
         // Compute how many bytes are expected to be delivered, assuming max
         // bandwidth is correct.
-        let expected_bytes_acked = max_bandwidth
-            * now
-                .saturating_duration_since(self.aggregation_epoch_start_time.unwrap_or(now))
-                .as_micros() as u64
-            / 1_000_000;
+        let expected_bytes_acked = max_bandwidth.saturating_mul(
+            now.saturating_duration_since(self.aggregation_epoch_start_time.unwrap_or(now))
+                .as_micros() as u64,
+        ) / 1_000_000;
 
         // Reset the current aggregation epoch as soon as the ack arrival rate is
         // less than or equal to the max bandwidth.
@@ -577,7 +576,9 @@ impl AckAggregationState {
 
         // Compute how many extra bytes were delivered vs max bandwidth.
         // Include the bytes most recently acknowledged to account for stretch acks.
-        self.aggregation_epoch_bytes += newly_acked_bytes;
+        self.aggregation_epoch_bytes = self
+            .aggregation_epoch_bytes
+            .saturating_add(newly_acked_bytes);
         let diff = self.aggregation_epoch_bytes - expected_bytes_acked;
         self.max_ack_height.update_max(round, diff);
         diff
@@ -650,3 +651,29 @@ const K_MAX_INITIAL_CONGESTION_WINDOW: u64 = 200;
 
 const PROBE_RTT_BASED_ON_BDP: bool = true;
 const DRAIN_TO_TARGET: bool = true;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Extreme/forged ACK byte counts must be contained by saturating arithmetic
+    /// rather than overflowing BBR's internal counters (which panics in debug
+    /// builds). See quinn-rs/quinn#2702. Before the fix this panicked on the first
+    /// `on_end_acks` via `aggregation_epoch_bytes += newly_acked_bytes`.
+    #[test]
+    fn extreme_ack_accounting_does_not_panic() {
+        let now = Instant::now();
+        let sent = now + Duration::from_micros(1);
+        let rtt = RttEstimator::new(Duration::from_millis(100));
+        let mut controller = Arc::new(BbrConfig::default()).build(now, 1200);
+
+        for _ in 0..4 {
+            controller.on_ack(now, sent, u64::MAX, false, &rtt);
+            controller.on_end_acks(now, u64::MAX, false, Some(u64::MAX));
+        }
+
+        // Reaching here without an arithmetic-overflow panic is the assertion; the
+        // window must also remain a sane, non-zero value.
+        assert!(controller.window() > 0);
+    }
+}

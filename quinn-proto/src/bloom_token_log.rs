@@ -3,7 +3,7 @@ use std::{
     f64::consts::LN_2,
     hash::{BuildHasher, Hasher},
     mem::{size_of, take},
-    sync::Mutex,
+    sync::{Mutex, PoisonError},
 };
 
 use fastbloom::BloomFilter;
@@ -67,11 +67,22 @@ impl TokenLog for BloomTokenLog {
             return Err(TokenReuseError);
         }
 
-        let mut guard = self.0.lock().unwrap();
+        // Calculate the token's expiry *before* taking the lock, and via checked
+        // arithmetic: an extreme `issued + lifetime` would otherwise panic inside the
+        // `SystemTime` addition while the guard is held, poisoning the mutex and making
+        // every subsequent validation panic on `lock()` (quinn-rs/quinn#2702).
+        let Some(expires_at) = issued.checked_add(lifetime) else {
+            warn!("BloomTokenLog presented with token whose lifetime overflows its issue time");
+            return Err(TokenReuseError);
+        };
+
+        // Recover a poisoned lock rather than propagating the panic: a poisoned guard
+        // only means a past holder panicked, and the bloom/hash-set state remains a
+        // valid (if possibly stale) token log.
+        let mut guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *guard;
 
         // calculate how many periods past period 1 the token expires
-        let expires_at = issued + lifetime;
         let Ok(periods_forward) = expires_at
             .duration_since(state.period_1_start)
             .map(|duration| duration.as_nanos() / lifetime.as_nanos())
@@ -364,5 +375,23 @@ mod test {
     #[test]
     fn k_num_zero() {
         test_doesnt_panic(BloomTokenLog::new(100, 0));
+    }
+
+    #[test]
+    fn extreme_lifetime_rejected_without_poisoning() {
+        // An `issued + lifetime` that overflows `SystemTime` must be reported as a
+        // rejected token, not panic while the mutex is held (which would poison it and
+        // make every later validation panic on `lock()`). See quinn-rs/quinn#2702.
+        let log = BloomTokenLog::new_expected_items(1024, 16);
+
+        let extreme = log.check_and_insert(1, SystemTime::now(), Duration::from_secs(u64::MAX));
+        assert!(extreme.is_err(), "overflowing lifetime should be rejected");
+
+        // The lock must not be poisoned: a subsequent normal validation still works.
+        let normal = log.check_and_insert(2, SystemTime::now(), Duration::from_secs(1));
+        assert!(
+            normal.is_ok(),
+            "a normal token must still validate after an extreme one"
+        );
     }
 }

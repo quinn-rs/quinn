@@ -20,7 +20,7 @@ pub(crate) struct BandwidthEstimation {
 impl BandwidthEstimation {
     pub(crate) fn on_sent(&mut self, now: Instant, bytes: u64) {
         self.prev_total_sent = self.total_sent;
-        self.total_sent += bytes;
+        self.total_sent = self.total_sent.saturating_add(bytes);
         self.prev_sent_time = self.sent_time;
         self.sent_time = Some(now);
     }
@@ -34,7 +34,7 @@ impl BandwidthEstimation {
         app_limited: bool,
     ) {
         self.prev_total_acked = self.total_acked;
-        self.total_acked += bytes;
+        self.total_acked = self.total_acked.saturating_add(bytes);
         self.prev_acked_time = self.acked_time;
         self.acked_time = Some(now);
 
@@ -83,7 +83,7 @@ impl BandwidthEstimation {
         if window_duration_ns == 0 {
             return None;
         }
-        let b_ns = bytes * 1_000_000_000;
+        let b_ns = bytes.saturating_mul(1_000_000_000);
         let bytes_per_second = b_ns / (window_duration_ns as u64);
         Some(bytes_per_second)
     }
