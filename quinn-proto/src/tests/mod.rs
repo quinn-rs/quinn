@@ -554,6 +554,32 @@ fn stateless_reset_limit() {
 }
 
 #[test]
+fn retry_integrity() {
+    // RFC 9001, Appendix A.4: https://www.rfc-editor.org/rfc/rfc9001.html#section-a.4
+    let orig_dst_cid = ConnectionId::new(&hex!("8394c8f03e515708"));
+    let packet = hex!("ff000000010008f067a5502a4262b5746f6b656e");
+    let tag = hex!("04a265ba2eff4d829058fb3f0f2496ba");
+    assert_eq!(
+        server_config().crypto.retry_tag(1, orig_dst_cid, &packet),
+        tag
+    );
+
+    let mut pair = Pair::default();
+    let client = pair.begin_connect(client_config());
+    let session = pair.client_conn_mut(client).crypto_session();
+    assert!(session.is_valid_retry(orig_dst_cid, &packet, &tag));
+    assert!(!session.is_valid_retry(orig_dst_cid, &packet, &tag[..15]));
+
+    let mut corrupted_tag = tag;
+    corrupted_tag[0] ^= 1;
+    assert!(!session.is_valid_retry(orig_dst_cid, &packet, &corrupted_tag));
+
+    let mut corrupted_packet = packet;
+    corrupted_packet[0] ^= 1;
+    assert!(!session.is_valid_retry(orig_dst_cid, &corrupted_packet, &tag));
+}
+
+#[test]
 fn peer_identity() {
     let mut pair = Pair::default();
     let (client, server) = pair.connect();
