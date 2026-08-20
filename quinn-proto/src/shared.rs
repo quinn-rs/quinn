@@ -17,7 +17,7 @@ pub(crate) enum ConnectionEventInner {
 }
 
 /// Variant of [`ConnectionEventInner`].
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DatagramConnectionEvent {
     pub(crate) now: Instant,
     pub(crate) remote: SocketAddr,
