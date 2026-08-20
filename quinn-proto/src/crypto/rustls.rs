@@ -122,18 +122,7 @@ impl crypto::Session for TlsSession {
             let before = self.input.len();
             self.inner
                 .read_hs(&mut self.input, &mut self.pending_events)
-                .map_err(|e| {
-                    if let Ok(alert) = AlertDescription::try_from(&e) {
-                        TransportError {
-                            code: TransportErrorCode::crypto(alert.into()),
-                            frame: None,
-                            reason: e.to_string(),
-                            crypto: Some(Arc::new(e)),
-                        }
-                    } else {
-                        TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
-                    }
-                })?;
+                .map_err(transport_error_from_rustls)?;
             if self.input.is_empty() || self.input.len() == before {
                 break;
             }
@@ -478,6 +467,9 @@ impl QuicServerConfig {
     }
 
     /// Use `factory` to construct the TLS input buffer for each incoming connection
+    ///
+    /// For staged acceptance, the buffer is created after the server configuration is selected,
+    /// unless the caller already supplied a buffer to the acceptor.
     pub fn tls_input_buffer_factory<B: QuicInputBuffer>(
         &mut self,
         factory: impl Fn() -> B + Send + Sync + 'static,
@@ -561,6 +553,47 @@ impl crypto::ServerConfig for QuicServerConfig {
         })
     }
 
+    fn start_session_from_accepted(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+        accepted: Accepted,
+    ) -> Result<Box<dyn crypto::Session>, TransportError> {
+        // Safe: `start_session_from_accepted()` is never called if `initial_keys()` rejected
+        // `version`.
+        let version = interpret_version(version).unwrap();
+        let Accepted { inner, mut input } = accepted;
+        if matches!(input, HandshakeInput::Default(_))
+            && let Some(factory) = &self.input_buffer_factory
+        {
+            let mut buffer = factory();
+            buffer.extend_from_slice(input.slice_mut());
+            input = HandshakeInput::Custom(buffer);
+        }
+        let mut pending_events = VecDeque::new();
+        let mut inner = QuicConnection::Server {
+            state: Some(ServerHandshake::Accepted(inner)),
+            config: self.inner.clone(),
+            params: to_vec(params),
+        };
+        inner
+            .read_hs(&mut input, &mut pending_events)
+            .map_err(transport_error_from_rustls)?;
+
+        Ok(Box::new(TlsSession {
+            version,
+            // The staged acceptor already consumed ClientHello, so the server-side handshake
+            // metadata is immediately available without replaying Initial CRYPTO.
+            got_handshake_data: true,
+            next_secrets: None,
+            exporter: None,
+            inner,
+            input,
+            pending_events,
+            suite: self.initial,
+        }))
+    }
+
     fn initial_keys(
         &self,
         version: u32,
@@ -591,6 +624,19 @@ impl crypto::ServerConfig for QuicServerConfig {
 pub trait QuicInputBuffer: TlsInputBuffer + Send + Sync + 'static {
     /// Append newly received data to the end of the buffer
     fn extend_from_slice(&mut self, bytes: &[u8]);
+}
+
+/// A rustls QUIC handshake paused after reading ClientHello.
+pub struct Accepted {
+    inner: rustls::server::Accepted<rustls::quic::Quic>,
+    input: HandshakeInput,
+}
+
+impl Accepted {
+    /// Get the ClientHello for this connection.
+    pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
+        self.inner.client_hello()
+    }
 }
 
 enum QuicConnection {
@@ -643,29 +689,27 @@ impl QuicConnection {
                 params,
             } => {
                 let current = state.take().expect("QUIC server handshake state is set");
-                let mut next = match current {
-                    ServerHandshake::NeedsInput(session) => session.process(input, &mut output)?,
-                    ServerHandshake::Complete(mut session) => {
-                        session.read_hs(input)?;
-                        output.extend(session.events());
-                        ServerHandshake::Complete(session)
-                    }
-                    _ => unreachable!("transient QUIC server handshake state was retained"),
-                };
-                let mut process_after_transition = false;
+                let mut next = current;
+                let mut process_input = true;
                 next = loop {
                     next = match next {
+                        ServerHandshake::NeedsInput(session) if process_input => {
+                            process_input = false;
+                            session.process(input, &mut output)?
+                        }
                         ServerHandshake::Accepted(accepted) => {
-                            process_after_transition = true;
+                            process_input = true;
                             accepted.choose_config(config.clone(), params.clone(), &mut output)?
                         }
                         ServerHandshake::VerifyClientIdentity(verify) => {
-                            process_after_transition = true;
+                            process_input = true;
                             verify.with_config(&mut output)?
                         }
-                        ServerHandshake::NeedsInput(session) if process_after_transition => {
-                            process_after_transition = false;
-                            session.process(input, &mut output)?
+                        ServerHandshake::Complete(mut session) if process_input => {
+                            process_input = false;
+                            session.read_hs(input)?;
+                            output.extend(session.events());
+                            ServerHandshake::Complete(session)
                         }
                         next => break next,
                     };
@@ -917,6 +961,19 @@ impl TlsInputBuffer for HandshakeInput {
 impl Default for HandshakeInput {
     fn default() -> Self {
         Self::Default(VecInput::default())
+    }
+}
+
+fn transport_error_from_rustls(e: Error) -> TransportError {
+    if let Ok(alert) = AlertDescription::try_from(&e) {
+        TransportError {
+            code: TransportErrorCode::crypto(alert.into()),
+            frame: None,
+            reason: e.to_string(),
+            crypto: Some(Arc::new(e)),
+        }
+    } else {
+        TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
     }
 }
 
