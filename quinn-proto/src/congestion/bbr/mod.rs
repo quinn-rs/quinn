@@ -324,7 +324,7 @@ impl Bbr {
         // time.
         if self.is_at_full_bandwidth {
             self.cwnd = target_window.min(self.cwnd + bytes_acked);
-        } else if (self.cwnd_gain < target_window as f32) || (self.acked_bytes < self.init_cwnd) {
+        } else if (self.cwnd < target_window) || (self.acked_bytes < self.init_cwnd) {
             // If the connection is not yet out of startup phase, do not decrease
             // the window.
             self.cwnd += bytes_acked;
@@ -650,3 +650,188 @@ const K_MAX_INITIAL_CONGESTION_WINDOW: u64 = 200;
 
 const PROBE_RTT_BASED_ON_BDP: bool = true;
 const DRAIN_TO_TARGET: bool = true;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Emulates one round trip: `packets` packets of `packet_size` bytes are
+    /// sent then acked one RTT later, sends and acks both spaced
+    /// `spacing` apart (the spacing sets the bandwidth sample rate:
+    /// `packet_size / spacing`). Closes the round with `on_end_acks` and
+    /// returns the time after the last ack.
+    fn run_round(
+        bbr: &mut Bbr,
+        rtt: &RttEstimator,
+        now: Instant,
+        pn: &mut u64,
+        packets: u64,
+        packet_size: u64,
+        spacing: Duration,
+        app_limited: bool,
+    ) -> Instant {
+        let first = *pn;
+        let mut send_at = now;
+        for _ in 0..packets {
+            bbr.on_sent(send_at, packet_size, *pn);
+            *pn += 1;
+            send_at += spacing;
+        }
+        let mut ack_at = now + Duration::from_millis(20);
+        for _ in 0..packets {
+            bbr.on_ack(ack_at, now, packet_size, app_limited, rtt);
+            ack_at += spacing;
+        }
+        bbr.on_end_acks(ack_at, 0, app_limited, Some(first + packets - 1));
+        ack_at
+    }
+
+    #[test]
+    fn app_limited_startup_does_not_grow_cwnd_beyond_target_window() {
+        let mut now = Instant::now();
+        let mut bbr = Bbr::new(Arc::new(BbrConfig::default()), 1200);
+        // Suppress the connection-open ProbeRtt pass (min_rtt "expires" while
+        // unset); these tests exercise the STARTUP window arithmetic only.
+        bbr.probe_rtt_last_started_at = Some(now);
+        // ... and stand in for the min_rtt it would have established.
+        bbr.min_rtt = Duration::from_millis(20);
+        let rtt = RttEstimator::new(Duration::from_millis(20));
+        let mut pn = 0u64;
+
+        // Seed a real bandwidth estimate: a few non-app-limited rounds whose
+        // sample rate keeps growing >= 25%, so full-bandwidth detection never
+        // fires and the connection legitimately stays in STARTUP.
+        let mut spacing = Duration::from_micros(1000);
+        for _ in 0..4 {
+            now = run_round(&mut bbr, &rtt, now, &mut pn, 33, 1200, spacing, false);
+            spacing /= 2;
+        }
+        assert_eq!(bbr.mode, Mode::Startup, "seed must not exit STARTUP");
+
+        // A tunnel-shaped workload: the app never fills the window, so every
+        // round is app-limited, forever. Full-bandwidth detection is skipped
+        // on app-limited rounds, so STARTUP never ends; the window must then
+        // stay pinned near target_window instead of tracking cumulative acked
+        // bytes.
+        for _ in 0..500 {
+            now = run_round(
+                &mut bbr,
+                &rtt,
+                now,
+                &mut pn,
+                33,
+                1200,
+                Duration::from_micros(600),
+                true,
+            );
+        }
+        assert_eq!(bbr.mode, Mode::Startup);
+        assert!(
+            bbr.acked_bytes > 20 * bbr.init_cwnd,
+            "scenario sanity: plenty of bytes must have been acked"
+        );
+        assert!(
+            bbr.cwnd <= 4 * bbr.init_cwnd,
+            "STARTUP cwnd must stay near the BDP-derived target, got {} after {} bytes acked (init_cwnd {})",
+            bbr.cwnd,
+            bbr.acked_bytes,
+            bbr.init_cwnd
+        );
+    }
+
+    #[test]
+    fn app_limited_from_birth_does_not_grow_cwnd_unbounded() {
+        // A connection that is app-limited from its very first round (a
+        // tunnel trickling below link rate, never saturating) exercises the
+        // OTHER unbounded-growth path: with no bandwidth samples admitted to
+        // the max filter, expected_bytes_acked stays 0, the ack-aggregation
+        // epoch never resets, and excess_acked = cumulative acked bytes
+        // inflates target_window without bound. App-limited samples must be
+        // allowed to RAISE the bandwidth estimate (they are real deliveries;
+        // a path cannot fake delivering faster than it can) so the epoch
+        // arithmetic engages and the window stays near the real BDP.
+        let mut now = Instant::now();
+        let mut bbr = Bbr::new(Arc::new(BbrConfig::default()), 1200);
+        bbr.probe_rtt_last_started_at = Some(now);
+        bbr.min_rtt = Duration::from_millis(20);
+        let rtt = RttEstimator::new(Duration::from_millis(20));
+        let mut pn = 0u64;
+
+        // 500 rounds of a paced ~13 Mbit/s stream (33 x 1200 B per 20 ms
+        // round, 600 us spacing), app-limited from the first byte.
+        for _ in 0..500 {
+            now = run_round(
+                &mut bbr,
+                &rtt,
+                now,
+                &mut pn,
+                33,
+                1200,
+                Duration::from_micros(600),
+                true,
+            );
+        }
+        assert_eq!(bbr.mode, Mode::Startup);
+        assert!(
+            bbr.acked_bytes > 20 * bbr.init_cwnd,
+            "scenario sanity: plenty of bytes must have been acked"
+        );
+        assert!(
+            bbr.cwnd <= 4 * bbr.init_cwnd,
+            "app-limited-from-birth cwnd must stay bounded, got {} after {} bytes acked (init_cwnd {})",
+            bbr.cwnd,
+            bbr.acked_bytes,
+            bbr.init_cwnd
+        );
+    }
+
+    #[test]
+    fn startup_cwnd_grows_while_below_target_window() {
+        let mut now = Instant::now();
+        let mut bbr = Bbr::new(Arc::new(BbrConfig::default()), 1200);
+        // Suppress the connection-open ProbeRtt pass (see the test above).
+        bbr.probe_rtt_last_started_at = Some(now);
+        // ... and stand in for the min_rtt it would have established.
+        bbr.min_rtt = Duration::from_millis(20);
+        let rtt = RttEstimator::new(Duration::from_millis(20));
+        let mut pn = 0u64;
+
+        // Two fast seed rounds (120 MB/s samples): a large BDP-derived target,
+        // and too few non-growth rounds to trigger full-bandwidth detection.
+        for _ in 0..2 {
+            now = run_round(
+                &mut bbr,
+                &rtt,
+                now,
+                &mut pn,
+                33,
+                1200,
+                Duration::from_micros(10),
+                false,
+            );
+        }
+        assert_eq!(bbr.mode, Mode::Startup);
+
+        // While cwnd is below the target window, the STARTUP ramp must keep
+        // growing it by the acked bytes.
+        for _ in 0..100 {
+            now = run_round(
+                &mut bbr,
+                &rtt,
+                now,
+                &mut pn,
+                33,
+                1200,
+                Duration::from_micros(10),
+                true,
+            );
+        }
+        assert_eq!(bbr.mode, Mode::Startup);
+        assert!(
+            bbr.cwnd > 10 * bbr.init_cwnd,
+            "STARTUP must keep ramping cwnd toward a large target, got {} (init_cwnd {})",
+            bbr.cwnd,
+            bbr.init_cwnd
+        );
+    }
+}
