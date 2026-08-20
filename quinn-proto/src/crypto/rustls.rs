@@ -546,7 +546,7 @@ impl crypto::ServerConfig for QuicServerConfig {
             input: self
                 .input_buffer_factory
                 .as_ref()
-                .map(|factory| HandshakeInput::Custom(factory()))
+                .map(|factory| HandshakeInput::custom(factory()))
                 .unwrap_or_default(),
             pending_events: VecDeque::new(),
             suite: self.initial,
@@ -562,13 +562,15 @@ impl crypto::ServerConfig for QuicServerConfig {
         // Safe: `start_session_from_accepted()` is never called if `initial_keys()` rejected
         // `version`.
         let version = interpret_version(version).unwrap();
-        let Accepted { inner, mut input } = accepted;
-        if matches!(input, HandshakeInput::Default(_))
+        let Accepted {
+            inner, mut input, ..
+        } = accepted;
+        if matches!(input.inner, HandshakeInputInner::Default(_))
             && let Some(factory) = &self.input_buffer_factory
         {
             let mut buffer = factory();
             buffer.extend_from_slice(input.slice_mut());
-            input = HandshakeInput::Custom(buffer);
+            input = HandshakeInput::custom(buffer);
         }
         let mut pending_events = VecDeque::new();
         let mut inner = QuicConnection::Server {
@@ -630,12 +632,89 @@ pub trait QuicInputBuffer: TlsInputBuffer + Send + Sync + 'static {
 pub struct Accepted {
     inner: rustls::server::Accepted<rustls::quic::Quic>,
     input: HandshakeInput,
+    initial_crypto_offset: u64,
 }
 
 impl Accepted {
     /// Get the ClientHello for this connection.
     pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
         self.inner.client_hello()
+    }
+
+    pub(crate) fn initial_crypto_offset(&self) -> u64 {
+        self.initial_crypto_offset
+    }
+}
+
+/// Reads a rustls QUIC ClientHello before a server configuration is selected.
+pub(crate) struct Acceptor {
+    state: Option<ServerHandshake>,
+    input: HandshakeInput,
+}
+
+impl Acceptor {
+    pub(crate) fn new(
+        version: u32,
+        input: Option<Box<dyn QuicInputBuffer>>,
+    ) -> Result<Self, UnsupportedVersion> {
+        Ok(Self {
+            state: Some(ServerHandshake::NeedsInput(ServerHandshake::start(
+                interpret_version(version)?,
+            ))),
+            input: input.map(HandshakeInput::custom).unwrap_or_default(),
+        })
+    }
+
+    pub(crate) fn read_hs(&mut self, plaintext: &[u8]) -> Result<Option<Accepted>, TransportError> {
+        self.input.extend_from_slice(plaintext);
+        loop {
+            let before = self.input.len();
+            let Some(state) = self.state.take() else {
+                return Err(TransportError::INTERNAL_ERROR(
+                    "rustls acceptor used after completion",
+                ));
+            };
+            let ServerHandshake::NeedsInput(state) = state else {
+                return Err(TransportError::INTERNAL_ERROR(
+                    "rustls acceptor was not waiting for input",
+                ));
+            };
+            let mut events = Vec::new();
+            let state = state
+                .process(&mut self.input, &mut events)
+                .map_err(transport_error_from_rustls)?;
+            if !events.is_empty() {
+                return Err(TransportError::INTERNAL_ERROR(
+                    "rustls emitted data before config selection",
+                ));
+            }
+            match state {
+                ServerHandshake::NeedsInput(state) => {
+                    self.state = Some(ServerHandshake::NeedsInput(state));
+                    if self.input.is_empty() || self.input.len() == before {
+                        return Ok(None);
+                    }
+                }
+                ServerHandshake::Accepted(inner) => {
+                    let initial_crypto_offset = (self.input.consumed() + self.input.len()) as u64;
+                    return Ok(Some(Accepted {
+                        inner,
+                        input: std::mem::take(&mut self.input),
+                        initial_crypto_offset,
+                    }));
+                }
+                ServerHandshake::VerifyClientIdentity(_) | ServerHandshake::Complete(_) => {
+                    return Err(TransportError::INTERNAL_ERROR(
+                        "rustls advanced past ClientHello without a server config",
+                    ));
+                }
+                _ => {
+                    return Err(TransportError::INTERNAL_ERROR(
+                        "rustls returned an unsupported server handshake state",
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -903,64 +982,84 @@ impl TlsInputBuffer for VecInput {
     }
 }
 
-enum HandshakeInput {
+enum HandshakeInputInner {
     Custom(Box<dyn QuicInputBuffer>),
     Default(VecInput),
 }
 
+struct HandshakeInput {
+    inner: HandshakeInputInner,
+    consumed: usize,
+}
+
 impl HandshakeInput {
+    fn custom(input: Box<dyn QuicInputBuffer>) -> Self {
+        Self {
+            inner: HandshakeInputInner::Custom(input),
+            consumed: 0,
+        }
+    }
+
     fn extend_from_slice(&mut self, bytes: &[u8]) {
-        match self {
-            Self::Custom(input) => input.extend_from_slice(bytes),
-            Self::Default(input) => input.extend_from_slice(bytes),
+        match &mut self.inner {
+            HandshakeInputInner::Default(input) => input.extend_from_slice(bytes),
+            HandshakeInputInner::Custom(input) => input.extend_from_slice(bytes),
         }
     }
 
     fn len(&mut self) -> usize {
-        match self {
-            Self::Custom(input) => input.slice_mut().len(),
-            Self::Default(input) => input.len(),
+        match &mut self.inner {
+            HandshakeInputInner::Default(input) => input.len(),
+            HandshakeInputInner::Custom(input) => input.slice_mut().len(),
         }
     }
 
     fn is_empty(&mut self) -> bool {
         self.len() == 0
     }
+
+    fn consumed(&self) -> usize {
+        self.consumed
+    }
 }
 
 impl TlsInputBuffer for HandshakeInput {
     fn slice_mut(&mut self) -> &mut [u8] {
-        match self {
-            Self::Custom(input) => input.slice_mut(),
-            Self::Default(input) => input.slice_mut(),
+        match &mut self.inner {
+            HandshakeInputInner::Default(input) => input.slice_mut(),
+            HandshakeInputInner::Custom(input) => input.slice_mut(),
         }
     }
 
     fn discard(&mut self, num_bytes: usize) {
-        match self {
-            Self::Custom(input) => input.discard(num_bytes),
-            Self::Default(input) => input.discard(num_bytes),
+        self.consumed += num_bytes;
+        match &mut self.inner {
+            HandshakeInputInner::Default(input) => input.discard(num_bytes),
+            HandshakeInputInner::Custom(input) => input.discard(num_bytes),
         }
     }
 
     fn received_close_notify(&mut self) {
-        match self {
-            Self::Custom(input) => input.received_close_notify(),
-            Self::Default(input) => input.received_close_notify(),
+        match &mut self.inner {
+            HandshakeInputInner::Default(input) => input.received_close_notify(),
+            HandshakeInputInner::Custom(input) => input.received_close_notify(),
         }
     }
 
     fn has_seen_eof(&self) -> bool {
-        match self {
-            Self::Custom(input) => input.has_seen_eof(),
-            Self::Default(input) => input.has_seen_eof(),
+        match &self.inner {
+            HandshakeInputInner::Default(input) => input.has_seen_eof(),
+            HandshakeInputInner::Custom(input) => input.has_seen_eof(),
         }
     }
 }
 
 impl Default for HandshakeInput {
     fn default() -> Self {
-        Self::Default(VecInput::default())
+        Self {
+            inner: HandshakeInputInner::Default(VecInput::default()),
+            consumed: 0,
+        }
     }
 }
 
