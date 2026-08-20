@@ -61,7 +61,18 @@ impl BandwidthEstimation {
         };
 
         let bandwidth = send_rate.min(ack_rate);
-        if !app_limited && self.max_filter.get() < bandwidth {
+        // Mirror Chromium/quiche's admission rule: non-app-limited samples
+        // always feed the windowed max filter (feeding lower samples too is
+        // what lets the window rotate and the estimate decay); app-limited
+        // samples are admitted only when they RAISE the estimate, because a
+        // path cannot fake delivering faster than it can, while a low
+        // app-limited sample says nothing about capacity. Gating app-limited
+        // samples out entirely left the filter empty on connections that are
+        // app-limited from birth (a tunnel trickling below link rate), and a
+        // zero estimate collapses the ack-aggregation epoch arithmetic into
+        // unbounded excess_acked growth. Zero-rate artifacts (same-instant
+        // deltas) are never admitted.
+        if bandwidth > 0 && (!app_limited || bandwidth > self.max_filter.get()) {
             self.max_filter.update_max(round, bandwidth);
         }
     }
