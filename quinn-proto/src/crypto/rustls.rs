@@ -159,6 +159,35 @@ impl TlsInputBuffer for HandshakeInput {
     }
 }
 
+fn transport_error_from_rustls(e: Error) -> TransportError {
+    if let Ok(alert) = AlertDescription::try_from(&e) {
+        TransportError {
+            code: TransportErrorCode::crypto(alert.into()),
+            frame: None,
+            reason: e.to_string(),
+            crypto: Some(Arc::new(e)),
+        }
+    } else {
+        TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
+    }
+}
+
+/// A rustls QUIC handshake paused after reading ClientHello.
+pub struct Accepted {
+    inner: ServerHandshake,
+    input: HandshakeInput,
+}
+
+impl Accepted {
+    /// Get the ClientHello for this connection.
+    pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
+        let ServerHandshake::Accepted(accepted) = &self.inner else {
+            unreachable!("accepted QUIC handshake is paused after ClientHello")
+        };
+        accepted.client_hello()
+    }
+}
+
 impl TlsSession {
     fn side(&self) -> Side {
         self.inner.side()
@@ -231,18 +260,7 @@ impl crypto::Session for TlsSession {
             let before = self.input.len();
             self.inner
                 .read_hs(&mut self.input, &mut self.pending_events)
-                .map_err(|e| {
-                    if let Ok(alert) = AlertDescription::try_from(&e) {
-                        TransportError {
-                            code: TransportErrorCode::crypto(alert.into()),
-                            frame: None,
-                            reason: e.to_string(),
-                            crypto: Some(Arc::new(e)),
-                        }
-                    } else {
-                        TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
-                    }
-                })?;
+                .map_err(transport_error_from_rustls)?;
             if self.input.is_empty() || self.input.len() == before {
                 break;
             }
@@ -482,29 +500,27 @@ impl QuicConnection {
                 params,
             } => {
                 let current = state.take().expect("QUIC server handshake state is set");
-                let mut next = match current {
-                    ServerHandshake::NeedsInput(session) => session.process(input, &mut output)?,
-                    ServerHandshake::Complete(mut session) => {
-                        session.read_hs(input)?;
-                        output.extend(session.events());
-                        ServerHandshake::Complete(session)
-                    }
-                    _ => unreachable!("transient QUIC server handshake state was retained"),
-                };
-                let mut process_after_transition = false;
+                let mut next = current;
+                let mut process_input = true;
                 next = loop {
                     next = match next {
+                        ServerHandshake::NeedsInput(session) if process_input => {
+                            process_input = false;
+                            session.process(input, &mut output)?
+                        }
                         ServerHandshake::Accepted(accepted) => {
-                            process_after_transition = true;
+                            process_input = true;
                             accepted.choose_config(config.clone(), params.clone(), &mut output)?
                         }
                         ServerHandshake::VerifyClientIdentity(verify) => {
-                            process_after_transition = true;
+                            process_input = true;
                             verify.with_config(&mut output)?
                         }
-                        ServerHandshake::NeedsInput(session) if process_after_transition => {
-                            process_after_transition = false;
-                            session.process(input, &mut output)?
+                        ServerHandshake::Complete(mut session) if process_input => {
+                            process_input = false;
+                            session.read_hs(input)?;
+                            output.extend(session.events());
+                            ServerHandshake::Complete(session)
                         }
                         next => break next,
                     };
@@ -963,6 +979,40 @@ impl crypto::ServerConfig for QuicServerConfig {
             pending_events: VecDeque::new(),
             suite: self.initial,
         })
+    }
+
+    fn start_session_from_accepted(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+        accepted: Accepted,
+    ) -> Result<Box<dyn crypto::Session>, TransportError> {
+        // Safe: `start_session_from_accepted()` is never called if `initial_keys()` rejected
+        // `version`.
+        let version = interpret_version(version).unwrap();
+        let Accepted { inner, mut input } = accepted;
+        let mut pending_events = VecDeque::new();
+        let mut inner = QuicConnection::Server {
+            state: Some(inner),
+            config: self.inner.clone(),
+            params: to_vec(params),
+        };
+        inner
+            .read_hs(&mut input, &mut pending_events)
+            .map_err(transport_error_from_rustls)?;
+
+        Ok(Box::new(TlsSession {
+            version,
+            // The staged acceptor already consumed ClientHello, so the server-side handshake
+            // metadata is immediately available without replaying Initial CRYPTO.
+            got_handshake_data: true,
+            next_secrets: None,
+            exporter: None,
+            inner,
+            input,
+            pending_events,
+            suite: self.initial,
+        }))
     }
 
     fn initial_keys(
