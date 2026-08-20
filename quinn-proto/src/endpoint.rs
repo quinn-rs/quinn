@@ -108,6 +108,10 @@ impl Endpoint {
                 return Some(self.send_new_identifiers(now, ch, n));
             }
             ResetToken(remote, token) => {
+                // A peer that migrates switches to a CID it has not used from
+                // another address, so this event doubles as notice that the
+                // connection's remote address changed.
+                self.connections[ch].addresses.remote = remote;
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
                     self.index.connection_reset_tokens.remove(old.0, old.1);
                 }
@@ -343,7 +347,11 @@ impl Endpoint {
         trace!(initial_dcid = %remote_id);
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
+        let addresses = FourTuple {
+            remote,
+            local_ip: None,
+        };
+        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch), addresses);
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -362,10 +370,7 @@ impl Endpoint {
             remote_id,
             loc_cid,
             remote_id,
-            FourTuple {
-                remote,
-                local_ip: None,
-            },
+            addresses,
             now,
             tls,
             config.transport,
@@ -384,8 +389,12 @@ impl Endpoint {
         num: u64,
     ) -> ConnectionEvent {
         let mut ids = vec![];
+        // Issue CIDs for the address we last saw this connection at, so that a
+        // generator binding the peer's address into its CIDs stays in step with
+        // a peer that has migrated.
+        let addresses = self.connections[ch].addresses;
         for _ in 0..num {
-            let id = self.new_cid(RouteDatagramTo::Connection(ch));
+            let id = self.new_cid(RouteDatagramTo::Connection(ch), addresses);
             let meta = &mut self.connections[ch];
             let sequence = meta.cids_issued;
             meta.cids_issued += 1;
@@ -399,10 +408,13 @@ impl Endpoint {
         ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
     }
 
-    /// Generate and reserve a local connection ID
-    fn new_cid(&mut self, route_to: RouteDatagramTo) -> ConnectionId {
+    /// Generate and reserve a local connection ID for a connection with a peer
+    /// at `addresses`
+    fn new_cid(&mut self, route_to: RouteDatagramTo, addresses: FourTuple) -> ConnectionId {
         loop {
-            let cid = self.local_cid_generator.generate_cid();
+            let cid = self
+                .local_cid_generator
+                .generate_cid_for(addresses.remote, addresses.local_ip);
             if cid.is_empty() {
                 // Zero-length CID; nothing to track
                 debug_assert_eq!(self.local_cid_generator.cid_len(), 0);
@@ -601,7 +613,7 @@ impl Endpoint {
         };
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
+        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch), incoming.addresses);
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -615,7 +627,7 @@ impl Endpoint {
         params.retry_src_cid = incoming.token.retry_src_cid;
         let mut pref_addr_cid = None;
         if server_config.has_preferred_address() {
-            let cid = self.new_cid(RouteDatagramTo::Connection(ch));
+            let cid = self.new_cid(RouteDatagramTo::Connection(ch), incoming.addresses);
             pref_addr_cid = Some(cid);
             params.preferred_address = Some(PreferredAddress {
                 address_v4: server_config.preferred_address_v4,
@@ -740,7 +752,9 @@ impl Endpoint {
         // with established connections. In the unlikely event that a collision occurs
         // between two connections in the initial phase, both will fail fast and may be
         // retried by the application layer.
-        let loc_cid = self.local_cid_generator.generate_cid();
+        let loc_cid = self
+            .local_cid_generator
+            .generate_cid_for(incoming.addresses.remote, incoming.addresses.local_ip);
 
         let payload = TokenPayload::Retry {
             address: incoming.addresses.remote,
@@ -876,7 +890,9 @@ impl Endpoint {
         // We don't need to worry about CID collisions in initial closes because the peer
         // shouldn't respond, and if it does, and the CID collides, we'll just drop the
         // unexpected response.
-        let local_id = self.local_cid_generator.generate_cid();
+        let local_id = self
+            .local_cid_generator
+            .generate_cid_for(addresses.remote, addresses.local_ip);
         let number = PacketNumber::U8(0);
         let header = Header::Initial(InitialHeader {
             dst_cid: remote_id,
@@ -1132,10 +1148,13 @@ pub(crate) struct ConnectionMeta {
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
     loc_cids: FxHashMap<u64, ConnectionId>,
-    /// Remote/local addresses the connection began with
+    /// Remote/local addresses the connection was last observed at
     ///
-    /// Only needed to support connections with zero-length CIDs, which cannot migrate, so we don't
-    /// bother keeping it up to date.
+    /// Needed to support connections with zero-length CIDs, which cannot migrate, and to tell
+    /// [`ConnectionIdGenerator::generate_cid_for`] which peer a CID is being issued for. The
+    /// remote address is refreshed when the peer switches to a new CID, which it must do when it
+    /// migrates; a peer whose address changes underneath it without migrating, as in a NAT
+    /// rebinding, is not tracked here.
     addresses: FourTuple,
     side: Side,
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
