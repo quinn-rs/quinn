@@ -86,7 +86,7 @@ pub trait Session: Send + Sync + 'static {
     /// This function will fail, returning [ExportKeyingMaterialError],
     /// if the requested output length is too large.
     fn export_keying_material(
-        &self,
+        &mut self,
         output: &mut [u8],
         label: &[u8],
         context: &[u8],

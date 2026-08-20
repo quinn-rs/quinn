@@ -7,7 +7,7 @@ use std::{
 };
 
 use rustls::{
-    NamedGroup,
+    crypto::{Identity, kx::NamedGroup},
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
 };
 use tracing::info;
@@ -79,13 +79,10 @@ fn make_client_endpoint(
 ) -> Result<Endpoint, Box<dyn Error + Send + Sync + 'static>> {
     let mut certs = rustls::RootCertStore::empty();
     certs.add(server_cert)?;
-    let rustls_config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .unwrap()
-    .with_root_certificates(certs)
-    .with_no_client_auth();
+    let rustls_config = rustls::ClientConfig::builder(Arc::new(rustls_aws_lc_rs::DEFAULT_PROVIDER))
+        .with_root_certificates(certs)
+        .with_no_client_auth()
+        .unwrap();
 
     let client_cfg =
         quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(rustls_config).unwrap()));
@@ -103,14 +100,13 @@ fn make_server_endpoint(
     let cert = CertificateDer::from(cert.cert);
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(
-            rustls::ServerConfig::builder_with_provider(Arc::new(
-                rustls::crypto::aws_lc_rs::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert.clone()], key.into())
-            .unwrap(),
+            rustls::ServerConfig::builder(Arc::new(rustls_aws_lc_rs::DEFAULT_PROVIDER))
+                .with_no_client_auth()
+                .with_single_cert(
+                    Arc::new(Identity::from_cert_chain(vec![cert.clone()]).unwrap()),
+                    key.into(),
+                )
+                .unwrap(),
         )
         .unwrap(),
     ));
