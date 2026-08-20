@@ -334,6 +334,8 @@ impl Endpoint {
             });
         }
         self.inner.shared.incoming.notify_waiters();
+        #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+        self.inner.shared.notify_all_acceptors();
     }
 
     /// Wait for all connections on the endpoint to be cleanly shut down
@@ -400,7 +402,7 @@ impl Future for EndpointDriver {
 
         let now = endpoint.runtime.now();
         let mut keep_going = false;
-        keep_going |= endpoint.drive_recv(cx, now)?;
+        keep_going |= endpoint.drive_recv(cx, now, &self.0.shared)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
 
         if !endpoint.recv_state.incoming.is_empty() {
@@ -427,6 +429,8 @@ impl Drop for EndpointDriver {
         let mut endpoint = self.0.state.lock().unwrap();
         endpoint.driver_lost = true;
         self.0.shared.incoming.notify_waiters();
+        #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+        self.0.shared.notify_all_acceptors();
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
         endpoint.recv_state.connections.senders.clear();
@@ -439,7 +443,22 @@ pub(crate) struct EndpointInner {
     pub(crate) shared: Shared,
 }
 
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+pub(crate) struct RustlsAcceptorStart {
+    pub(crate) accepting: proto::Accepting,
+    pub(crate) acceptor: proto::RustlsAcceptor,
+    pub(crate) incoming_idx: usize,
+    pub(crate) notify: Arc<Notify>,
+    pub(crate) deadline: Option<Instant>,
+    pub(crate) timer: Option<Pin<Box<dyn crate::runtime::AsyncTimer>>>,
+}
+
 impl EndpointInner {
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn runtime_now(&self) -> Instant {
+        self.state.lock().unwrap().runtime.now()
+    }
+
     pub(crate) fn accept(
         &self,
         incoming: proto::Incoming,
@@ -499,6 +518,160 @@ impl EndpointInner {
         }
     }
 
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn start_rustls_acceptor(
+        &self,
+        incoming: proto::Incoming,
+    ) -> Result<RustlsAcceptorStart, ConnectionError> {
+        let Ok(acceptor) = proto::RustlsAcceptor::new(&incoming) else {
+            self.ignore(incoming);
+            return Err(ConnectionError::VersionMismatch);
+        };
+        let mut response_buffer = Vec::new();
+        let (accepting, deadline, timer) = {
+            let mut state = self.state.lock().unwrap();
+            let now = state.runtime.now();
+            let accepting =
+                match state
+                    .inner
+                    .start_accept(incoming, now, &mut response_buffer, None)
+                {
+                    Ok(accepting) => accepting,
+                    Err(error) => {
+                        if let Some(transmit) = error.response {
+                            respond(transmit, &response_buffer, &mut state.sender);
+                        }
+                        return Err(error.cause);
+                    }
+                };
+            let deadline = accepting.idle_timeout_deadline();
+            let timer = deadline.map(|deadline| state.runtime.new_timer(deadline));
+            (accepting, deadline, timer)
+        };
+        let incoming_idx = accepting.incoming_idx();
+        let notify = self.shared.register_acceptor(incoming_idx);
+        Ok(RustlsAcceptorStart {
+            accepting,
+            acceptor,
+            incoming_idx,
+            notify,
+            deadline,
+            timer,
+        })
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn poll_rustls_acceptor(
+        &self,
+        accepting: &mut proto::Accepting,
+        acceptor: &mut proto::RustlsAcceptor,
+    ) -> Result<Option<proto::RustlsAccepted>, ConnectionError> {
+        {
+            let state = self.state.lock().unwrap();
+            if state.driver_lost || state.recv_state.connections.close.is_some() {
+                return Err(ConnectionError::LocallyClosed);
+            }
+            state.inner.buffer_rustls_acceptor_input(accepting);
+        }
+
+        let mut response_buffer = Vec::new();
+        let (accepted, response) =
+            accepting.poll_rustls_acceptor(acceptor, &mut response_buffer)?;
+
+        let mut state = self.state.lock().unwrap();
+        if state.driver_lost || state.recv_state.connections.close.is_some() {
+            return Err(ConnectionError::LocallyClosed);
+        }
+        if let Some(transmit) = response {
+            respond(transmit, &response_buffer, &mut state.sender);
+        }
+        Ok(accepted)
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn accept_rustls(
+        &self,
+        mut accepting: proto::Accepting,
+        accepted: proto::RustlsAccepted,
+        server_config: Option<Arc<ServerConfig>>,
+    ) -> Result<Connecting, ConnectionError> {
+        let mut response_buffer = Vec::new();
+
+        let selection = {
+            let mut state = self.state.lock().unwrap();
+            if state.driver_lost || state.recv_state.connections.close.is_some() {
+                Err(ConnectionError::LocallyClosed)
+            } else {
+                let now = state.runtime.now();
+                state
+                    .inner
+                    .select_accepting_config(&mut accepting, server_config, now)
+            }
+        };
+        if let Err(cause) = selection {
+            self.fail_rustls_accepting(accepting, cause.clone());
+            return Err(cause);
+        }
+
+        let result = accepting.finish_from_rustls(accepted);
+        let mut state = self.state.lock().unwrap();
+        match result {
+            Ok(accepted) => {
+                state.stats.accepted_handshakes += 1;
+                let sender = state.socket.create_sender();
+                let runtime = state.runtime.clone();
+                let (handle, conn) = state.inner.finish_accept(accepted);
+                Ok(state
+                    .recv_state
+                    .connections
+                    .insert(handle, conn, sender, runtime))
+            }
+            Err(error) => {
+                let error = state.inner.finish_accept_error(error, &mut response_buffer);
+                if let Some(transmit) = error.response {
+                    respond(transmit, &response_buffer, &mut state.sender);
+                }
+                if state.is_idle() {
+                    self.shared.idle.notify_waiters();
+                }
+                Err(error.cause)
+            }
+        }
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn fail_rustls_accepting(
+        &self,
+        accepting: proto::Accepting,
+        cause: ConnectionError,
+    ) {
+        self.shared.unregister_acceptor(accepting.incoming_idx());
+        let mut state = self.state.lock().unwrap();
+        state.stats.refused_handshakes += 1;
+        let mut response_buffer = Vec::new();
+        let error = state
+            .inner
+            .fail_accepting(accepting, cause, &mut response_buffer);
+        if let Some(transmit) = error.response {
+            respond(transmit, &response_buffer, &mut state.sender);
+        }
+        if state.is_idle() {
+            self.shared.idle.notify_waiters();
+        }
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn refuse_rustls_accepting(&self, accepting: proto::Accepting) {
+        self.fail_rustls_accepting(
+            accepting,
+            proto::TransportError::new(
+                proto::TransportErrorCode::CONNECTION_REFUSED,
+                String::new(),
+            )
+            .into(),
+        );
+    }
+
     pub(crate) fn refuse(&self, incoming: proto::Incoming) {
         let mut state = self.state.lock().unwrap();
         state.stats.refused_handshakes += 1;
@@ -543,9 +716,43 @@ pub(crate) struct State {
 #[derive(Debug)]
 pub(crate) struct Shared {
     incoming: Notify,
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    acceptors: Mutex<FxHashMap<usize, Arc<Notify>>>,
     idle: Notify,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: AtomicUsize,
+}
+
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+impl Shared {
+    fn register_acceptor(&self, incoming_idx: usize) -> Arc<Notify> {
+        let notify = Arc::new(Notify::new());
+        let old = self
+            .acceptors
+            .lock()
+            .unwrap()
+            .insert(incoming_idx, notify.clone());
+        debug_assert!(old.is_none());
+        notify
+    }
+
+    pub(crate) fn unregister_acceptor(&self, incoming_idx: usize) {
+        self.acceptors.lock().unwrap().remove(&incoming_idx);
+    }
+
+    fn notify_acceptor(&self, incoming_idx: usize) {
+        let notify = self.acceptors.lock().unwrap().get(&incoming_idx).cloned();
+        if let Some(notify) = notify {
+            notify.notify_waiters();
+        }
+    }
+
+    fn notify_all_acceptors(&self) {
+        let notifiers: Vec<_> = self.acceptors.lock().unwrap().values().cloned().collect();
+        for notify in notifiers {
+            notify.notify_waiters();
+        }
+    }
 }
 
 impl State {
@@ -553,11 +760,16 @@ impl State {
         self.recv_state.connections.is_empty() && self.inner.pending_accepts() == 0
     }
 
-    fn drive_recv(&mut self, cx: &mut Context<'_>, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv(
+        &mut self,
+        cx: &mut Context<'_>,
+        now: Instant,
+        shared: &Shared,
+    ) -> Result<bool, io::Error> {
         let get_time = || self.runtime.now();
         self.recv_state.recv_limiter.start_cycle(get_time);
+        let mut previous_progress = PollProgress::default();
         if let Some(socket) = &mut self.prev_socket {
-            // We don't care about the `PollProgress` from old sockets.
             let poll_res = self.recv_state.poll_socket(
                 cx,
                 &mut self.inner,
@@ -565,9 +777,11 @@ impl State {
                 &mut self.sender,
                 &*self.runtime,
                 now,
+                shared,
             );
-            if poll_res.is_err() {
-                self.prev_socket = None;
+            match poll_res {
+                Ok(progress) => previous_progress = progress,
+                Err(_) => self.prev_socket = None,
             }
         };
         let poll_res = self.recv_state.poll_socket(
@@ -577,6 +791,7 @@ impl State {
             &mut self.sender,
             &*self.runtime,
             now,
+            shared,
         );
         self.recv_state.recv_limiter.finish_cycle(get_time);
         let poll_res = poll_res?;
@@ -585,7 +800,7 @@ impl State {
             // one anymore. TODO: Account for multiple outgoing connections.
             self.prev_socket = None;
         }
-        Ok(poll_res.keep_going)
+        Ok(previous_progress.keep_going || poll_res.keep_going)
     }
 
     fn handle_events(&mut self, cx: &mut Context<'_>, shared: &Shared) -> bool {
@@ -785,6 +1000,8 @@ impl EndpointRef {
         Self(Arc::new(EndpointInner {
             shared: Shared {
                 incoming: Notify::new(),
+                #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+                acceptors: Mutex::new(FxHashMap::default()),
                 idle: Notify::new(),
                 ref_count: AtomicUsize::new(0),
             },
@@ -868,6 +1085,7 @@ impl RecvState {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn poll_socket(
         &mut self,
         cx: &mut Context<'_>,
@@ -876,6 +1094,7 @@ impl RecvState {
         sender: &mut Pin<Box<dyn UdpSender>>,
         runtime: &dyn Runtime,
         now: Instant,
+        _shared: &Shared,
     ) -> Result<PollProgress, io::Error> {
         let mut received_connection_packet = false;
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
@@ -938,6 +1157,13 @@ impl RecvState {
                                         .get_mut(&handle)
                                         .unwrap()
                                         .send(ConnectionEvent::Proto(event));
+                                }
+                                Some(DatagramEvent::IncomingData(_incoming_idx)) => {
+                                    #[cfg(any(
+                                        feature = "rustls-aws-lc-rs",
+                                        feature = "rustls-ring"
+                                    ))]
+                                    _shared.notify_acceptor(_incoming_idx);
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
                                     respond(transmit, &response_buffer, sender);

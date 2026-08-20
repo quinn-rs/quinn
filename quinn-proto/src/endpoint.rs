@@ -240,6 +240,7 @@ impl Endpoint {
                         incoming_buffer.datagrams.push(event);
                         incoming_buffer.total_bytes += datagram_len as u64;
                         self.all_incoming_buffers_total_bytes += datagram_len as u64;
+                        return Some(DatagramEvent::IncomingData(incoming_idx));
                     }
 
                     None
@@ -1452,6 +1453,11 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 pub enum DatagramEvent {
     /// The datagram is redirected to its `Connection`
     ConnectionEvent(ConnectionHandle, ConnectionEvent),
+    /// The datagram was buffered for an incoming connection whose acceptance is in progress
+    ///
+    /// The contained value identifies the pending accept and can be used to wake its exact waiter.
+    #[doc(hidden)]
+    IncomingData(usize),
     /// The datagram may result in starting a new `Connection`
     NewConnection(Incoming),
     /// Response generated directly by the endpoint
