@@ -54,6 +54,7 @@ pub struct TlsSession {
 struct HandshakeInput {
     bytes: Vec<u8>,
     offset: usize,
+    consumed: usize,
 }
 
 impl HandshakeInput {
@@ -73,6 +74,9 @@ impl HandshakeInput {
         self.len() == 0
     }
 
+    fn consumed(&self) -> usize {
+        self.consumed
+    }
 }
 
 impl TlsInputBuffer for HandshakeInput {
@@ -83,6 +87,7 @@ impl TlsInputBuffer for HandshakeInput {
     fn discard(&mut self, num_bytes: usize) {
         assert!(num_bytes <= self.len());
         self.offset += num_bytes;
+        self.consumed += num_bytes;
         if self.offset == self.bytes.len() {
             self.bytes.clear();
             self.offset = 0;
@@ -113,12 +118,79 @@ fn transport_error_from_rustls(e: Error) -> TransportError {
 pub struct Accepted {
     inner: rustls::quic::Accepted,
     input: HandshakeInput,
+    initial_crypto_offset: u64,
 }
 
 impl Accepted {
     /// Get the ClientHello for this connection.
     pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
         self.inner.client_hello()
+    }
+
+    pub(crate) fn initial_crypto_offset(&self) -> u64 {
+        self.initial_crypto_offset
+    }
+}
+
+/// Reads a rustls QUIC ClientHello before a server configuration is selected.
+pub(crate) struct Acceptor {
+    state: Option<NeedsInput>,
+    input: HandshakeInput,
+}
+
+impl Acceptor {
+    pub(crate) fn new(version: u32) -> Result<Self, UnsupportedVersion> {
+        Ok(Self {
+            state: Some(ServerHandshake::start(interpret_version(version)?)),
+            input: HandshakeInput::default(),
+        })
+    }
+
+    pub(crate) fn read_hs(&mut self, plaintext: &[u8]) -> Result<Option<Accepted>, TransportError> {
+        self.input.extend_from_slice(plaintext);
+        loop {
+            let before = self.input.len();
+            let Some(state) = self.state.take() else {
+                return Err(TransportError::INTERNAL_ERROR(
+                    "rustls acceptor used after completion",
+                ));
+            };
+            let mut events = Vec::new();
+            let state = state
+                .process(&mut self.input, &mut events)
+                .map_err(transport_error_from_rustls)?;
+            if !events.is_empty() {
+                return Err(TransportError::INTERNAL_ERROR(
+                    "rustls emitted data before config selection",
+                ));
+            }
+            match state {
+                ServerHandshake::NeedsInput(state) => {
+                    self.state = Some(state);
+                    if self.input.is_empty() || self.input.len() == before {
+                        return Ok(None);
+                    }
+                }
+                ServerHandshake::Accepted(inner) => {
+                    let initial_crypto_offset = (self.input.consumed() + self.input.len()) as u64;
+                    return Ok(Some(Accepted {
+                        inner,
+                        input: std::mem::take(&mut self.input),
+                        initial_crypto_offset,
+                    }));
+                }
+                ServerHandshake::VerifyClientIdentity(_) | ServerHandshake::Complete(_) => {
+                    return Err(TransportError::INTERNAL_ERROR(
+                        "rustls advanced past ClientHello without a server config",
+                    ));
+                }
+                _ => {
+                    return Err(TransportError::INTERNAL_ERROR(
+                        "rustls returned an unsupported server handshake state",
+                    ));
+                }
+            }
+        }
     }
 }
 

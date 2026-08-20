@@ -40,7 +40,7 @@ use crate::{
 mod ack_frequency;
 use ack_frequency::AckFrequencyState;
 
-mod assembler;
+pub(crate) mod assembler;
 pub use assembler::Chunk;
 
 mod cid_state;
@@ -360,6 +360,9 @@ impl Connection {
         };
         if path_validated {
             this.on_path_validated();
+        }
+        if this.crypto.handshake_data().is_some() {
+            this.events.push_back(Event::HandshakeDataReady);
         }
         if side.is_client() {
             // Kick off the connection
@@ -1106,6 +1109,10 @@ impl Connection {
                 first_decode,
                 remaining,
             }) => {
+                if self.is_handshaking() && remote != self.path.remote {
+                    debug!("discarding packet with unexpected remote during handshake");
+                    return;
+                }
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
@@ -1311,6 +1318,23 @@ impl Connection {
     /// Get a mutable session reference
     pub fn crypto_session_mut(&mut self) -> &mut dyn crypto::Session {
         &mut *self.crypto
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn skip_initial_crypto(&mut self, offset: u64) {
+        self.spaces[SpaceId::Initial].crypto_stream.skip_to(offset);
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn seed_staged_initial_sends(&mut self, next: u64, bytes: u64, datagrams: u64) {
+        let space = &mut self.spaces[SpaceId::Initial];
+        space.next_packet_number = space.next_packet_number.max(next);
+        self.path.total_sent = self.path.total_sent.saturating_add(bytes);
+        self.stats.udp_tx.datagrams = self.stats.udp_tx.datagrams.saturating_add(datagrams);
+        self.stats.udp_tx.bytes = self.stats.udp_tx.bytes.saturating_add(bytes);
+        self.stats.udp_tx.ios = self.stats.udp_tx.ios.saturating_add(datagrams);
+        self.stats.frame_tx.acks = self.stats.frame_tx.acks.saturating_add(datagrams);
+        self.stats.path.sent_packets = self.stats.path.sent_packets.saturating_add(datagrams);
     }
 
     /// Whether the connection is in the process of being established
@@ -2336,6 +2360,39 @@ impl Connection {
             return;
         }
 
+        if self.side.is_server() {
+            if let Some(Packet {
+                header: Header::Initial(header),
+                ..
+            }) = packet.as_ref()
+            {
+                if header.version != self.version {
+                    debug!(
+                        version = header.version,
+                        expected = self.version,
+                        "discarding Initial with unexpected version"
+                    );
+                    return;
+                }
+                if let State::Handshake(handshake) = &self.state {
+                    if header.token != handshake.expected_token {
+                        // Initial packets can be spoofed, so discard rather than killing the
+                        // connection.
+                        warn!("discarding Initial with invalid retry token");
+                        return;
+                    }
+                    if handshake.rem_cid_set && header.src_cid != self.rem_handshake_cid {
+                        debug!(
+                            expected = %self.rem_handshake_cid,
+                            actual = %header.src_cid,
+                            "discarding Initial with mismatched remote CID"
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
         let was_closed = self.state.is_closed();
         let was_drained = self.state.is_drained();
 
@@ -2386,18 +2443,6 @@ impl Connection {
                     trace!("dropping short packet during handshake");
                     return;
                 } else {
-                    if let Header::Initial(InitialHeader { ref token, .. }) = packet.header {
-                        if let State::Handshake(ref hs) = self.state {
-                            if self.side.is_server() && token != &hs.expected_token {
-                                // Clients must send the same retry token in every Initial. Initial
-                                // packets can be spoofed, so we discard rather than killing the
-                                // connection.
-                                warn!("discarding Initial with invalid retry token");
-                                return;
-                            }
-                        }
-                    }
-
                     if !self.state.is_closed() {
                         let spin = match packet.header {
                             Header::Short { spin, .. } => spin,

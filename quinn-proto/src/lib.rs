@@ -76,6 +76,12 @@ pub use crate::endpoint::{
 #[cfg(feature = "__internal_split_accept")]
 #[doc(hidden)]
 pub use crate::endpoint::{Accepted, Accepting, AcceptingError};
+#[cfg(all(
+    feature = "__internal_split_accept",
+    any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")
+))]
+#[doc(hidden)]
+pub use crate::endpoint::{RustlsAccepted, RustlsAcceptor};
 
 mod packet;
 pub use packet::{
