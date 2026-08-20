@@ -73,11 +73,11 @@ fn pending_incoming_survives_server_config_change() {
 
         pair.server.set_server_config(replacement);
         // Retransmitted Initials must still be buffered after the configuration changes.
-        assert!(
+        assert!(matches!(
             pair.server
-                .handle(received, pair.client.addr, None, ecn, data, &mut response)
-                .is_none()
-        );
+                .handle(received, pair.client.addr, None, ecn, data, &mut response),
+            Some(DatagramEvent::IncomingData(_))
+        ));
         let server_ch = pair.server.try_accept(incoming, pair.time).unwrap();
         pair.drive();
         for (endpoint, ch) in [(&mut pair.client, client_ch), (&mut pair.server, server_ch)] {
