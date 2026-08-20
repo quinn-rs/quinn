@@ -22,7 +22,8 @@ use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{
         ClientConnection, Connection as _, DirectionalKeys, HeaderProtectionKey, KeyChange,
-        PacketKey, QuicEvent, Secrets, ServerConnection, Side as QuicSide, Suite, Version,
+        NeedsInput, PacketKey, QuicEvent, Secrets, ServerConnection, ServerHandshake,
+        Side as QuicSide, Suite, Version,
     },
 };
 #[cfg(feature = "platform-verifier")]
@@ -71,6 +72,7 @@ impl HandshakeInput {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
 }
 
 impl TlsInputBuffer for HandshakeInput {
@@ -91,6 +93,32 @@ impl TlsInputBuffer for HandshakeInput {
 
     fn has_seen_eof(&self) -> bool {
         false
+    }
+}
+
+fn transport_error_from_rustls(e: Error) -> TransportError {
+    if let Ok(alert) = AlertDescription::try_from(&e) {
+        TransportError {
+            code: TransportErrorCode::crypto(alert.into()),
+            frame: None,
+            reason: e.to_string(),
+            crypto: Some(Arc::new(e)),
+        }
+    } else {
+        TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
+    }
+}
+
+/// A rustls QUIC handshake paused after reading ClientHello.
+pub struct Accepted {
+    inner: rustls::quic::Accepted,
+    input: HandshakeInput,
+}
+
+impl Accepted {
+    /// Get the ClientHello for this connection.
+    pub fn client_hello(&self) -> rustls::server::ClientHello<'_> {
+        self.inner.client_hello()
     }
 }
 
@@ -120,24 +148,29 @@ impl crypto::Session for TlsSession {
         if !self.got_handshake_data {
             return None;
         }
+        #[cfg(feature = "__rustls-post-quantum-test")]
+        let negotiated_key_exchange_group = self
+            .inner
+            .negotiated_key_exchange_group()
+            .expect("key exchange group is negotiated");
+
         Some(Box::new(HandshakeData {
             protocol: self.inner.alpn_protocol().map(|x| x.into()),
             server_name: self.inner.server_name().map(str::to_owned),
             protocol_version: match &self.inner {
                 QuicConnection::Client(session) => session.protocol_version(),
                 QuicConnection::Server(session) => session.protocol_version(),
+                QuicConnection::ServerHandshake(session) => session.protocol_version(),
             }
             .map(|x| -> Box<dyn Any> { Box::new(x) }),
             cipher_suite: match &self.inner {
                 QuicConnection::Client(session) => session.negotiated_cipher_suite(),
                 QuicConnection::Server(session) => session.negotiated_cipher_suite(),
+                QuicConnection::ServerHandshake(session) => session.negotiated_cipher_suite(),
             }
             .map(|suite| -> Box<dyn Any> { Box::new(suite.suite()) }),
             #[cfg(feature = "__rustls-post-quantum-test")]
-            negotiated_key_exchange_group: self
-                .inner
-                .negotiated_key_exchange_group()
-                .expect("key exchange group is negotiated"),
+            negotiated_key_exchange_group,
         }))
     }
 
@@ -166,18 +199,9 @@ impl crypto::Session for TlsSession {
         self.input.extend_from_slice(buf);
         loop {
             let before = self.input.len();
-            self.inner.read_hs(&mut self.input).map_err(|e| {
-                if let Ok(alert) = AlertDescription::try_from(&e) {
-                    TransportError {
-                        code: TransportErrorCode::crypto(alert.into()),
-                        frame: None,
-                        reason: e.to_string(),
-                        crypto: Some(Arc::new(e)),
-                    }
-                } else {
-                    TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
-                }
-            })?;
+            self.inner
+                .read_hs(&mut self.input)
+                .map_err(transport_error_from_rustls)?;
             self.inner.drain_events(&mut self.pending_events);
             if self.input.is_empty() || self.input.len() == before {
                 break;
@@ -292,13 +316,245 @@ impl crypto::Session for TlsSession {
 enum QuicConnection {
     Client(ClientConnection),
     Server(ServerConnection),
+    ServerHandshake(ServerHandshakeConnection),
+}
+
+enum ServerHandshakeState {
+    NeedsInput(NeedsInput),
+    Complete(ServerConnection),
+    Failed(Error),
+}
+
+struct ServerHandshakeConnection {
+    state: Option<ServerHandshakeState>,
+    pending_events: VecDeque<QuicEvent>,
+    snapshot: ServerHandshakeSnapshot,
+}
+
+#[derive(Default)]
+struct ServerHandshakeSnapshot {
+    alpn_protocol: Option<Vec<u8>>,
+    peer_identity: Option<Identity<'static>>,
+    quic_transport_parameters: Option<Vec<u8>>,
+    server_name: Option<String>,
+    protocol_version: Option<rustls::enums::ProtocolVersion>,
+    negotiated_cipher_suite: Option<rustls::SupportedCipherSuite>,
+    #[cfg(feature = "__rustls-post-quantum-test")]
+    negotiated_key_exchange_group: Option<NamedGroup>,
+}
+
+impl ServerHandshakeSnapshot {
+    fn update_from_needs_input(&mut self, state: &NeedsInput) {
+        if let Some(protocol) = state.alpn_protocol() {
+            self.alpn_protocol = Some(protocol.as_ref().to_vec());
+        }
+        if let Some(identity) = state.peer_identity() {
+            self.peer_identity = Some(identity.identity().clone());
+        }
+        if let Some(params) = state.quic_transport_parameters() {
+            self.quic_transport_parameters = Some(params.to_vec());
+        }
+        if let Some(server_name) = state.server_name() {
+            self.server_name = Some(server_name.as_ref().to_owned());
+        }
+        if let Some(version) = state.protocol_version() {
+            self.protocol_version = Some(version);
+        }
+        if let Some(suite) = state.negotiated_cipher_suite() {
+            self.negotiated_cipher_suite = Some(suite);
+        }
+        #[cfg(feature = "__rustls-post-quantum-test")]
+        if let Some(group) = state.negotiated_key_exchange_group() {
+            self.negotiated_key_exchange_group = Some(group.name());
+        }
+    }
+
+    fn update_from_complete(&mut self, state: &ServerConnection) {
+        if let Some(protocol) = state.alpn_protocol() {
+            self.alpn_protocol = Some(protocol.as_ref().to_vec());
+        }
+        if let Some(identity) = state.peer_identity() {
+            self.peer_identity = Some(identity.identity().clone());
+        }
+        if let Some(params) = state.quic_transport_parameters() {
+            self.quic_transport_parameters = Some(params.to_vec());
+        }
+        if let Some(server_name) = state.server_name() {
+            self.server_name = Some(server_name.as_ref().to_owned());
+        }
+        if let Some(version) = state.protocol_version() {
+            self.protocol_version = Some(version);
+        }
+        if let Some(suite) = state.negotiated_cipher_suite() {
+            self.negotiated_cipher_suite = Some(suite);
+        }
+        #[cfg(feature = "__rustls-post-quantum-test")]
+        if let Some(group) = state.negotiated_key_exchange_group() {
+            self.negotiated_key_exchange_group = Some(group.name());
+        }
+    }
+}
+
+impl ServerHandshakeConnection {
+    fn new(state: ServerHandshake, events: Vec<QuicEvent>) -> Result<Self, Error> {
+        let mut this = Self {
+            state: None,
+            pending_events: events.into(),
+            snapshot: ServerHandshakeSnapshot::default(),
+        };
+        let _ = this.set_state(state)?;
+        Ok(this)
+    }
+
+    /// Store `state`, returning whether synchronous client identity verification advanced the
+    /// handshake without consuming input.
+    fn set_state(&mut self, mut state: ServerHandshake) -> Result<bool, Error> {
+        let mut verified_client_identity = false;
+        loop {
+            match state {
+                ServerHandshake::NeedsInput(state) => {
+                    self.snapshot.update_from_needs_input(&state);
+                    self.state = Some(ServerHandshakeState::NeedsInput(state));
+                    return Ok(verified_client_identity);
+                }
+                ServerHandshake::VerifyClientIdentity(verify) => {
+                    verified_client_identity = true;
+                    state = match verify.use_verifier_trait() {
+                        Ok(state) => state,
+                        Err(error) => return self.fail(error),
+                    };
+                }
+                ServerHandshake::Complete(state) => {
+                    self.snapshot.update_from_complete(&state);
+                    self.state = Some(ServerHandshakeState::Complete(state));
+                    return Ok(false);
+                }
+                ServerHandshake::Accepted(_) => {
+                    return self.fail(Error::General(
+                        "server config was requested more than once".into(),
+                    ));
+                }
+                _ => {
+                    return self.fail(Error::General(
+                        "rustls returned an unsupported server handshake state".into(),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn fail<T>(&mut self, error: Error) -> Result<T, Error> {
+        self.pending_events.clear();
+        self.state = Some(ServerHandshakeState::Failed(error.clone()));
+        Err(error)
+    }
+
+    fn read_hs(&mut self, input: &mut dyn TlsInputBuffer) -> Result<(), Error> {
+        let Some(state) = self.state.take() else {
+            return self.fail(Error::General("rustls handshake state missing".into()));
+        };
+        match state {
+            ServerHandshakeState::NeedsInput(state) => {
+                let mut events = Vec::new();
+                match state.process(input, &mut events) {
+                    Ok(state) => {
+                        self.pending_events.extend(events);
+                        if self.set_state(state)? {
+                            // `NeedsInput::process()` stops when client identity verification is
+                            // required. The verifier transition itself consumes no input, and
+                            // rustls can already have CertificateVerify/Finished buffered from the
+                            // same CRYPTO chunk. Give the resulting state one immediate chance to
+                            // process that buffered data even when Quinn's input buffer is empty.
+                            self.read_hs(input)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    Err(error) => self.fail(error),
+                }
+            }
+            ServerHandshakeState::Complete(mut state) => {
+                let result = state.read_hs(input);
+                self.snapshot.update_from_complete(&state);
+                match result {
+                    Ok(()) => {
+                        self.state = Some(ServerHandshakeState::Complete(state));
+                        Ok(())
+                    }
+                    Err(error) => self.fail(error),
+                }
+            }
+            ServerHandshakeState::Failed(error) => self.fail(error),
+        }
+    }
+
+    fn drain_events(&mut self, events: &mut VecDeque<QuicEvent>) {
+        events.append(&mut self.pending_events);
+        if let Some(ServerHandshakeState::Complete(state)) = &mut self.state {
+            events.extend(state.events());
+        }
+    }
+
+    fn alpn_protocol(&self) -> Option<&[u8]> {
+        self.snapshot.alpn_protocol.as_deref()
+    }
+
+    fn peer_identity(&self) -> Option<&Identity<'static>> {
+        self.snapshot.peer_identity.as_ref()
+    }
+
+    fn zero_rtt_keys(&self) -> Option<DirectionalKeys> {
+        match self.state.as_ref()? {
+            ServerHandshakeState::NeedsInput(state) => state.zero_rtt_keys(),
+            ServerHandshakeState::Complete(state) => state.zero_rtt_keys(),
+            ServerHandshakeState::Failed(_) => None,
+        }
+    }
+
+    fn is_handshaking(&self) -> bool {
+        match self.state.as_ref() {
+            None => false,
+            Some(ServerHandshakeState::Failed(_)) => false,
+            Some(ServerHandshakeState::NeedsInput(_)) => true,
+            Some(ServerHandshakeState::Complete(state)) => state.is_handshaking(),
+        }
+    }
+
+    fn quic_transport_parameters(&self) -> Option<&[u8]> {
+        self.snapshot.quic_transport_parameters.as_deref()
+    }
+
+    fn server_name(&self) -> Option<&str> {
+        self.snapshot.server_name.as_deref()
+    }
+
+    fn protocol_version(&self) -> Option<rustls::enums::ProtocolVersion> {
+        self.snapshot.protocol_version
+    }
+
+    fn negotiated_cipher_suite(&self) -> Option<rustls::SupportedCipherSuite> {
+        self.snapshot.negotiated_cipher_suite
+    }
+
+    #[cfg(feature = "__rustls-post-quantum-test")]
+    fn negotiated_key_exchange_group(&self) -> Option<NamedGroup> {
+        self.snapshot.negotiated_key_exchange_group
+    }
+
+    fn exporter(&mut self) -> Result<rustls::KeyingMaterialExporter, Error> {
+        match self.state.as_mut() {
+            Some(ServerHandshakeState::NeedsInput(_)) | None => Err(Error::HandshakeNotComplete),
+            Some(ServerHandshakeState::Complete(state)) => state.exporter(),
+            Some(ServerHandshakeState::Failed(error)) => Err(error.clone()),
+        }
+    }
 }
 
 impl QuicConnection {
     fn side(&self) -> Side {
         match self {
             Self::Client(_) => Side::Client,
-            Self::Server(_) => Side::Server,
+            Self::Server(_) | Self::ServerHandshake(_) => Side::Server,
         }
     }
 
@@ -306,6 +562,7 @@ impl QuicConnection {
         match self {
             Self::Client(session) => session.alpn_protocol(),
             Self::Server(session) => session.alpn_protocol(),
+            Self::ServerHandshake(session) => return session.alpn_protocol(),
         }
         .map(AsRef::as_ref)
     }
@@ -314,6 +571,7 @@ impl QuicConnection {
         match self {
             Self::Client(session) => session.peer_identity(),
             Self::Server(session) => session.peer_identity(),
+            Self::ServerHandshake(session) => return session.peer_identity(),
         }
         .map(|identity| identity.identity())
     }
@@ -322,13 +580,14 @@ impl QuicConnection {
         match self {
             Self::Client(session) => session.zero_rtt_keys(),
             Self::Server(session) => session.zero_rtt_keys(),
+            Self::ServerHandshake(session) => session.zero_rtt_keys(),
         }
     }
 
     fn is_early_data_accepted(&self) -> Option<bool> {
         match self {
             Self::Client(session) => Some(session.is_early_data_accepted()),
-            Self::Server(_) => None,
+            Self::Server(_) | Self::ServerHandshake(_) => None,
         }
     }
 
@@ -336,6 +595,7 @@ impl QuicConnection {
         match self {
             Self::Client(session) => session.is_handshaking(),
             Self::Server(session) => session.is_handshaking(),
+            Self::ServerHandshake(session) => session.is_handshaking(),
         }
     }
 
@@ -343,6 +603,7 @@ impl QuicConnection {
         match self {
             Self::Client(session) => session.read_hs(input),
             Self::Server(session) => session.read_hs(input),
+            Self::ServerHandshake(session) => session.read_hs(input),
         }
     }
 
@@ -350,6 +611,7 @@ impl QuicConnection {
         match self {
             Self::Client(session) => events.extend(session.events()),
             Self::Server(session) => events.extend(session.events()),
+            Self::ServerHandshake(session) => session.drain_events(events),
         }
     }
 
@@ -357,6 +619,7 @@ impl QuicConnection {
         match self {
             Self::Client(session) => session.quic_transport_parameters(),
             Self::Server(session) => session.quic_transport_parameters(),
+            Self::ServerHandshake(session) => session.quic_transport_parameters(),
         }
     }
 
@@ -364,6 +627,7 @@ impl QuicConnection {
         match self {
             Self::Client(_) => None,
             Self::Server(session) => session.server_name().map(AsRef::as_ref),
+            Self::ServerHandshake(session) => session.server_name(),
         }
     }
 
@@ -372,6 +636,7 @@ impl QuicConnection {
         match self {
             Self::Client(session) => session.negotiated_key_exchange_group(),
             Self::Server(session) => session.negotiated_key_exchange_group(),
+            Self::ServerHandshake(session) => return session.negotiated_key_exchange_group(),
         }
         .map(|group| group.name())
     }
@@ -380,6 +645,7 @@ impl QuicConnection {
         match self {
             Self::Client(session) => session.exporter(),
             Self::Server(session) => session.exporter(),
+            Self::ServerHandshake(session) => session.exporter(),
         }
     }
 }
@@ -706,6 +972,37 @@ impl crypto::ServerConfig for QuicServerConfig {
         })
     }
 
+    fn start_session_from_accepted(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+        accepted: Accepted,
+    ) -> Result<Box<dyn crypto::Session>, TransportError> {
+        // Safe: `start_session_from_accepted()` is never called if `initial_keys()` rejected
+        // `version`.
+        let version = interpret_version(version).unwrap();
+        let Accepted { inner, input, .. } = accepted;
+        let mut events = Vec::new();
+        let state = inner
+            .choose_config(self.inner.clone(), to_vec(params), &mut events)
+            .map_err(transport_error_from_rustls)?;
+        let inner =
+            ServerHandshakeConnection::new(state, events).map_err(transport_error_from_rustls)?;
+
+        Ok(Box::new(TlsSession {
+            version,
+            // The staged acceptor already consumed ClientHello, so the server-side handshake
+            // metadata is immediately available without replaying Initial CRYPTO.
+            got_handshake_data: true,
+            next_secrets: None,
+            exporter: None,
+            inner: QuicConnection::ServerHandshake(inner),
+            input,
+            pending_events: VecDeque::new(),
+            suite: self.initial,
+        }))
+    }
+
     fn initial_keys(
         &self,
         version: u32,
@@ -834,5 +1131,51 @@ fn interpret_version(version: u32) -> Result<Version, UnsupportedVersion> {
     match version {
         0x0000_0001 | 0xff00_0021..=0xff00_0022 => Ok(Version::V1),
         _ => Err(UnsupportedVersion),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_server_handshake_is_a_stable_terminal_state() {
+        let mut connection = ServerHandshakeConnection {
+            state: None,
+            pending_events: VecDeque::from([QuicEvent::Message(vec![1, 2, 3])]),
+            snapshot: ServerHandshakeSnapshot {
+                alpn_protocol: Some(b"test".to_vec()),
+                quic_transport_parameters: Some(vec![4, 5, 6]),
+                server_name: Some("localhost".into()),
+                protocol_version: Some(rustls::enums::ProtocolVersion::TLSv1_3),
+                ..ServerHandshakeSnapshot::default()
+            },
+        };
+        let error = Error::General("fatal test error".into());
+
+        assert_eq!(connection.fail::<()>(error.clone()), Err(error.clone()));
+        assert!(!connection.is_handshaking());
+        assert_eq!(connection.alpn_protocol(), Some(b"test".as_slice()));
+        assert_eq!(connection.server_name(), Some("localhost"));
+        assert_eq!(
+            connection.protocol_version(),
+            Some(rustls::enums::ProtocolVersion::TLSv1_3)
+        );
+        assert_eq!(
+            connection.quic_transport_parameters(),
+            Some([4, 5, 6].as_slice())
+        );
+        assert!(connection.peer_identity().is_none());
+        assert!(connection.zero_rtt_keys().is_none());
+        match connection.exporter() {
+            Err(actual) => assert_eq!(actual, error),
+            Ok(_) => panic!("failed handshake unexpectedly produced an exporter"),
+        }
+
+        let mut input = HandshakeInput::default();
+        assert_eq!(connection.read_hs(&mut input), Err(error));
+        let mut events = VecDeque::new();
+        connection.drain_events(&mut events);
+        assert!(events.is_empty());
     }
 }
