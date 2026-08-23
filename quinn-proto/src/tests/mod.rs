@@ -146,6 +146,77 @@ fn lifecycle() {
 }
 
 #[test]
+fn stats_include_congestion_controller_bandwidth_estimate() {
+    const WINDOW: u64 = 12_000;
+    const BANDWIDTH_ESTIMATE: u64 = 4_000_000;
+
+    #[derive(Clone)]
+    struct TestController;
+
+    impl congestion::Controller for TestController {
+        fn on_congestion_event(
+            &mut self,
+            _now: Instant,
+            _sent: Instant,
+            _is_persistent_congestion: bool,
+            _is_ecn: bool,
+            _lost_bytes: u64,
+        ) {
+        }
+
+        fn on_mtu_update(&mut self, _new_mtu: u16) {}
+
+        fn window(&self) -> u64 {
+            WINDOW
+        }
+
+        fn metrics(&self) -> congestion::ControllerMetrics {
+            congestion::ControllerMetrics {
+                congestion_window: WINDOW,
+                bandwidth_estimate: Some(BANDWIDTH_ESTIMATE),
+                ..Default::default()
+            }
+        }
+
+        fn clone_box(&self) -> Box<dyn congestion::Controller> {
+            Box::new(self.clone())
+        }
+
+        fn initial_window(&self) -> u64 {
+            WINDOW
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
+    }
+
+    struct TestControllerFactory;
+
+    impl congestion::ControllerFactory for TestControllerFactory {
+        fn build(
+            self: Arc<Self>,
+            _now: Instant,
+            _current_mtu: u16,
+        ) -> Box<dyn congestion::Controller> {
+            Box::new(TestController)
+        }
+    }
+
+    let mut transport = TransportConfig::default();
+    transport.congestion_controller_factory(Arc::new(TestControllerFactory));
+    let mut config = client_config();
+    config.transport_config(Arc::new(transport));
+
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect_with(config);
+    let stats = pair.client_conn_mut(client_ch).stats();
+
+    assert_eq!(stats.path.cwnd, WINDOW);
+    assert_eq!(stats.path.bandwidth_estimate, Some(BANDWIDTH_ESTIMATE));
+}
+
+#[test]
 fn draft_version_compat() {
     let _guard = subscribe();
 
