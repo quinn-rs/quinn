@@ -48,7 +48,6 @@ impl Datagrams<'_> {
             self.conn.datagrams.send_blocked = true;
             return Err(SendDatagramError::Blocked(data));
         }
-        self.conn.datagrams.outgoing_total += data.len();
         self.conn.datagrams.outgoing.push_back(Datagram { data });
         Ok(())
     }
@@ -91,18 +90,15 @@ impl Datagrams<'_> {
         self.conn
             .config
             .datagram_send_buffer_size
-            .saturating_sub(self.conn.datagrams.outgoing_total)
+            .saturating_sub(self.conn.datagrams.outgoing.payload_bytes)
+            .saturating_sub(size_of::<Datagram>())
     }
 }
 
 #[derive(Default)]
 pub(super) struct DatagramState {
-    /// Number of bytes of datagrams that have been received by the local transport but not
-    /// delivered to the application
-    pub(super) recv_buffered: usize,
-    pub(super) incoming: VecDeque<Datagram>,
-    pub(super) outgoing: VecDeque<Datagram>,
-    pub(super) outgoing_total: usize,
+    pub(super) incoming: DatagramBuffer,
+    pub(super) outgoing: DatagramBuffer,
     pub(super) send_blocked: bool,
 }
 
@@ -121,17 +117,18 @@ impl DatagramState {
             Some(x) => *x,
         };
 
-        if datagram.data.len() > window {
+        let size_with_overhead = datagram.data.len() + size_of::<Datagram>();
+
+        if size_with_overhead > window {
             return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
         }
 
-        let was_empty = self.recv_buffered == 0;
-        while datagram.data.len() + self.recv_buffered > window {
+        let was_empty = self.incoming.is_empty();
+        while self.incoming.memory_used() + size_with_overhead > window {
             debug!("dropping stale datagram");
             self.recv();
         }
 
-        self.recv_buffered += datagram.data.len();
         self.incoming.push_back(datagram);
         Ok(was_empty)
     }
@@ -142,12 +139,11 @@ impl DatagramState {
                 break;
             };
             trace!(len = prev.data.len(), "dropping outgoing datagram");
-            self.outgoing_total -= prev.data.len();
         }
     }
 
     fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
-        let Some(total) = self.outgoing_total.checked_add(datagram_len) else {
+        let Some(total) = self.outgoing.memory_used().checked_add(datagram_len) else {
             return false;
         };
 
@@ -162,7 +158,7 @@ impl DatagramState {
     /// queued but can't send it.
     pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
         let mut dropped_any = false;
-        self.outgoing.retain(|datagram| {
+        self.outgoing.queue.retain(|datagram| {
             let result = datagram.data.len() < max_payload;
             if !result {
                 trace!(
@@ -170,7 +166,7 @@ impl DatagramState {
                     datagram.data.len(),
                     max_payload
                 );
-                self.outgoing_total -= datagram.data.len();
+                self.outgoing.payload_bytes -= datagram.data.len();
                 dropped_any = true;
             }
             result
@@ -195,16 +191,50 @@ impl DatagramState {
         }
 
         trace!(len = datagram.data.len(), "DATAGRAM");
-
-        self.outgoing_total -= datagram.data.len();
         datagram.encode(true, buf);
         true
     }
 
     pub(super) fn recv(&mut self) -> Option<Bytes> {
         let x = self.incoming.pop_front()?.data;
-        self.recv_buffered -= x.len();
         Some(x)
+    }
+}
+
+#[derive(Default)]
+pub(super) struct DatagramBuffer {
+    queue: VecDeque<Datagram>,
+    payload_bytes: usize,
+}
+
+impl DatagramBuffer {
+    fn push_back(&mut self, datagram: Datagram) {
+        self.payload_bytes += datagram.data.len();
+        self.queue.push_back(datagram);
+    }
+
+    fn pop_front(&mut self) -> Option<Datagram> {
+        let datagram = self.queue.pop_front()?;
+        self.payload_bytes -= datagram.data.len();
+        Some(datagram)
+    }
+
+    fn push_front(&mut self, datagram: Datagram) {
+        self.payload_bytes += datagram.data.len();
+        self.queue.push_front(datagram);
+    }
+
+    fn memory_used(&self) -> usize {
+        self.payload_bytes
+            .saturating_add(self.queue.len() * size_of::<Datagram>())
+    }
+
+    pub(super) fn can_send_1rtt(&self, max_size: usize) -> bool {
+        self.queue.front().is_some_and(|x| x.size(true) <= max_size)
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.queue.is_empty()
     }
 }
 
@@ -221,27 +251,42 @@ mod tests {
         state.outgoing.push_back(Datagram {
             data: Bytes::from_static(&[0; 2]),
         });
-        state.outgoing_total = 9;
 
-        state.make_space_for(4, 10);
+        state.make_space_for(4, 10 + 2 * size_of::<Datagram>());
 
-        assert_eq!(state.outgoing.len(), 1);
-        assert_eq!(state.outgoing[0].data.len(), 2);
-        assert_eq!(state.outgoing_total, 2);
+        assert_eq!(state.outgoing.queue.len(), 1);
+        assert_eq!(state.outgoing.queue[0].data.len(), 2);
+        assert_eq!(state.outgoing.payload_bytes, 2);
     }
 
     #[test]
     fn make_space_for_handles_overflowing_capacity_check() {
         let mut state = DatagramState::default();
-        state.outgoing.push_back(Datagram {
+        state.outgoing.queue.push_back(Datagram {
             data: Bytes::from_static(&[0]),
         });
-        state.outgoing_total = usize::MAX - 1;
+        state.outgoing.payload_bytes = usize::MAX - 1;
 
         state.make_space_for(2, usize::MAX);
 
         assert!(state.outgoing.is_empty());
-        assert_eq!(state.outgoing_total, usize::MAX - 2);
+        assert_eq!(state.outgoing.payload_bytes, usize::MAX - 2);
+    }
+
+    #[test]
+    fn empty_frame_flood_limit() {
+        let mut state = DatagramState::default();
+        let datagram = Datagram { data: Bytes::new() };
+        let window = 100;
+        loop {
+            let initial_count = state.incoming.queue.len();
+            state.received(datagram.clone(), &Some(window)).unwrap();
+            assert!(state.incoming.queue.len() * size_of::<Datagram>() <= window);
+            if state.incoming.queue.len() == initial_count {
+                // Datagrams are getting dropped
+                break;
+            }
+        }
     }
 }
 

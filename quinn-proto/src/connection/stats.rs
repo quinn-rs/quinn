@@ -138,6 +138,10 @@ pub struct PathStats {
     pub rtt: Duration,
     /// Current congestion window of the connection
     pub cwnd: u64,
+    /// Congestion controller's estimate of sustainable path bandwidth, in bits per second
+    ///
+    /// `None` when the congestion controller does not provide an estimate.
+    pub bandwidth_estimate: Option<u64>,
     /// Congestion events on the connection
     pub congestion_events: u64,
     /// Spurious congestion events on the connection

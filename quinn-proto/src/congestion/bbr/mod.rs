@@ -493,10 +493,13 @@ impl Controller for Bbr {
     }
 
     fn metrics(&self) -> ControllerMetrics {
+        let bandwidth_estimate = self.max_bandwidth.get_estimate();
         ControllerMetrics {
             congestion_window: self.window(),
             ssthresh: None,
             pacing_rate: Some(self.pacing_rate * 8),
+            bandwidth_estimate: (bandwidth_estimate != 0)
+                .then(|| bandwidth_estimate.saturating_mul(8)),
         }
     }
 
@@ -650,3 +653,26 @@ const K_MAX_INITIAL_CONGESTION_WINDOW: u64 = 200;
 
 const PROBE_RTT_BASED_ON_BDP: bool = true;
 const DRAIN_TO_TARGET: bool = true;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metrics_report_bandwidth_estimate() {
+        let mut bbr = Bbr::new(Arc::new(BbrConfig::default()), 1200);
+        assert_eq!(bbr.metrics().bandwidth_estimate, None);
+
+        let start = Instant::now();
+        let interval = Duration::from_millis(10);
+        bbr.max_bandwidth.on_sent(start, 1200);
+        bbr.max_bandwidth.on_sent(start + interval, 1200);
+        bbr.max_bandwidth
+            .on_ack(start + interval * 2, start, 1200, 0, false);
+        bbr.max_bandwidth.on_sent(start + interval * 2, 1200);
+        bbr.max_bandwidth
+            .on_ack(start + interval * 3, start + interval, 1200, 0, false);
+
+        assert_eq!(bbr.metrics().bandwidth_estimate, Some(960_000));
+    }
+}
