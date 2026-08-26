@@ -457,7 +457,9 @@ struct PendingStream {
 /// Application events about streams
 #[derive(Debug, PartialEq, Eq)]
 pub enum StreamEvent {
-    /// One or more new streams has been opened and might be readable
+    /// One or more new streams has been opened and can be accepted
+    ///
+    /// A separate [`StreamEvent::Readable`] is emitted once data arrives.
     Opened {
         /// Directionality for which streams have been opened
         dir: Dir,

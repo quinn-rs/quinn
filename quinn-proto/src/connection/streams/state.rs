@@ -263,6 +263,8 @@ impl StreamsState {
             debug!("received illegal STREAM frame");
         })?;
 
+        self.open_remote(id);
+
         let Some(rs) = self
             .recv
             .get_mut(&id)
@@ -282,7 +284,7 @@ impl StreamsState {
         self.data_recvd = self.data_recvd.saturating_add(new_bytes);
 
         if !rs.stopped {
-            self.on_stream_frame(true, id);
+            self.events.push_back(StreamEvent::Readable { id });
             return Ok(ShouldTransmit(false));
         }
 
@@ -313,6 +315,8 @@ impl StreamsState {
             debug!("received illegal RESET_STREAM frame");
         })?;
 
+        self.open_remote(id);
+
         let Some(rs) = self
             .recv
             .get_mut(&id)
@@ -339,8 +343,9 @@ impl StreamsState {
             // Stopped streams should be disposed immediately on reset
             let rs = self.recv.remove(&id).flatten().unwrap();
             self.stream_recv_freed(id, rs);
+        } else {
+            self.events.push_back(StreamEvent::Readable { id });
         }
-        self.on_stream_frame(!stopped, id);
 
         // Update connection-level flow control
         Ok(if bytes_read != final_offset.into_inner() {
@@ -357,6 +362,8 @@ impl StreamsState {
     /// Process incoming `STOP_SENDING` frame
     #[allow(unreachable_pub)] // fuzzing only
     pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
+        self.open_remote(id);
+
         let max_send_data = self.max_send_data(id);
         let Some(stream) = self
             .send
@@ -369,7 +376,6 @@ impl StreamsState {
         if stream.try_stop(error_code) {
             self.events
                 .push_back(StreamEvent::Stopped { id, error_code });
-            self.on_stream_frame(false, id);
         }
     }
 
@@ -632,24 +638,6 @@ impl StreamsState {
         stream_frames
     }
 
-    /// Notify the application that new streams were opened or a stream became readable.
-    fn on_stream_frame(&mut self, notify_readable: bool, stream: StreamId) {
-        if stream.initiator() == self.side {
-            // Notifying about the opening of locally-initiated streams would be redundant.
-            if notify_readable {
-                self.events.push_back(StreamEvent::Readable { id: stream });
-            }
-            return;
-        }
-        let next = &mut self.next_remote[stream.dir() as usize];
-        if stream.index() >= *next {
-            *next = stream.index() + 1;
-            self.opened[stream.dir() as usize] = true;
-        } else if notify_readable {
-            self.events.push_back(StreamEvent::Readable { id: stream });
-        }
-    }
-
     pub(crate) fn received_ack_of(&mut self, frame: frame::StreamMeta) {
         let mut entry = match self.send.entry(frame.id) {
             hash_map::Entry::Vacant(_) => return,
@@ -750,6 +738,8 @@ impl StreamsState {
             ));
         }
 
+        self.open_remote(id);
+
         let write_limit = self.write_limit();
         let max_send_data = self.max_send_data(id);
         if let Some(ss) = self
@@ -775,7 +765,6 @@ impl StreamsState {
             ));
         }
 
-        self.on_stream_frame(false, id);
         Ok(())
     }
 
@@ -900,6 +889,23 @@ impl StreamsState {
             let recv = self.free_recv.pop();
             assert!(self.recv.insert(id, recv).is_none());
         }
+    }
+
+    /// Advance the `next_remote` frontier to cover `id`
+    fn open_remote(&mut self, id: StreamId) {
+        let dir_idx = id.dir() as usize;
+
+        if id.initiator() == self.side
+            // STREAM/RESET_STREAM enforce this in `validate_receive_id`, but STOP_SENDING and
+            // MAX_STREAM_DATA do not
+            || id.index() >= self.max_remote[dir_idx]
+            || id.index() < self.next_remote[dir_idx]
+        {
+            return;
+        }
+
+        self.next_remote[dir_idx] = id.index() + 1;
+        self.opened[dir_idx] = true;
     }
 
     /// Allocate state for a remotely-initiated stream
