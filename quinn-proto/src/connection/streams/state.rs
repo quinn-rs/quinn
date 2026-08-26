@@ -188,7 +188,7 @@ impl StreamsState {
 
         for dir in Dir::iter() {
             for i in 0..this.max_remote[dir as usize] {
-                this.insert(true, StreamId::new(!side, dir, i));
+                this.insert_remote(StreamId::new(!side, dir, i));
             }
         }
 
@@ -217,7 +217,7 @@ impl StreamsState {
             .saturating_sub(self.allocated_remote_count[dir as usize]);
         for i in 0..new_count {
             let id = StreamId::new(!self.side, dir, self.max_remote[dir as usize] + i);
-            self.insert(true, id);
+            self.insert_remote(id);
         }
         self.allocated_remote_count[dir as usize] += new_count;
         self.max_remote[dir as usize] += new_count;
@@ -892,16 +892,23 @@ impl StreamsState {
         expanded
     }
 
-    pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
-        let bi = id.dir() == Dir::Bi;
-        // bidirectional OR (unidirectional AND NOT remote)
-        if bi || !remote {
-            assert!(self.send.insert(id, None).is_none());
-        }
-        // bidirectional OR (unidirectional AND remote)
-        if bi || remote {
+    /// Allocate state for a locally-initiated stream
+    pub(super) fn insert_local(&mut self, id: StreamId) {
+        debug_assert_eq!(id.initiator(), self.side);
+        assert!(self.send.insert(id, None).is_none());
+        if id.dir() == Dir::Bi {
             let recv = self.free_recv.pop();
             assert!(self.recv.insert(id, recv).is_none());
+        }
+    }
+
+    /// Allocate state for a remotely-initiated stream
+    fn insert_remote(&mut self, id: StreamId) {
+        debug_assert_eq!(id.initiator(), !self.side);
+        let recv = self.free_recv.pop();
+        assert!(self.recv.insert(id, recv).is_none());
+        if id.dir() == Dir::Bi {
+            assert!(self.send.insert(id, None).is_none());
         }
     }
 

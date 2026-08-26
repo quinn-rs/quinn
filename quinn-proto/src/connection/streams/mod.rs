@@ -55,7 +55,7 @@ impl<'a> Streams<'a> {
 
         self.state.next[dir as usize] += 1;
         let id = StreamId::new(self.state.side, dir, self.state.next[dir as usize] - 1);
-        self.state.insert(false, id);
+        self.state.insert_local(id);
         self.state.send_streams += 1;
         Some(id)
     }
