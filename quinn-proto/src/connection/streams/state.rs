@@ -151,7 +151,7 @@ impl StreamsState {
         receive_window: VarInt,
         stream_receive_window: VarInt,
     ) -> Self {
-        let mut this = Self {
+        Self {
             side,
             send: FxHashMap::default(),
             recv: FxHashMap::default(),
@@ -184,15 +184,7 @@ impl StreamsState {
             initial_max_stream_data_bidi_remote: 0u32.into(),
             receive_window_shrink_debt: 0,
             streams_blocked: [false, false],
-        };
-
-        for dir in Dir::iter() {
-            for i in 0..this.max_remote[dir as usize] {
-                this.insert_remote(StreamId::new(!side, dir, i));
-            }
         }
-
-        this
     }
 
     pub(crate) fn set_params(&mut self, params: &TransportParameters) {
@@ -202,10 +194,11 @@ impl StreamsState {
         self.max[Dir::Bi as usize] = params.initial_max_streams_bidi.into();
         self.max[Dir::Uni as usize] = params.initial_max_streams_uni.into();
         self.received_max_data(params.initial_max_data);
-        for i in 0..self.max_remote[Dir::Bi as usize] {
-            let id = StreamId::new(!self.side, Dir::Bi, i);
-            if let Some(s) = self.send.get_mut(&id).and_then(|s| s.as_mut()) {
-                s.max_data = params.initial_max_stream_data_bidi_local.into();
+        for (&id, slot) in self.send.iter_mut() {
+            if id.initiator() != self.side && id.dir() == Dir::Bi {
+                if let Some(s) = slot.as_mut() {
+                    s.max_data = params.initial_max_stream_data_bidi_local.into();
+                }
             }
         }
     }
@@ -215,10 +208,6 @@ impl StreamsState {
     fn ensure_remote_streams(&mut self, dir: Dir) {
         let new_count = self.max_concurrent_remote_count[dir as usize]
             .saturating_sub(self.allocated_remote_count[dir as usize]);
-        for i in 0..new_count {
-            let id = StreamId::new(!self.side, dir, self.max_remote[dir as usize] + i);
-            self.insert_remote(id);
-        }
         self.allocated_remote_count[dir as usize] += new_count;
         self.max_remote[dir as usize] += new_count;
     }
@@ -263,7 +252,7 @@ impl StreamsState {
             debug!("received illegal STREAM frame");
         })?;
 
-        self.open_remote(id);
+        self.insert_remote(id);
 
         let Some(rs) = self
             .recv
@@ -315,7 +304,7 @@ impl StreamsState {
             debug!("received illegal RESET_STREAM frame");
         })?;
 
-        self.open_remote(id);
+        self.insert_remote(id);
 
         let Some(rs) = self
             .recv
@@ -362,7 +351,7 @@ impl StreamsState {
     /// Process incoming `STOP_SENDING` frame
     #[allow(unreachable_pub)] // fuzzing only
     pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
-        self.open_remote(id);
+        self.insert_remote(id);
 
         let max_send_data = self.max_send_data(id);
         let Some(stream) = self
@@ -738,7 +727,7 @@ impl StreamsState {
             ));
         }
 
-        self.open_remote(id);
+        self.insert_remote(id);
 
         let write_limit = self.write_limit();
         let max_send_data = self.max_send_data(id);
@@ -891,8 +880,10 @@ impl StreamsState {
         }
     }
 
-    /// Advance the `next_remote` frontier to cover `id`
-    fn open_remote(&mut self, id: StreamId) {
+    /// Allocate state for remotely-initiated streams up to and including `id`
+    ///
+    /// A frame for index N implicitly opens `0..N`, so the skipped indices need slots too.
+    fn insert_remote(&mut self, id: StreamId) {
         let dir_idx = id.dir() as usize;
 
         if id.initiator() == self.side
@@ -904,18 +895,16 @@ impl StreamsState {
             return;
         }
 
+        for i in self.next_remote[dir_idx]..=id.index() {
+            let tid = StreamId::new(!self.side, id.dir(), i);
+            let recv = self.free_recv.pop();
+            assert!(self.recv.insert(tid, recv).is_none());
+            if id.dir() == Dir::Bi {
+                assert!(self.send.insert(tid, None).is_none());
+            }
+        }
         self.next_remote[dir_idx] = id.index() + 1;
         self.opened[dir_idx] = true;
-    }
-
-    /// Allocate state for a remotely-initiated stream
-    fn insert_remote(&mut self, id: StreamId) {
-        debug_assert_eq!(id.initiator(), !self.side);
-        let recv = self.free_recv.pop();
-        assert!(self.recv.insert(id, recv).is_none());
-        if id.dir() == Dir::Bi {
-            assert!(self.send.insert(id, None).is_none());
-        }
     }
 
     /// Adds credits to the connection flow control window
@@ -1893,10 +1882,153 @@ mod tests {
         for _ in 0..2 {
             client.set_max_concurrent(Dir::Uni, 200u32.into());
             client.set_max_concurrent(Dir::Bi, 201u32.into());
-            assert_eq!(client.recv.len(), 200 + 201);
             assert_eq!(client.max_remote[Dir::Uni as usize], 200);
             assert_eq!(client.max_remote[Dir::Bi as usize], 201);
+            assert_eq!(client.allocated_remote_count[Dir::Uni as usize], 200);
+            assert_eq!(client.allocated_remote_count[Dir::Bi as usize], 201);
+            // Slots are allocated lazily, so no stream exists yet
+            assert!(client.recv.is_empty());
+            assert!(client.send.is_empty());
         }
+    }
+
+    #[test]
+    fn lazy_remote_allocation_starts_empty() {
+        let client = StreamsState::new(
+            Side::Client,
+            10_000u32.into(),
+            10_000u32.into(),
+            1024 * 1024,
+            (1024 * 1024u32).into(),
+            (1024 * 1024u32).into(),
+        );
+        assert!(client.recv.is_empty());
+        assert!(client.send.is_empty());
+        assert_eq!(client.recv.capacity(), 0);
+        assert_eq!(client.send.capacity(), 0);
+    }
+
+    #[test]
+    fn out_of_order_implicit_open() {
+        // Receiving index 5 implicitly opens 0..=4, so a later frame for 3 must still work
+        let mut client = make(Side::Client);
+        assert_eq!(
+            client.received(
+                frame::Stream {
+                    id: StreamId::new(Side::Server, Dir::Uni, 5),
+                    offset: 0,
+                    fin: true,
+                    data: Bytes::from_static(&[0; 8]),
+                },
+                8,
+            ),
+            Ok(ShouldTransmit(false))
+        );
+        assert_eq!(client.next_remote[Dir::Uni as usize], 6);
+        assert_eq!(
+            client.received(
+                frame::Stream {
+                    id: StreamId::new(Side::Server, Dir::Uni, 3),
+                    offset: 0,
+                    fin: true,
+                    data: Bytes::from_static(&[0; 4]),
+                },
+                4,
+            ),
+            Ok(ShouldTransmit(false))
+        );
+        let id = StreamId::new(Side::Server, Dir::Uni, 3);
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(chunks.next(4).unwrap().unwrap().bytes.len(), 4);
+        let _ = chunks.finalize();
+    }
+
+    #[test]
+    fn frame_for_closed_stream_is_dropped() {
+        // Below the frontier, absence from the map means closed
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        assert_eq!(
+            client.received(
+                frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: true,
+                    data: Bytes::from_static(&[0; 4]),
+                },
+                4,
+            ),
+            Ok(ShouldTransmit(false))
+        );
+        // Drain the stream so it's fully freed
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(chunks.next(4).unwrap().unwrap().bytes.len(), 4);
+        assert!(chunks.next(4).unwrap().is_none());
+        let _ = chunks.finalize();
+        assert!(!client.recv.contains_key(&id));
+
+        // A stray retransmit must not resurrect the stream
+        assert_eq!(
+            client.received(
+                frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: true,
+                    data: Bytes::from_static(&[0; 4]),
+                },
+                4,
+            ),
+            Ok(ShouldTransmit(false))
+        );
+        assert!(!client.recv.contains_key(&id));
+    }
+
+    #[test]
+    fn churn_keeps_maps_bounded() {
+        // Opening and closing many streams must not accumulate state
+        let mut client = make(Side::Client);
+        const N: u64 = 5_000;
+        for i in 0..N {
+            // Give ourselves room as we churn through ids
+            client.set_max_concurrent(Dir::Uni, (i + 200).try_into().unwrap());
+            let id = StreamId::new(Side::Server, Dir::Uni, i);
+            assert_eq!(
+                client.received(
+                    frame::Stream {
+                        id,
+                        offset: 0,
+                        fin: true,
+                        data: Bytes::from_static(&[0; 1]),
+                    },
+                    1,
+                ),
+                Ok(ShouldTransmit(false))
+            );
+            let mut pending = Retransmits::default();
+            let mut recv = RecvStream {
+                id,
+                state: &mut client,
+                pending: &mut pending,
+            };
+            let mut chunks = recv.read(true).unwrap();
+            let _ = chunks.next(1).unwrap();
+            assert!(chunks.next(1).unwrap().is_none());
+            let _ = chunks.finalize();
+        }
+        assert_eq!(client.recv.len(), 0);
+        assert_eq!(client.send.len(), 0);
     }
 
     #[test]

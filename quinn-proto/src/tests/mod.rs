@@ -784,10 +784,10 @@ fn zero_rtt_rejection() {
     let s2 = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
     assert_eq!(s, s2);
 
+    // The server discarded its 0-RTT keys, so it never decrypted the STREAM frame and has no
+    // state for `s2`
     let mut recv = pair.server_recv(server_ch, s2);
-    let mut chunks = recv.read(false).unwrap();
-    assert_eq!(chunks.next(usize::MAX), Err(ReadError::Blocked));
-    let _ = chunks.finalize();
+    assert_eq!(recv.read(false).err(), Some(ReadableError::ClosedStream));
     assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
 }
 
