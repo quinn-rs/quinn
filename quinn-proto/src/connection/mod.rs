@@ -2750,7 +2750,10 @@ impl Connection {
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, packet.header.space(), ack)?;
                 }
-                Frame::Close(reason) => {
+                // Per RFC 9000 §12.4 Table 3, only a CONNECTION_CLOSE frame of type 0x1c may
+                // appear in Initial or Handshake packets. An application close (0x1d) falls
+                // through to the catch-all arm below.
+                Frame::Close(reason @ Close::Connection(_)) => {
                     self.error = Some(reason.into());
                     self.state = State::Draining;
                     return Ok(());
