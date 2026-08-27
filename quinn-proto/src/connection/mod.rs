@@ -462,6 +462,19 @@ impl Connection {
             false => 1,
             true => max_datagrams,
         };
+        // `C.send_quantum` bounds one aggregate scheduled and transmitted together as a unit,
+        // which for a GSO batch is its datagram count. Controllers that don't compute one leave
+        // the batch bounded only by what the caller offered.
+        // <https://www.ietf.org/archive/id/draft-ietf-ccwg-bbr-06.html#section-5.6.3>
+        // Nothing `poll_transmit` does alters these, so one snapshot serves the whole call.
+        let controller_metrics = self.path.congestion.metrics();
+        let max_datagrams = match controller_metrics.send_quantum {
+            Some(send_quantum) => {
+                let datagrams = send_quantum / u64::from(self.path.current_mtu());
+                max_datagrams.min(usize::try_from(datagrams).unwrap_or(usize::MAX).max(1))
+            }
+            None => max_datagrams,
+        };
 
         let mut num_datagrams = 0;
         // Position in `buf` of the first byte of the current UDP datagram. When coalescing QUIC
@@ -517,7 +530,12 @@ impl Connection {
         let mut sent_frames = None;
         let mut pad_datagram = false;
         let mut pad_datagram_to_mtu = false;
-        let mut congestion_blocked = false;
+        // Set when either the congestion window or the pacer held a send back; drives
+        // `app_limited`, since neither case means the application ran dry.
+        let mut send_blocked = false;
+        // Set only when the congestion window itself was full. This is the spec's
+        // `C.is_cwnd_limited`, which a pacing delay must not stand in for.
+        let mut cwnd_blocked = false;
 
         // Iterate over all spaces and find data to send
         let mut space_idx = 0;
@@ -612,7 +630,8 @@ impl Connection {
                     let bytes_to_send = segment_size as u64 + untracked_bytes;
                     if self.path.in_flight.bytes + bytes_to_send > self.path.congestion.window() {
                         space_idx += 1;
-                        congestion_blocked = true;
+                        send_blocked = true;
+                        cwnd_blocked = true;
                         // We continue instead of breaking here in order to avoid
                         // blocking loss probes queued for higher spaces.
                         trace!("blocked by congestion control");
@@ -625,11 +644,11 @@ impl Connection {
                         smoothed_rtt,
                         bytes_to_send,
                         self.path.current_mtu(),
-                        self.path.congestion.window(),
                         now,
+                        &controller_metrics,
                     ) {
                         self.timers.set(Timer::Pacing, delay);
-                        congestion_blocked = true;
+                        send_blocked = true;
                         // Loss probes should be subject to pacing, even though
                         // they are not congestion controlled.
                         trace!("blocked by pacing");
@@ -944,7 +963,11 @@ impl Connection {
             );
         }
 
-        self.app_limited = buf.is_empty() && !congestion_blocked;
+        self.app_limited = buf.is_empty() && !send_blocked;
+
+        if cwnd_blocked {
+            self.path.congestion.on_cwnd_limited();
+        }
 
         // Send MTU probe if necessary
         if buf.is_empty() && self.state.is_established() {
@@ -1504,7 +1527,7 @@ impl Connection {
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
                 self.ack_frequency.on_acked(packet);
 
-                self.on_packet_acked(now, info);
+                self.on_packet_acked(now, info, packet, space);
             }
         }
 
@@ -1513,6 +1536,7 @@ impl Connection {
             self.path.in_flight.bytes,
             self.app_limited,
             self.spaces[space].largest_acked_packet,
+            space,
         );
 
         if new_largest && ack_eliciting_acked {
@@ -1547,8 +1571,18 @@ impl Connection {
                 // of newly acked packets that remains well-defined in the presence of arbitrary packet
                 // reordering.
                 if new_largest {
-                    let sent = self.spaces[space].largest_acked_packet_sent;
-                    self.process_ecn(now, space, newly_acked.len() as u64, ecn, sent);
+                    let packet_space = &self.spaces[space];
+                    let sent = packet_space.largest_acked_packet_sent;
+                    // We unwrap here because new_largest is set to true only if largest_acked_packet
+                    // is set to some value for the current packet space.
+                    self.process_ecn(
+                        now,
+                        space,
+                        newly_acked.len() as u64,
+                        ecn,
+                        sent,
+                        packet_space.largest_acked_packet.unwrap(),
+                    );
                 }
             } else {
                 // We always start out sending ECN, so any ack that doesn't acknowledge it disables it.
@@ -1606,6 +1640,7 @@ impl Connection {
         newly_acked: u64,
         ecn: frame::EcnCounts,
         largest_sent_time: Instant,
+        largest_sent: u64,
     ) {
         match self.spaces[space].detect_ecn(newly_acked, ecn) {
             Err(e) => {
@@ -1618,16 +1653,22 @@ impl Connection {
             Ok(false) => {}
             Ok(true) => {
                 self.stats.path.congestion_events += 1;
-                self.path
-                    .congestion
-                    .on_congestion_event(now, largest_sent_time, false, true, 0);
+                self.path.congestion.on_congestion_event(
+                    now,
+                    largest_sent_time,
+                    false,
+                    true,
+                    0,
+                    largest_sent,
+                    space,
+                );
             }
         }
     }
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, now: Instant, info: SentPacket) {
+    fn on_packet_acked(&mut self, now: Instant, info: SentPacket, pn: u64, space: SpaceId) {
         self.remove_in_flight(&info);
         if info.ack_eliciting && self.path.challenge.is_none() {
             // Only pass ACKs to the congestion controller if we are not validating the current
@@ -1636,6 +1677,8 @@ impl Connection {
                 now,
                 info.time_sent,
                 info.size.into(),
+                pn,
+                space,
                 self.app_limited,
                 &self.path.rtt,
             );
@@ -1797,6 +1840,9 @@ impl Connection {
 
             for &packet in &lost_packets {
                 let info = self.spaces[pn_space].take(packet).unwrap(); // safe: lost_packets is populated just above
+                self.path
+                    .congestion
+                    .on_packet_lost(info.size, packet, pn_space, now);
                 self.config.qlog_sink.emit_packet_lost(
                     packet,
                     &info,
@@ -1847,6 +1893,8 @@ impl Connection {
                     in_persistent_congestion,
                     false,
                     size_of_lost_packets,
+                    largest_lost,
+                    pn_space,
                 );
             }
         }
@@ -2515,13 +2563,12 @@ impl Connection {
                 }
 
                 if self.total_authed_packets > 1
-                            || packet.payload.len() <= 16 // token + 16 byte tag
-                            || !self.crypto.is_valid_retry(
-                                self.rem_cids.active(),
-                                &packet.header_data,
-                                &packet.payload,
-                            )
-                {
+                    || packet.payload.len() <= 16 // token + 16 byte tag
+                    || !self.crypto.is_valid_retry(
+                    self.rem_cids.active(),
+                    &packet.header_data,
+                    &packet.payload,
+                ) {
                     trace!("discarding invalid Retry");
                     // - After the client has received and processed an Initial or Retry
                     //   packet from the server, it MUST discard any subsequent Retry
@@ -2541,7 +2588,7 @@ impl Connection {
 
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.take(0) {
-                    self.on_packet_acked(now, info);
+                    self.on_packet_acked(now, info, 0, SpaceId::Initial);
                 };
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
@@ -3261,6 +3308,10 @@ impl Connection {
             sent.retransmits.get_or_create().ack_frequency = true;
 
             self.ack_frequency.ack_frequency_sent(pn, max_ack_delay);
+            self.path.congestion.on_ack_frequency_update(
+                config.ack_eliciting_threshold.into_inner(),
+                max_ack_delay,
+            );
             self.stats.frame_tx.ack_frequency += 1;
         }
 
