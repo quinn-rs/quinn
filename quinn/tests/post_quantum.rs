@@ -30,58 +30,12 @@ async fn post_quantum_key_exchange_large_mtu() {
 
 #[tokio::test]
 async fn post_quantum_handshake_data_after_hello_retry_request() {
-    // The client initially shares X25519, while the server only supports X25519MLKEM768, forcing
-    // a HelloRetryRequest before the negotiated group becomes available as handshake data.
-    let server_provider = Arc::new(CryptoProvider {
-        kx_groups: vec![rustls_aws_lc_rs::kx_group::X25519MLKEM768].into(),
-        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
-    });
-    let (server, server_cert) = make_server_endpoint(
-        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
-        1433,
-        server_provider,
-    )
-    .unwrap();
-    let server_addr = server.local_addr().unwrap();
+    check_post_quantum_handshake_data_after_hello_retry_request(false).await;
+}
 
-    let client_provider = Arc::new(CryptoProvider {
-        kx_groups: vec![
-            rustls_aws_lc_rs::kx_group::X25519,
-            rustls_aws_lc_rs::kx_group::X25519MLKEM768,
-        ]
-        .into(),
-        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
-    });
-    let client = make_client_endpoint(
-        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
-        server_cert,
-        client_provider,
-    )
-    .unwrap();
-
-    let server_task = async {
-        let mut connecting = server.accept().await.unwrap().accept().unwrap();
-        let handshake_data =
-            tokio::time::timeout(Duration::from_secs(5), connecting.handshake_data())
-                .await
-                .expect("timed out waiting for handshake data")
-                .unwrap()
-                .downcast::<HandshakeData>()
-                .unwrap();
-        assert_eq!(
-            handshake_data.negotiated_key_exchange_group,
-            NamedGroup::X25519MLKEM768
-        );
-        connecting.await.unwrap()
-    };
-    let client_task = client.connect(server_addr, "localhost").unwrap();
-    let (server_connection, client_connection) = tokio::join!(server_task, client_task);
-    let client_connection = client_connection.unwrap();
-
-    client_connection.close(0u32.into(), b"done");
-    server_connection.closed().await;
-    server.wait_idle().await;
-    client.wait_idle().await;
+#[tokio::test]
+async fn staged_post_quantum_handshake_data_after_hello_retry_request() {
+    check_post_quantum_handshake_data_after_hello_retry_request(true).await;
 }
 
 async fn check_post_quantum_key_exchange(min_mtu: u16) {
@@ -137,6 +91,72 @@ async fn check_post_quantum_key_exchange(min_mtu: u16) {
     // Make sure the server has a chance to clean up
     endpoint.wait_idle().await;
     jh.await.unwrap();
+}
+
+async fn check_post_quantum_handshake_data_after_hello_retry_request(staged: bool) {
+    // The client initially shares X25519, while the server only supports X25519MLKEM768, forcing
+    // a HelloRetryRequest before the negotiated group becomes available as handshake data.
+    let server_provider = Arc::new(CryptoProvider {
+        kx_groups: vec![rustls_aws_lc_rs::kx_group::X25519MLKEM768].into(),
+        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
+    });
+    let (server, server_cert) = make_server_endpoint(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        1433,
+        server_provider,
+    )
+    .unwrap();
+    let server_addr = server.local_addr().unwrap();
+
+    let client_provider = Arc::new(CryptoProvider {
+        kx_groups: vec![
+            rustls_aws_lc_rs::kx_group::X25519,
+            rustls_aws_lc_rs::kx_group::X25519MLKEM768,
+        ]
+        .into(),
+        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
+    });
+    let client = make_client_endpoint(
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+        server_cert,
+        client_provider,
+    )
+    .unwrap();
+
+    let server_task = async {
+        let incoming = server.accept().await.unwrap();
+        let mut connecting = if staged {
+            incoming
+                .acceptor()
+                .unwrap()
+                .await
+                .unwrap()
+                .accept()
+                .unwrap()
+        } else {
+            incoming.accept().unwrap()
+        };
+        let handshake_data =
+            tokio::time::timeout(Duration::from_secs(5), connecting.handshake_data())
+                .await
+                .expect("timed out waiting for handshake data")
+                .unwrap()
+                .downcast::<HandshakeData>()
+                .unwrap();
+        assert_eq!(
+            handshake_data.negotiated_key_exchange_group,
+            NamedGroup::X25519MLKEM768
+        );
+        connecting.await.unwrap()
+    };
+    let client_task = client.connect(server_addr, "localhost").unwrap();
+    let (server_connection, client_connection) = tokio::join!(server_task, client_task);
+    let client_connection = client_connection.unwrap();
+
+    client_connection.close(0u32.into(), b"done");
+    server_connection.closed().await;
+    server.wait_idle().await;
+    client.wait_idle().await;
 }
 
 fn make_client_endpoint(
