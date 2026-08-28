@@ -1097,18 +1097,20 @@ impl crypto::ServerConfig for QuicServerConfig {
             .read_hs(&mut input, &mut pending_events)
             .map_err(transport_error_from_rustls)?;
 
-        Ok(Box::new(TlsSession {
+        let mut session = TlsSession {
             version,
-            // The staged acceptor already consumed ClientHello, so the server-side handshake
-            // metadata is immediately available without replaying Initial CRYPTO.
-            got_handshake_data: true,
+            got_handshake_data: false,
             next_secrets: None,
             exporter: None,
             inner,
             input,
             pending_events,
             suite: self.initial,
-        }))
+        };
+        // The staged acceptor already consumed ClientHello, but HelloRetryRequest can require
+        // another ClientHello before all required handshake data is available.
+        session.got_handshake_data = session.required_handshake_data_is_ready();
+        Ok(Box::new(session))
     }
 
     fn initial_keys(
