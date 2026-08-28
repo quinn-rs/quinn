@@ -30,6 +30,7 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
+    packet::{Header, InitialHeader, PacketNumber},
     transport_parameters::TransportParameters,
 };
 mod util;
@@ -3844,4 +3845,89 @@ fn handshake_confirmation_no_resumption_shortcut() {
         Some(Event::HandshakeConfirmed)
     );
     assert_matches!(pair.client_conn_mut(ch).poll(), None);
+}
+
+/// A CONNECTION_CLOSE frame of type 0x1d must be rejected in an Initial packet
+///
+/// RFC 9000 §12.4 Table 3 lists CONNECTION_CLOSE with the packet-type marker `ih01`, defined as
+/// "Only a CONNECTION_CLOSE frame of type 0x1c can appear in Initial or Handshake packets", and
+/// §12.4 requires that "An endpoint MUST treat receipt of a frame in a packet type that is not
+/// permitted as a connection error of type PROTOCOL_VIOLATION". §12.5 repeats the rule:
+/// "CONNECTION_CLOSE frames signaling application errors (type 0x1d) MUST only appear in the
+/// application data packet number space."
+#[test]
+fn application_close_in_initial_is_rejected() {
+    let _guard = subscribe();
+    let server_addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
+    let mut client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let now = Instant::now();
+    let (_, mut conn) = client
+        .connect(now, client_config(), server_addr, "localhost")
+        .unwrap();
+
+    // Grab the client's Initial packet so we can learn the connection IDs and version it chose.
+    let mut buf = Vec::new();
+    let transmit = conn
+        .poll_transmit(now, 1, &mut buf)
+        .expect("client should send an Initial packet");
+    let initial = &buf[..transmit.size];
+    // Long header: flags(1) version(4) dcid_len(1) dcid scid_len(1) scid ...
+    let version = u32::from_be_bytes(initial[1..5].try_into().unwrap());
+    let dcid_len = initial[5] as usize;
+    let orig_dst_cid = ConnectionId::new(&initial[6..6 + dcid_len]);
+    let scid_len = initial[6 + dcid_len] as usize;
+    let client_cid = ConnectionId::new(&initial[7 + dcid_len..7 + dcid_len + scid_len]);
+
+    // Forge a server Initial packet whose payload is a single APPLICATION_CLOSE (0x1d) frame.
+    // Initial packets are protected with keys derived from the client's original destination
+    // connection ID, which travels in the clear, so anyone who observes the handshake can do this.
+    let keys = server_config()
+        .crypto
+        .initial_keys(version, orig_dst_cid)
+        .unwrap();
+    let number = PacketNumber::U8(0);
+    let header = Header::Initial(InitialHeader {
+        dst_cid: client_cid,
+        src_cid: ConnectionId::new(&[]),
+        token: Bytes::new(),
+        number,
+        version,
+    });
+    let mut packet = Vec::new();
+    let partial = header.encode(&mut packet);
+    let header_len = packet.len();
+    // APPLICATION_CLOSE: type 0x1d, Error Code (varint) = 42, Reason Phrase Length (varint) = 0
+    packet.extend_from_slice(&[0x1d, 0x2a, 0x00]);
+    // PADDING, so that the packet is long enough for header protection sampling
+    packet.resize(header_len + 16, 0);
+    // Room for the AEAD tag
+    packet.resize(packet.len() + keys.packet.local.tag_len(), 0);
+    partial.finish(
+        &mut packet,
+        keys.header.local.as_ref(),
+        Some((0, keys.packet.local.as_ref())),
+    );
+
+    let event = client.handle(
+        now,
+        server_addr,
+        None,
+        None,
+        BytesMut::from(&packet[..]),
+        &mut buf,
+    );
+    let Some(DatagramEvent::ConnectionEvent(_, event)) = event else {
+        panic!("forged Initial packet was not routed to the connection");
+    };
+    conn.handle_event(event);
+
+    assert_matches!(
+        conn.poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::TransportError(TransportError {
+                code: TransportErrorCode::PROTOCOL_VIOLATION,
+                ..
+            })
+        })
+    );
 }
