@@ -29,7 +29,12 @@ async fn post_quantum_key_exchange_large_mtu() {
 
 #[tokio::test]
 async fn post_quantum_handshake_data_after_hello_retry_request() {
-    check_post_quantum_handshake_data_after_hello_retry_request().await;
+    check_post_quantum_handshake_data_after_hello_retry_request(false).await;
+}
+
+#[tokio::test]
+async fn staged_post_quantum_handshake_data_after_hello_retry_request() {
+    check_post_quantum_handshake_data_after_hello_retry_request(true).await;
 }
 
 async fn check_post_quantum_key_exchange(min_mtu: u16) {
@@ -87,7 +92,7 @@ async fn check_post_quantum_key_exchange(min_mtu: u16) {
     jh.await.unwrap();
 }
 
-async fn check_post_quantum_handshake_data_after_hello_retry_request() {
+async fn check_post_quantum_handshake_data_after_hello_retry_request(staged: bool) {
     // The client initially shares X25519, while the server only supports X25519MLKEM768, forcing
     // a HelloRetryRequest before the negotiated group becomes available as handshake data.
     let server_provider = Arc::new(CryptoProvider {
@@ -117,7 +122,18 @@ async fn check_post_quantum_handshake_data_after_hello_retry_request() {
     .unwrap();
 
     let server_task = async {
-        let mut connecting = server.accept().await.unwrap().accept().unwrap();
+        let incoming = server.accept().await.unwrap();
+        let mut connecting = if staged {
+            incoming
+                .acceptor()
+                .unwrap()
+                .await
+                .unwrap()
+                .accept()
+                .unwrap()
+        } else {
+            incoming.accept().unwrap()
+        };
         let handshake_data = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             connecting.handshake_data(),
