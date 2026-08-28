@@ -99,6 +99,17 @@ impl TlsSession {
     fn side(&self) -> Side {
         self.inner.side()
     }
+
+    fn required_handshake_data_is_ready(&self) -> bool {
+        #[cfg(feature = "__rustls-post-quantum-test")]
+        {
+            self.inner.negotiated_key_exchange_group().is_some()
+        }
+        #[cfg(not(feature = "__rustls-post-quantum-test"))]
+        {
+            true
+        }
+    }
 }
 
 impl crypto::Session for TlsSession {
@@ -178,7 +189,9 @@ impl crypto::Session for TlsSession {
             // ready on incoming connections, or ALPN negotiation completing on outgoing
             // connections.
             let have_server_name = self.inner.server_name().is_some();
-            if self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
+            if (self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking())
+                && self.required_handshake_data_is_ready()
+            {
                 self.got_handshake_data = true;
                 return Ok(true);
             }
