@@ -46,7 +46,6 @@ impl Datagrams<'_> {
                     .pop_front()
                     .expect("datagrams.outgoing.payload_bytes desynchronized");
                 trace!(len = prev.data.len(), "dropping outgoing datagram");
-                self.conn.datagrams.outgoing.payload_bytes -= prev.data.len();
             }
         } else if self.conn.datagrams.outgoing.payload_bytes + data.len() + size_of::<Datagram>()
             > self.conn.config.datagram_send_buffer_size
