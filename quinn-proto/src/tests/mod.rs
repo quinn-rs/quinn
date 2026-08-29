@@ -1947,6 +1947,46 @@ fn datagram_recv_buffer_overflow() {
 }
 
 #[test]
+fn datagram_send_buffer_overflow() {
+    let _guard = subscribe();
+    const PAYLOAD_WINDOW: usize = 100;
+    const METADATA_WINDOW: usize = 2 * size_of::<Datagram>();
+    const WINDOW: usize = PAYLOAD_WINDOW + METADATA_WINDOW;
+    let client_config = {
+        let mut config = client_config();
+        let mut transport = TransportConfig::default();
+        transport.datagram_send_buffer_size(WINDOW);
+        config.transport_config(transport.into());
+        config
+    };
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+
+    // Keep the send buffer full so most sends evict the oldest queued datagram;
+    // `payload_bytes` bookkeeping must survive sustained eviction
+    const LEN: usize = (PAYLOAD_WINDOW / 3) + 1;
+    for i in 0..10u8 {
+        pair.client_datagrams(client_ch)
+            .send(vec![i; LEN].into(), true)
+            .unwrap();
+    }
+    pair.drive();
+
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::DatagramReceived)
+    );
+    for i in 7..10u8 {
+        assert_eq!(
+            pair.server_datagrams(server_ch).recv().unwrap(),
+            vec![i; LEN]
+        );
+    }
+    assert_matches!(pair.server_datagrams(server_ch).recv(), None);
+}
+
+#[test]
 fn datagram_unsupported() {
     let _guard = subscribe();
     let server = ServerConfig {
