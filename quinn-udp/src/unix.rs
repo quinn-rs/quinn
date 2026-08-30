@@ -58,7 +58,7 @@ impl UdpSocketState {
     pub fn new(sock: UdpSockRef<'_>) -> io::Result<Self> {
         let io = sock.0;
         let mut cmsg_platform_space = 0;
-        #[cfg(not(target_os = "redox"))]
+        #[cfg(not(any(target_os = "redox", target_os = "hurd")))]
         if cfg!(target_os = "linux")
             || cfg!(bsd)
             || cfg!(apple)
@@ -90,6 +90,7 @@ impl UdpSocketState {
             target_os = "openbsd",
             target_os = "netbsd",
             target_os = "dragonfly",
+            target_os = "hurd",
             solarish
         )))]
         if is_ipv4 || !io.only_v6()? {
@@ -262,6 +263,7 @@ impl UdpSocketState {
         target_os = "netbsd",
         target_os = "dragonfly",
         target_os = "redox",
+        target_os = "hurd",
         solarish
     )))]
     pub fn recv(
@@ -292,6 +294,7 @@ impl UdpSocketState {
         target_os = "netbsd",
         target_os = "dragonfly",
         target_os = "redox",
+        target_os = "hurd",
         solarish,
         apple_slow
     ))]
@@ -595,6 +598,7 @@ pub(crate) fn send_single(
     target_os = "netbsd",
     target_os = "dragonfly",
     target_os = "redox",
+    target_os = "hurd",
     solarish
 )))]
 fn recv_via_recvmmsg(
@@ -634,6 +638,7 @@ fn recv_via_recvmmsg(
     target_os = "netbsd",
     target_os = "dragonfly",
     target_os = "redox",
+    target_os = "hurd",
     solarish,
     apple
 ))]
@@ -746,9 +751,9 @@ fn prepare_msg(
                     }
                 }
             }
-            #[cfg(target_os = "redox")]
+            #[cfg(any(target_os = "redox", target_os = "hurd"))]
             IpAddr::V6(_) => {}
-            #[cfg(not(target_os = "redox"))]
+            #[cfg(not(any(target_os = "redox", target_os = "hurd")))]
             IpAddr::V6(v6) => {
                 let pktinfo = libc::in6_pktinfo {
                     ipi6_ifindex: 0,
@@ -831,6 +836,7 @@ impl ControlMetadata {
                 target_os = "openbsd",
                 target_os = "netbsd",
                 target_os = "dragonfly",
+                target_os = "hurd",
                 solarish
             )))]
             (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
@@ -862,7 +868,7 @@ impl ControlMetadata {
                 let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
                 self.dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
             }
-            #[cfg(not(target_os = "redox",))]
+            #[cfg(not(any(target_os = "redox", target_os = "hurd")))]
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
                 self.dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
