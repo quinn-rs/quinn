@@ -13,15 +13,17 @@ use std::{
 use assert_matches::assert_matches;
 use bytes::BytesMut;
 use rustls::{
-    KeyLogFile,
     client::WebPkiServerVerifier,
+    crypto::CryptoProvider,
+    enums::ApplicationProtocol,
     pki_types::{CertificateDer, PrivateKeyDer},
 };
+use rustls_util::KeyLogFile;
 use tracing::{info_span, trace};
 
-use super::crypto::rustls::{QuicClientConfig, QuicServerConfig, configured_provider};
+use super::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use super::*;
-use crate::{Duration, Instant};
+use crate::{Duration, Instant, endpoint::Accepting};
 
 pub(super) const DEFAULT_MTU: usize = 1452;
 
@@ -212,7 +214,11 @@ impl Pair {
         client_ch
     }
 
-    fn finish_connect(&mut self, client_ch: ConnectionHandle, server_ch: ConnectionHandle) {
+    pub(super) fn finish_connect(
+        &mut self,
+        client_ch: ConnectionHandle,
+        server_ch: ConnectionHandle,
+    ) {
         assert_matches!(
             self.client_conn_mut(client_ch).poll(),
             Some(Event::HandshakeDataReady)
@@ -396,6 +402,7 @@ impl TestEndpoint {
 
                         self.conn_events.entry(ch).or_default().push_back(event);
                     }
+                    DatagramEvent::IncomingData(_) => {}
                     DatagramEvent::Response(transmit) => {
                         let size = transmit.size;
                         self.outbound.extend(split_transmit(transmit, &buf[..size]));
@@ -488,6 +495,42 @@ impl TestEndpoint {
                 Err(error.cause)
             }
         }
+    }
+
+    pub(super) fn pop_waiting_incoming(&mut self) -> Incoming {
+        let incoming = self.waiting_incoming.pop().unwrap();
+        assert!(self.waiting_incoming.is_empty());
+        incoming
+    }
+
+    pub(super) fn start_split_accept(&mut self, incoming: Incoming, now: Instant) -> Accepting {
+        let mut buf = Vec::new();
+        self.endpoint
+            .start_accept(incoming, now, &mut buf, None)
+            .unwrap()
+    }
+
+    pub(super) fn disable_new_connections(&mut self) {
+        self.endpoint.set_server_config(None);
+    }
+
+    pub(super) fn finish_split_accept(&mut self, accepting: Accepting) -> ConnectionHandle {
+        let Ok(accepted) = accepting.finish_without_endpoint() else {
+            panic!("split accept unexpectedly failed")
+        };
+        let (ch, conn) = self.endpoint.finish_accept(accepted);
+        self.connections.insert(ch, conn);
+        ch
+    }
+
+    /// Like `finish_split_accept`, but expects the off-lock handshake to fail. Runs the
+    /// error-cleanup path (`finish_accept_error`) and returns the resulting cause.
+    pub(super) fn finish_split_accept_error(&mut self, accepting: Accepting) -> ConnectionError {
+        let mut buf = Vec::new();
+        let Err(error) = accepting.finish_without_endpoint() else {
+            panic!("split accept unexpectedly succeeded")
+        };
+        self.endpoint.finish_accept_error(error, &mut buf).cause
     }
 
     pub(super) fn retry(&mut self, incoming: Incoming) {
@@ -610,9 +653,10 @@ fn server_crypto_inner(
         )
     });
 
-    let mut config = QuicServerConfig::inner(vec![cert], key).unwrap();
+    let mut config =
+        QuicServerConfig::inner_with_provider(vec![cert], key, test_provider()).unwrap();
     if let Some(alpn) = alpn {
-        config.alpn_protocols = alpn;
+        config.alpn_protocols = alpn.into_iter().map(ApplicationProtocol::from).collect();
     }
 
     config.try_into().unwrap()
@@ -651,17 +695,42 @@ fn client_crypto_inner(
         roots.add(cert).unwrap();
     }
 
-    let mut inner = QuicClientConfig::inner(
-        WebPkiServerVerifier::builder_with_provider(Arc::new(roots), configured_provider())
-            .build()
-            .unwrap(),
-    );
+    let provider = test_provider();
+    let verifier = WebPkiServerVerifier::builder(Arc::new(roots), &provider)
+        .build()
+        .unwrap();
+    let mut inner = QuicClientConfig::inner_with_provider(Arc::new(verifier), provider);
     inner.key_log = Arc::new(KeyLogFile::new());
     if let Some(alpn) = alpn {
-        inner.alpn_protocols = alpn;
+        inner.alpn_protocols = alpn.into_iter().map(ApplicationProtocol::from).collect();
     }
 
     inner.try_into().unwrap()
+}
+
+#[cfg(all(feature = "rustls-aws-lc-rs-fips", not(feature = "rustls-ring")))]
+fn test_provider() -> Arc<CryptoProvider> {
+    Arc::new(CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::SECP256R1]),
+        ..rustls_aws_lc_rs::DEFAULT_FIPS_PROVIDER
+    })
+}
+
+#[cfg(all(
+    feature = "rustls-aws-lc-rs",
+    not(feature = "rustls-aws-lc-rs-fips"),
+    not(feature = "rustls-ring")
+))]
+fn test_provider() -> Arc<CryptoProvider> {
+    Arc::new(CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::X25519]),
+        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
+    })
+}
+
+#[cfg(feature = "rustls-ring")]
+fn test_provider() -> Arc<CryptoProvider> {
+    Arc::new(rustls_ring::DEFAULT_PROVIDER)
 }
 
 pub(super) fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {

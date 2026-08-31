@@ -21,25 +21,30 @@ bloom = ["dep:fastbloom"]
 # For backwards compatibility, `rustls` forwards to `rustls-ring`
 rustls = ["rustls-ring"]
 # Enable rustls with the `aws-lc-rs` crypto provider
-rustls-aws-lc-rs = ["dep:rustls", "rustls?/aws-lc-rs", "aws-lc-rs"]
-rustls-aws-lc-rs-fips = ["rustls-aws-lc-rs", "aws-lc-rs-fips"]
+rustls-aws-lc-rs = ["dep:rustls", "dep:rustls-aws-lc-rs", "aws-lc-rs"]
+rustls-aws-lc-rs-fips = ["rustls-aws-lc-rs", "aws-lc-rs-fips", "rustls-aws-lc-rs?/fips"]
 # Enable rustls with the `ring` crypto provider
-rustls-ring = ["dep:rustls", "rustls?/ring", "ring"]
+rustls-ring = ["dep:rustls", "dep:rustls-ring", "ring"]
 ring = ["dep:ring"]
 # Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["dep:rustls-platform-verifier"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 tracing-log = ["tracing/log"]
-# Enable rustls logging
-rustls-log = ["rustls?/logging"]
+# Enable rustls tracing (feature name retained for backwards compatibility)
+rustls-log = ["rustls?/tracing"]
 # Enable qlog support
 qlog = ["dep:qlog"]
 
-# Internal (PRIVATE!) features used to aid testing.
+# Internal (PRIVATE!) features.
 # Don't rely on these whatsoever. They may disappear at any time.
 
+# Used only to aid testing.
 __rustls-post-quantum-test =  []
+
+# Re-exports split-accept state types required by the `quinn` crate.
+# This doc-hidden API is an implementation detail.
+__internal_split_accept = []
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }
@@ -53,7 +58,9 @@ rand = { workspace = true }
 rand_pcg = "0.10"
 ring = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
+rustls-aws-lc-rs = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
+rustls-ring = { workspace = true, optional = true }
 slab = { workspace = true }
 thiserror = { workspace = true }
 tinyvec = { workspace = true, features = ["alloc"] }
@@ -71,6 +78,7 @@ web-time = { workspace = true }
 assert_matches = { workspace = true }
 hex-literal = { workspace = true  }
 rcgen = { workspace = true }
+rustls-util = { workspace = true }
 tracing-subscriber = { workspace = true }
 wasm-bindgen-test = { workspace = true }
 

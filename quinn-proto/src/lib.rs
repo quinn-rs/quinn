@@ -73,6 +73,15 @@ mod endpoint;
 pub use crate::endpoint::{
     AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, Incoming, RetryError,
 };
+#[cfg(feature = "__internal_split_accept")]
+#[doc(hidden)]
+pub use crate::endpoint::{Accepted, Accepting, AcceptingError};
+#[cfg(all(
+    feature = "__internal_split_accept",
+    any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")
+))]
+#[doc(hidden)]
+pub use crate::endpoint::{RustlsAccepted, RustlsAcceptor};
 
 mod packet;
 pub use packet::{
@@ -157,15 +166,7 @@ pub mod fuzzing {
 }
 
 /// The QUIC protocol version implemented.
-pub const DEFAULT_SUPPORTED_VERSIONS: &[u32] = &[
-    0x00000001,
-    0xff00_001d,
-    0xff00_001e,
-    0xff00_001f,
-    0xff00_0020,
-    0xff00_0021,
-    0xff00_0022,
-];
+pub const DEFAULT_SUPPORTED_VERSIONS: &[u32] = &[0x00000001, 0xff00_0021, 0xff00_0022];
 
 /// Whether an endpoint was the initiator of a connection
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]

@@ -13,12 +13,11 @@ use hex_literal::hex;
 use rand::Rng;
 #[cfg(feature = "ring")]
 use ring::hmac;
-#[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-use rustls::crypto::aws_lc_rs::default_provider;
-#[cfg(feature = "rustls-ring")]
-use rustls::crypto::ring::default_provider;
 use rustls::{
-    AlertDescription, RootCertStore,
+    RootCertStore,
+    crypto::Identity,
+    enums::{ApplicationProtocol, ProtocolVersion},
+    error::AlertDescription,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     server::WebPkiClientVerifier,
 };
@@ -29,6 +28,7 @@ use crate::{
     Duration, Instant,
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     crypto::rustls::QuicServerConfig,
+    endpoint::RustlsAcceptor,
     frame::FrameStruct,
     packet::{Header, InitialHeader, PacketNumber},
     transport_parameters::TransportParameters,
@@ -218,11 +218,11 @@ fn stats_include_congestion_controller_bandwidth_estimate() {
 }
 
 #[test]
-fn draft_version_compat() {
+fn compatible_version() {
     let _guard = subscribe();
 
     let mut client_config = client_config();
-    client_config.version(0xff00_0020);
+    client_config.version(0xff00_0022);
 
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect_with(client_config);
@@ -368,14 +368,14 @@ fn export_keying_material() {
     // client keying material
     let mut client_buf = [0u8; 64];
     pair.client_conn_mut(client_ch)
-        .crypto_session()
+        .crypto_session_mut()
         .export_keying_material(&mut client_buf, LABEL, CONTEXT)
         .unwrap();
 
     // server keying material
     let mut server_buf = [0u8; 64];
     pair.server_conn_mut(server_ch)
-        .crypto_session()
+        .crypto_session_mut()
         .export_keying_material(&mut server_buf, LABEL, CONTEXT)
         .unwrap();
 
@@ -508,7 +508,7 @@ fn reject_self_signed_server_cert() {
 
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
-                    if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCA.into()));
+                    if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCa.into()));
 }
 
 #[test]
@@ -523,16 +523,17 @@ fn reject_missing_client_cert() {
     let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.signing_key.serialize_der());
     let cert = CERTIFIED_KEY.cert.der().clone();
 
-    let provider = Arc::new(default_provider());
-    let config = rustls::ServerConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_client_cert_verifier(
-            WebPkiClientVerifier::builder_with_provider(Arc::new(store), provider)
+    let provider = crypto::rustls::configured_provider();
+    let config = rustls::ServerConfig::builder(provider.clone())
+        .with_client_cert_verifier(Arc::new(
+            WebPkiClientVerifier::builder(Arc::new(store), &provider)
                 .build()
                 .unwrap(),
+        ))
+        .with_single_cert(
+            Arc::new(Identity::from_cert_chain(vec![cert]).unwrap()),
+            PrivateKeyDer::from(key),
         )
-        .with_single_cert(vec![cert], PrivateKeyDer::from(key))
         .unwrap();
     let config = QuicServerConfig::try_from(config).unwrap();
 
@@ -752,7 +753,7 @@ fn zero_rtt_rejection() {
     // the existing `ClientConfig` and change the ALPN protocols to make that happen.
     let this = Arc::get_mut(&mut client_crypto).expect("QuicClientConfig is shared");
     let inner = Arc::get_mut(&mut this.inner).expect("QuicClientConfig.inner is shared");
-    inner.alpn_protocols = vec!["bar".into()];
+    inner.alpn_protocols = vec![ApplicationProtocol::from(b"bar")];
 
     // Changing protocols invalidates 0-RTT
     let client_config = ClientConfig::new(client_crypto);
@@ -906,6 +907,131 @@ fn zero_rtt_incoming_buffer_size_total() {
     });
 }
 
+/// Verify that datagrams arriving while a connection is in the `Accepting` state (between
+/// `start_accept` and `finish_accept`) are buffered in `incoming_buffers` and replayed into the
+/// connection after `finish_accept`. Drives through the full handshake and clean shutdown to
+/// confirm no endpoint state is leaked.
+#[test]
+fn accepting_state_buffers_retransmitted_initials() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+
+    let accepting = pair.server.start_split_accept(incoming, pair.time);
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    // Removing the server configuration only prevents new attempts; it does not close the
+    // endpoint. An accept that already captured its configuration must keep buffering.
+    pair.server.disable_new_connections();
+
+    // With no server response, the client's next wakeup is its loss timer. Advancing to it and
+    // driving the client emits a retransmitted Initial for the same connection attempt.
+    pair.time = pair.client.next_wakeup().unwrap();
+    pair.drive_client();
+    assert!(!pair.server.inbound.is_empty());
+    pair.drive_server();
+
+    assert!(pair.server.waiting_incoming.is_empty());
+    assert!(pair.server.incoming_buffer_bytes() > 0);
+
+    let server_ch = pair.server.finish_split_accept(accepting);
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.pending_accepts(), 0);
+
+    pair.drive();
+    pair.finish_connect(client_ch, server_ch);
+
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+/// Verify that attempts in the `Accepting` state count toward `max_incoming`, so a second
+/// connection attempt is refused while the first attempt is still between `start_accept`
+/// and `finish_accept`.
+#[test]
+fn max_incoming_counts_accepts_in_progress() {
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    server_config.max_incoming(1);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let _client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+
+    let accepting = pair.server.start_split_accept(incoming, pair.time);
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    let _refused_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+    assert!(pair.server.waiting_incoming.is_empty());
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    pair.server.finish_split_accept(accepting);
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.pending_accepts(), 0);
+}
+
+/// Verify that when the off-lock handshake fails (here via ALPN mismatch) after `start_accept`
+/// has reserved endpoint state, `finish_accept_error` releases the pending-accept slot and the
+/// reserved CIDs/buffer, leaving no endpoint state behind.
+#[test]
+fn accepting_state_cleaned_up_on_handshake_failure() {
+    let _guard = subscribe();
+    let server_config =
+        ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec!["foo".into()])));
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let _client_ch =
+        pair.begin_connect(ClientConfig::new(Arc::new(client_crypto_with_alpn(vec![
+            "bar".into(),
+        ]))));
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let accepting = pair.server.start_split_accept(incoming, pair.time);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    // The TLS handshake runs in finish_without_endpoint and fails on the ALPN mismatch.
+    let cause = pair.server.finish_split_accept_error(accepting);
+    assert_matches!(
+        cause,
+        ConnectionError::TransportError(ref e) if e.code == TransportErrorCode::crypto(0x78)
+    );
+
+    // The failed accept must leave no reserved endpoint state behind.
+    assert_eq!(pair.server.pending_accepts(), 0);
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
 #[test]
 fn alpn_success() {
     let _guard = subscribe();
@@ -950,13 +1076,13 @@ fn alpn_success() {
     assert_eq!(
         hd.protocol_version
             .unwrap()
-            .downcast_ref::<rustls::ProtocolVersion>(),
-        Some(&rustls::ProtocolVersion::TLSv1_3)
+            .downcast_ref::<ProtocolVersion>(),
+        Some(&ProtocolVersion::TLSv1_3)
     );
     assert!(
         hd.cipher_suite
             .unwrap()
-            .downcast_ref::<rustls::CipherSuite>()
+            .downcast_ref::<rustls::crypto::CipherSuite>()
             .is_some()
     );
 }
@@ -2277,6 +2403,596 @@ fn large_initial() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Connected)
     );
+}
+
+#[test]
+fn staged_acceptor_reassembles_reordered_initials() {
+    let _guard = subscribe();
+    let server_config =
+        ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec![vec![0, 0, 0, 42]])));
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let client_crypto =
+        client_crypto_with_alpn((0..1000u32).map(|x| x.to_be_bytes().to_vec()).collect());
+    let client_ch = pair.begin_connect(ClientConfig::new(Arc::new(client_crypto)));
+    pair.drive_client();
+    while pair.server.inbound.len() < 5 {
+        pair.time = pair.client.next_wakeup().unwrap();
+        pair.drive_client();
+    }
+    assert!(pair.server.inbound.len() > 1);
+    pair.server.inbound.make_contiguous().reverse();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+    let mut accepting = pair.server.start_split_accept(incoming, pair.time);
+    assert!(pair.server.incoming_buffer_bytes() > 0);
+
+    let mut buf = Vec::new();
+    pair.server
+        .endpoint
+        .buffer_rustls_acceptor_input(&mut accepting);
+    let (accepted, ack) = accepting
+        .poll_rustls_acceptor(&mut acceptor, &mut buf)
+        .unwrap();
+    let accepted = accepted.expect("reordered Initials should complete ClientHello");
+    if let Some(transmit) = ack {
+        let size = transmit.size;
+        pair.server
+            .outbound
+            .push_back((transmit, Bytes::copy_from_slice(&buf[..size])));
+    }
+
+    pair.server
+        .endpoint
+        .select_accepting_config(&mut accepting, None, pair.time)
+        .unwrap();
+    let Ok(accepted) = accepting.finish_from_rustls(accepted) else {
+        panic!("staged rustls accept unexpectedly failed")
+    };
+    let (server_ch, conn) = pair.server.endpoint.finish_accept(accepted);
+    pair.server.connections.insert(server_ch, conn);
+
+    pair.drive();
+    pair.finish_connect(client_ch, server_ch);
+}
+
+#[test]
+fn staged_acceptor_ignores_initials_from_spoofed_remote() {
+    let _guard = subscribe();
+    let server_config =
+        ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec![vec![0, 0, 0, 42]])));
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let client_crypto =
+        client_crypto_with_alpn((0..1000u32).map(|x| x.to_be_bytes().to_vec()).collect());
+    let client_ch = pair.begin_connect(ClientConfig::new(Arc::new(client_crypto)));
+    pair.drive_client();
+    while pair.server.inbound.len() < 5 {
+        pair.time = pair.client.next_wakeup().unwrap();
+        pair.drive_client();
+    }
+
+    let first = pair.server.inbound.pop_front().unwrap();
+    let remaining: Vec<_> = pair.server.inbound.drain(..).collect();
+    pair.server.inbound.push_back(first);
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+    let mut accepting = pair.server.start_split_accept(incoming, pair.time);
+    let incoming_idx = accepting.incoming_idx();
+
+    let mut spoofed_remote = pair.client.addr;
+    spoofed_remote.set_port(spoofed_remote.port() + 1);
+    let mut endpoint_buf = Vec::new();
+    let buffered_before_spoof = pair.server.incoming_buffer_bytes();
+    for (now, ecn, packet) in &remaining {
+        let event = pair.server.endpoint.handle(
+            *now,
+            spoofed_remote,
+            None,
+            *ecn,
+            packet.clone(),
+            &mut endpoint_buf,
+        );
+        assert!(
+            event.is_none(),
+            "spoofed datagrams must be dropped before pending-incoming routing"
+        );
+        assert_eq!(
+            pair.server.incoming_buffer_bytes(),
+            buffered_before_spoof,
+            "spoofed datagrams must not consume the pending-incoming byte quota"
+        );
+        endpoint_buf.clear();
+    }
+
+    pair.server
+        .endpoint
+        .buffer_rustls_acceptor_input(&mut accepting);
+    let mut ack_buf = Vec::new();
+    let (accepted, ack) = accepting
+        .poll_rustls_acceptor(&mut acceptor, &mut ack_buf)
+        .unwrap();
+    assert!(
+        accepted.is_none(),
+        "spoofed datagrams must not complete ClientHello"
+    );
+    if let Some(transmit) = ack {
+        let size = transmit.size;
+        pair.server
+            .outbound
+            .push_back((transmit, Bytes::copy_from_slice(&ack_buf[..size])));
+    }
+
+    for (now, ecn, packet) in remaining {
+        let event = pair.server.endpoint.handle(
+            now,
+            pair.client.addr,
+            None,
+            ecn,
+            packet,
+            &mut endpoint_buf,
+        );
+        assert!(matches!(event, Some(DatagramEvent::IncomingData(idx)) if idx == incoming_idx));
+        endpoint_buf.clear();
+    }
+    pair.server
+        .endpoint
+        .buffer_rustls_acceptor_input(&mut accepting);
+    ack_buf.clear();
+    let (accepted, ack) = accepting
+        .poll_rustls_acceptor(&mut acceptor, &mut ack_buf)
+        .unwrap();
+    let accepted = accepted.expect("legitimate datagrams should complete ClientHello");
+    if let Some(transmit) = ack {
+        let size = transmit.size;
+        pair.server
+            .outbound
+            .push_back((transmit, Bytes::copy_from_slice(&ack_buf[..size])));
+    }
+
+    pair.server
+        .endpoint
+        .select_accepting_config(&mut accepting, None, pair.time)
+        .unwrap();
+    let Ok(accepted) = accepting.finish_from_rustls(accepted) else {
+        panic!("staged rustls accept unexpectedly failed")
+    };
+    let (server_ch, conn) = pair.server.endpoint.finish_accept(accepted);
+    pair.server.connections.insert(server_ch, conn);
+
+    pair.drive();
+    pair.finish_connect(client_ch, server_ch);
+}
+
+#[test]
+fn staged_acceptor_ignores_initials_with_mismatched_client_cid() {
+    let _guard = subscribe();
+    let server_cfg = server_config();
+    let server_crypto = server_cfg.crypto.clone();
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_cfg);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let initial_dcid = ConnectionId::new(&[7; 16]);
+    let mut first_config = client_config();
+    first_config.initial_dst_cid_provider(Arc::new(move || initial_dcid));
+    let client_ch = pair.begin_connect(first_config);
+    pair.drive_client();
+    let raw_initial = pair.server.inbound.front().unwrap().2.clone();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+    let mut accepting = pair.server.start_split_accept(incoming, pair.time);
+
+    // A distinct connection using the same client-chosen Initial DCID derives the same public
+    // Initial keys, but uses an empty client SCID. Feed its packet number 0 before the legitimate
+    // packet number 0 to ensure the rejected packet cannot poison duplicate detection.
+    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+        || Box::new(RandomConnectionIdGenerator::new(0));
+    let mut attacker = Pair::new(
+        Arc::new(EndpointConfig {
+            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            ..EndpointConfig::default()
+        }),
+        server_config(),
+    );
+    let mut attacker_config = client_config();
+    attacker_config.initial_dst_cid_provider(Arc::new(move || initial_dcid));
+    attacker.begin_connect(attacker_config);
+    attacker.drive_client();
+    let spoofed_initial = attacker.server.inbound.front().unwrap().2.clone();
+
+    let keys = server_crypto.initial_keys(1, initial_dcid).unwrap();
+    let decode = |packet| {
+        PartialDecode::new(
+            packet,
+            &FixedLengthConnectionIdParser::new(8),
+            &[1],
+            pair.server.config().grease_quic_bit,
+        )
+        .unwrap()
+        .0
+    };
+    let expected_src_cid = decode(raw_initial).initial_header().unwrap().src_cid;
+    let spoofed_decode = decode(spoofed_initial);
+    assert_ne!(
+        spoofed_decode.initial_header().unwrap().src_cid,
+        expected_src_cid
+    );
+    assert!(
+        !acceptor
+            .test_read_initial_decode(spoofed_decode, &keys, expected_src_cid, Bytes::new(), 1,)
+            .unwrap(),
+        "mismatched client SCID must be rejected"
+    );
+
+    let mut ack_buf = Vec::new();
+    let (accepted, ack) = accepting
+        .poll_rustls_acceptor(&mut acceptor, &mut ack_buf)
+        .unwrap();
+    let accepted = accepted
+        .expect("matching packet with the same packet number should still complete ClientHello");
+    if let Some(transmit) = ack {
+        let size = transmit.size;
+        pair.server
+            .outbound
+            .push_back((transmit, Bytes::copy_from_slice(&ack_buf[..size])));
+    }
+
+    pair.server
+        .endpoint
+        .select_accepting_config(&mut accepting, None, pair.time)
+        .unwrap();
+    let Ok(accepted) = accepting.finish_from_rustls(accepted) else {
+        panic!("staged rustls accept unexpectedly failed")
+    };
+    let (server_ch, conn) = pair.server.endpoint.finish_accept(accepted);
+    pair.server.connections.insert(server_ch, conn);
+
+    pair.drive();
+    pair.finish_connect(client_ch, server_ch);
+}
+
+#[test]
+fn staged_acceptor_ignores_mismatched_token_without_consuming_packet_number() {
+    let _guard = subscribe();
+    let server_config = server_config();
+    let server_crypto = server_config.crypto.clone();
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let initial_dcid = ConnectionId::new(&[9; 16]);
+    let mut client_config = client_config();
+    client_config.initial_dst_cid_provider(Arc::new(move || initial_dcid));
+    let client_ch = pair.begin_connect(client_config);
+    pair.drive_client();
+    let raw_initial = pair.server.inbound.front().unwrap().2.clone();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+    let keys = server_crypto.initial_keys(1, initial_dcid).unwrap();
+    let decode = || {
+        PartialDecode::new(
+            raw_initial.clone(),
+            &FixedLengthConnectionIdParser::new(8),
+            &[1],
+            pair.server.config().grease_quic_bit,
+        )
+        .unwrap()
+        .0
+    };
+    let expected_src_cid = decode().initial_header().unwrap().src_cid;
+
+    assert!(
+        !acceptor
+            .test_read_initial_decode(
+                decode(),
+                &keys,
+                expected_src_cid,
+                Bytes::from_static(b"wrong token"),
+                1,
+            )
+            .unwrap()
+    );
+    let mut accepting = pair.server.start_split_accept(incoming, pair.time);
+    let mut ack_buf = Vec::new();
+    let (accepted, ack) = accepting
+        .poll_rustls_acceptor(&mut acceptor, &mut ack_buf)
+        .unwrap();
+    let accepted = accepted.expect(
+        "invalid-token packet must not consume the legitimate packet number or ClientHello",
+    );
+    if let Some(transmit) = ack {
+        let size = transmit.size;
+        pair.server
+            .outbound
+            .push_back((transmit, Bytes::copy_from_slice(&ack_buf[..size])));
+    }
+
+    pair.server
+        .endpoint
+        .select_accepting_config(&mut accepting, None, pair.time)
+        .unwrap();
+    let Ok(accepted) = accepting.finish_from_rustls(accepted) else {
+        panic!("staged rustls accept unexpectedly failed")
+    };
+    let (server_ch, conn) = pair.server.endpoint.finish_accept(accepted);
+    pair.server.connections.insert(server_ch, conn);
+
+    pair.drive();
+    pair.finish_connect(client_ch, server_ch);
+}
+
+#[test]
+fn staged_acceptor_peer_connection_close_is_silent() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+    pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+    let accepting = pair.server.start_split_accept(incoming, pair.time);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    let close = ConnectionClose {
+        error_code: TransportErrorCode::NO_ERROR,
+        frame_type: None,
+        reason: Bytes::from_static(b"peer closed while staged"),
+    };
+    let mut payload = Vec::new();
+    frame::Close::Connection(close.clone()).encode(&mut payload, usize::MAX);
+    let error = acceptor
+        .test_read_initial_payload(payload.into(), 1)
+        .unwrap_err();
+    let ConnectionError::ConnectionClosed(actual) = &error else {
+        panic!("expected peer connection close")
+    };
+    assert_eq!(*actual, close);
+
+    let mut response_buf = Vec::new();
+    let error = pair
+        .server
+        .endpoint
+        .fail_accepting(accepting, error, &mut response_buf);
+    assert!(error.response.is_none(), "peer close must not be echoed");
+    assert!(response_buf.is_empty());
+    assert_eq!(pair.server.pending_accepts(), 0);
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.open_connections(), 0);
+}
+
+#[test]
+fn staged_acceptor_idle_deadline_tracks_only_timely_authenticated_activity() {
+    let _guard = subscribe();
+    const IDLE_TIMEOUT: u64 = 60_000;
+
+    for activity_after_deadline in [false, true] {
+        let mut server_config =
+            ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec![vec![0, 0, 0, 42]])));
+        Arc::get_mut(&mut server_config.transport)
+            .unwrap()
+            .max_idle_timeout(Some(
+                Duration::from_millis(IDLE_TIMEOUT).try_into().unwrap(),
+            ));
+        let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+        pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+        let client_crypto =
+            client_crypto_with_alpn((0..1000u32).map(|x| x.to_be_bytes().to_vec()).collect());
+        pair.begin_connect(ClientConfig::new(Arc::new(client_crypto)));
+        pair.drive_client();
+        while pair.server.inbound.len() < 2 {
+            pair.time = pair.client.next_wakeup().unwrap();
+            pair.drive_client();
+        }
+
+        let first = pair.server.inbound.pop_front().unwrap();
+        let (_, second_ecn, second_packet) = pair.server.inbound.pop_front().unwrap();
+        pair.server.inbound.clear();
+        pair.server.inbound.push_back(first);
+        pair.drive_server();
+
+        let incoming = pair.server.pop_waiting_incoming();
+        let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+        let mut accepting = pair.server.start_split_accept(incoming, pair.time);
+        let initial_deadline = accepting.idle_timeout_deadline().unwrap();
+
+        let mut ack_buf = Vec::new();
+        let (accepted, _) = accepting
+            .poll_rustls_acceptor(&mut acceptor, &mut ack_buf)
+            .unwrap();
+        assert!(
+            accepted.is_none(),
+            "the first fragment must not complete the large ClientHello"
+        );
+
+        let activity_time = if activity_after_deadline {
+            initial_deadline
+        } else {
+            initial_deadline - Duration::from_millis(1)
+        };
+        let mut endpoint_buf = Vec::new();
+        let event = pair.server.endpoint.handle(
+            activity_time,
+            pair.client.addr,
+            None,
+            second_ecn,
+            second_packet,
+            &mut endpoint_buf,
+        );
+        assert!(matches!(event, Some(DatagramEvent::IncomingData(_))));
+        pair.server
+            .endpoint
+            .buffer_rustls_acceptor_input(&mut accepting);
+        ack_buf.clear();
+        let result = accepting.poll_rustls_acceptor(&mut acceptor, &mut ack_buf);
+
+        if activity_after_deadline {
+            assert!(matches!(result, Err(ConnectionError::TimedOut)));
+            assert_eq!(accepting.idle_timeout_deadline(), Some(initial_deadline));
+        } else {
+            result.unwrap();
+            assert_eq!(
+                accepting.idle_timeout_deadline(),
+                Some(activity_time + Duration::from_millis(IDLE_TIMEOUT)),
+                "timely authenticated activity must extend the idle deadline"
+            );
+        }
+
+        let mut close_buf = Vec::new();
+        pair.server.endpoint.fail_accepting(
+            accepting,
+            ConnectionError::LocallyClosed,
+            &mut close_buf,
+        );
+    }
+}
+
+#[test]
+fn staged_acceptor_routes_zero_length_cid_initials() {
+    let _guard = subscribe();
+    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+        || Box::new(RandomConnectionIdGenerator::new(0));
+    let mut pair = Pair::new(
+        Arc::new(EndpointConfig {
+            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            ..EndpointConfig::default()
+        }),
+        server_config(),
+    );
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+    let mut accepting = pair.server.start_split_accept(incoming, pair.time);
+    let incoming_idx = accepting.incoming_idx();
+
+    let mut buf = Vec::new();
+    pair.server
+        .endpoint
+        .buffer_rustls_acceptor_input(&mut accepting);
+    let (accepted, ack) = accepting
+        .poll_rustls_acceptor(&mut acceptor, &mut buf)
+        .unwrap();
+    let accepted = accepted.expect("first Initial should contain ClientHello");
+    let ack = ack.expect("ClientHello Initial should be acknowledged");
+    let size = ack.size;
+    pair.server
+        .outbound
+        .push_back((ack, Bytes::copy_from_slice(&buf[..size])));
+
+    // Receiving the staged ACK switches the client's Initial DCID to the server's empty SCID.
+    // Keep the accept pending until the client's next handshake probe reaches the endpoint.
+    pair.drive_server();
+    pair.drive_client();
+    if pair.server.inbound.is_empty() {
+        pair.time = pair.client.next_wakeup().unwrap();
+        pair.drive_client();
+    }
+    assert!(!pair.server.inbound.is_empty());
+    pair.drive_server();
+    assert!(pair.server.incoming_buffer_bytes() > 0);
+    assert_eq!(accepting.incoming_idx(), incoming_idx);
+
+    pair.server
+        .endpoint
+        .select_accepting_config(&mut accepting, None, pair.time)
+        .unwrap();
+    let Ok(accepted) = accepting.finish_from_rustls(accepted) else {
+        panic!("staged rustls accept unexpectedly failed")
+    };
+    let (server_ch, conn) = pair.server.endpoint.finish_accept(accepted);
+    pair.server.connections.insert(server_ch, conn);
+
+    pair.drive();
+    pair.finish_connect(client_ch, server_ch);
+}
+
+#[test]
+fn staged_acceptor_error_close_uses_reserved_cid_and_next_packet_number() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+    let mut accepting = pair.server.start_split_accept(incoming, pair.time);
+    let mut ack_buf = Vec::new();
+    let (_, ack) = accepting
+        .poll_rustls_acceptor(&mut acceptor, &mut ack_buf)
+        .unwrap();
+    let ack = ack.expect("ClientHello Initial should be acknowledged");
+    let ack_size = ack.size;
+    pair.server
+        .outbound
+        .push_back((ack, Bytes::copy_from_slice(&ack_buf[..ack_size])));
+
+    let mut close_buf = Vec::new();
+    let error = pair.server.endpoint.fail_accepting(
+        accepting,
+        TransportError::CONNECTION_REFUSED("test refusal").into(),
+        &mut close_buf,
+    );
+    let close = error
+        .response
+        .expect("transport error should generate close");
+    let close_size = close.size;
+    pair.server
+        .outbound
+        .push_back((close, Bytes::copy_from_slice(&close_buf[..close_size])));
+
+    // If the close reused staged ACK packet number 0, the client would discard it as a duplicate.
+    // If it changed the reserved server SCID, the client would discard it as a CID mismatch.
+    pair.drive_server();
+    pair.drive_client();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::ConnectionClosed(close)
+        }) if close.error_code == TransportErrorCode::CONNECTION_REFUSED
+    );
+    assert_eq!(pair.server.pending_accepts(), 0);
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+}
+
+#[test]
+fn staged_acceptor_does_not_ack_ack_only_initial() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+    pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+    let mut acceptor = RustlsAcceptor::new(&incoming).unwrap();
+    let mut ranges = range_set::ArrayRangeSet::new();
+    ranges.insert_one(0);
+    let mut payload = Vec::new();
+    frame::Ack::encode(0, &ranges, None, &mut payload);
+    acceptor
+        .test_read_initial_payload(payload.into(), 1)
+        .unwrap();
+    assert!(!acceptor.test_ack_pending());
+    pair.server.endpoint.ignore(incoming);
 }
 
 #[test]

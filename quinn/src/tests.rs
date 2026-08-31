@@ -1,10 +1,5 @@
 #![cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 
-#[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-use rustls::crypto::aws_lc_rs::default_provider;
-#[cfg(feature = "rustls-ring")]
-use rustls::crypto::ring::default_provider;
-
 use std::{
     convert::TryInto,
     future::Future,
@@ -13,7 +8,7 @@ use std::{
     pin::pin,
     str,
     sync::{
-        Arc,
+        Arc, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -22,11 +17,18 @@ use std::{
 use crate::runtime::TokioRuntime;
 use crate::{Duration, Instant};
 use bytes::Bytes;
-use proto::{RandomConnectionIdGenerator, crypto::rustls::QuicClientConfig};
+use proto::{
+    ConnectionId, RandomConnectionIdGenerator,
+    crypto::rustls::QuicClientConfig,
+    crypto::{Keys, ServerConfig as ProtoServerConfig, Session, UnsupportedVersion},
+    transport_parameters::TransportParameters,
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustls::{
     RootCertStore,
+    crypto::Identity,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    server::WebPkiClientVerifier,
 };
 use tokio::time::{sleep, timeout};
 use tokio::{
@@ -38,6 +40,31 @@ use tracing::{error_span, info};
 use tracing_subscriber::EnvFilter;
 
 use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
+
+#[cfg(all(feature = "rustls-aws-lc-rs-fips", not(feature = "rustls-ring")))]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls::crypto::CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::SECP256R1]),
+        ..rustls_aws_lc_rs::DEFAULT_FIPS_PROVIDER
+    }
+}
+
+#[cfg(all(
+    feature = "rustls-aws-lc-rs",
+    not(feature = "rustls-aws-lc-rs-fips"),
+    not(feature = "rustls-ring")
+))]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls::crypto::CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::X25519]),
+        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
+    }
+}
+
+#[cfg(feature = "rustls-ring")]
+fn default_provider() -> rustls::crypto::CryptoProvider {
+    rustls_ring::DEFAULT_PROVIDER
+}
 
 #[test]
 fn handshake_timeout() {
@@ -272,6 +299,95 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
     EndpointFactory::new().endpoint_with_config(transport_config)
 }
 
+#[tokio::test]
+async fn incoming_acceptor_selects_crypto_and_transport_config() {
+    let _guard = subscribe();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let cert_der = CertificateDer::from(cert.cert);
+    let selected_alpn = b"selected";
+
+    let server_config = |alpn: &[u8], max_uni: u32| {
+        let mut crypto = rustls::ServerConfig::builder(Arc::new(default_provider()))
+            .with_no_client_auth()
+            .with_single_cert(
+                Arc::new(Identity::from_cert_chain(vec![cert_der.clone()]).unwrap()),
+                PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()).into(),
+            )
+            .unwrap();
+        crypto.alpn_protocols = vec![alpn.to_vec().into()];
+        let mut config = crate::ServerConfig::with_crypto(Arc::new(
+            crate::crypto::rustls::QuicServerConfig::try_from(crypto).unwrap(),
+        ));
+        let mut transport = TransportConfig::default();
+        transport.max_concurrent_uni_streams(max_uni.into());
+        config.transport_config(Arc::new(transport));
+        config
+    };
+
+    let default_server_config = server_config(b"default", 0);
+    let selected_server_config = Arc::new(server_config(selected_alpn, 1));
+    let server = Endpoint::new(
+        EndpointConfig::default(),
+        Some(default_server_config),
+        UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+    let server_addr = server.local_addr().unwrap();
+
+    let mut roots = RootCertStore::empty();
+    roots.add(cert_der).unwrap();
+    let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+        .unwrap();
+    client_crypto.alpn_protocols = vec![selected_alpn.as_slice().into()];
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    client.set_default_client_config(ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_crypto).unwrap(),
+    )));
+
+    let server_task = async {
+        let accepted = server
+            .accept()
+            .await
+            .unwrap()
+            .acceptor()
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            accepted.client_hello().server_name().map(AsRef::as_ref),
+            Some("localhost")
+        );
+        accepted
+            .accept_with(selected_server_config)
+            .unwrap()
+            .await
+            .unwrap()
+    };
+    let client_task = async {
+        client
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap()
+    };
+    let (server_conn, client_conn) = join!(server_task, client_task);
+
+    let mut send = timeout(Duration::from_secs(2), client_conn.open_uni())
+        .await
+        .expect("selected transport parameters should allow a unidirectional stream")
+        .unwrap();
+    send.write_all(b"selected").await.unwrap();
+    send.finish().unwrap();
+    let mut recv = server_conn.accept_uni().await.unwrap();
+    assert_eq!(recv.read_to_end(8).await.unwrap(), b"selected");
+
+    client_conn.close(0u32.into(), b"done");
+    server_conn.closed().await;
+}
+
 /// Constructs endpoints suitable for connecting to themselves and each other
 struct EndpointFactory {
     cert: rcgen::CertifiedKey<rcgen::KeyPair>,
@@ -290,15 +406,10 @@ impl EndpointFactory {
         self.endpoint_with_config(TransportConfig::default())
     }
 
-    fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
-        let key = PrivateKeyDer::Pkcs8(self.cert.signing_key.serialize_der().into());
-        let transport_config = Arc::new(transport_config);
-        let mut server_config =
-            crate::ServerConfig::with_single_cert(vec![self.cert.cert.der().clone()], key).unwrap();
-        server_config.transport_config(transport_config.clone());
-
-        let mut roots = RootCertStore::empty();
-        roots.add(self.cert.cert.der().clone()).unwrap();
+    fn endpoint_with_max_incoming(&self, max_incoming: usize) -> Endpoint {
+        let transport_config = Arc::new(TransportConfig::default());
+        let mut server_config = self.server_config(transport_config.clone());
+        server_config.max_incoming(max_incoming);
         let endpoint = Endpoint::new(
             self.endpoint_config.clone(),
             Some(server_config),
@@ -306,12 +417,593 @@ impl EndpointFactory {
             Arc::new(TokioRuntime),
         )
         .unwrap();
-        let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
+        endpoint.set_default_client_config(self.client_config(transport_config));
+        endpoint
+    }
+
+    fn server_config(&self, transport_config: Arc<TransportConfig>) -> crate::ServerConfig {
+        let cert = self.cert.cert.der().clone();
+        let key = PrivateKeyDer::Pkcs8(self.cert.signing_key.serialize_der().into());
+        let mut server_crypto = rustls::ServerConfig::builder(Arc::new(default_provider()))
+            .with_no_client_auth()
+            .with_single_cert(
+                Arc::new(Identity::from_cert_chain(vec![cert.clone()]).unwrap()),
+                key,
+            )
+            .unwrap();
+        server_crypto.max_early_data_size = u32::MAX;
+        let mut server_config = crate::ServerConfig::with_crypto(Arc::new(
+            crate::crypto::rustls::QuicServerConfig::try_from(server_crypto).unwrap(),
+        ));
+        server_config.transport_config(transport_config);
+        server_config
+    }
+
+    fn client_config(&self, transport_config: Arc<TransportConfig>) -> ClientConfig {
+        let mut roots = RootCertStore::empty();
+        roots.add(self.cert.cert.der().clone()).unwrap();
+        let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+            .unwrap();
+        client_crypto.enable_early_data = true;
+        let mut client_config =
+            ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
         client_config.transport_config(transport_config);
+        client_config
+    }
+
+    fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
+        let transport_config = Arc::new(transport_config);
+        let server_config = self.server_config(transport_config.clone());
+        let endpoint = Endpoint::new(
+            self.endpoint_config.clone(),
+            Some(server_config),
+            UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+            Arc::new(TokioRuntime),
+        )
+        .unwrap();
+        let client_config = self.client_config(transport_config);
         endpoint.set_default_client_config(client_config);
 
         endpoint
     }
+}
+
+fn client_endpoint(client_config: ClientConfig) -> Endpoint {
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    client.set_default_client_config(client_config);
+    client
+}
+
+fn fragmented_client_endpoint(factory: &EndpointFactory) -> Endpoint {
+    let mut roots = RootCertStore::empty();
+    roots.add(factory.cert.cert.der().clone()).unwrap();
+    let mut crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+        .unwrap();
+    // This stays below the default 16 KiB CRYPTO buffer, but spans more than the client's
+    // initial congestion window so the server cannot receive the complete ClientHello before
+    // the staged acceptor emits its first ACK.
+    crypto.alpn_protocols = (0..3000u32)
+        .map(|i| i.to_be_bytes().to_vec().into())
+        .collect();
+    client_endpoint(ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(crypto).unwrap(),
+    )))
+}
+
+async fn begin_staged_accept(
+    client: &Endpoint,
+    server: &Endpoint,
+) -> (crate::Accepted, crate::Connecting) {
+    let client_addr = client.local_addr().unwrap();
+    let connecting = client
+        .connect(server.local_addr().unwrap(), "localhost")
+        .unwrap();
+    let accepted = timeout(Duration::from_secs(5), async {
+        loop {
+            let incoming = server.accept().await.unwrap();
+            if incoming.remote_address() == client_addr {
+                break incoming.acceptor().unwrap().await;
+            }
+            incoming.ignore();
+        }
+    })
+    .await
+    .expect("timed out reading ClientHello")
+    .unwrap();
+    (accepted, connecting)
+}
+
+async fn establish_staged_connection(
+    client: &Endpoint,
+    server: &Endpoint,
+) -> (crate::Connection, crate::Connection) {
+    let (accepted, client_connecting) = begin_staged_accept(client, server).await;
+    let server_connecting = accepted.accept().unwrap();
+    let (client_conn, server_conn) = join!(client_connecting, server_connecting);
+    (client_conn.unwrap(), server_conn.unwrap())
+}
+
+#[tokio::test]
+async fn staged_acceptor_buffers_zero_rtt_until_config_selection() {
+    let _guard = subscribe();
+    const TICKET_CONFIRMED: &[u8] = b"ticket";
+    const EARLY_DATA: &[u8] = b"buffered zero rtt";
+
+    let factory = EndpointFactory::new();
+    let transport = Arc::new(TransportConfig::default());
+    let selected_config = Arc::new(factory.server_config(transport.clone()));
+    let server = Endpoint::new(
+        factory.endpoint_config.clone(),
+        Some((*selected_config).clone()),
+        UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+    let client = client_endpoint(factory.client_config(transport));
+
+    // Complete one connection and exchange 1-RTT data so the client processes the session ticket.
+    let client_connecting = client
+        .connect(server.local_addr().unwrap(), "localhost")
+        .unwrap();
+    let server_connecting = server.accept().await.unwrap().accept().unwrap();
+    let (client_conn, server_conn) = join!(client_connecting, server_connecting);
+    let client_conn = client_conn.unwrap();
+    let server_conn = server_conn.unwrap();
+    let mut ticket_stream = server_conn.open_uni().await.unwrap();
+    ticket_stream.write_all(TICKET_CONFIRMED).await.unwrap();
+    ticket_stream.finish().unwrap();
+    let mut ticket_stream = client_conn.accept_uni().await.unwrap();
+    assert_eq!(
+        ticket_stream.read_to_end(usize::MAX).await.unwrap(),
+        TICKET_CONFIRMED
+    );
+    client_conn.close(0u32.into(), b"resume");
+    let _ = wait_closed(&server_conn).await;
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+
+    let client_conn = client
+        .connect(server.local_addr().unwrap(), "localhost")
+        .unwrap()
+        .into_0rtt()
+        .unwrap_or_else(|_| panic!("missing 0-RTT keys after receiving a session ticket"));
+    let accepted = timeout(Duration::from_secs(5), async {
+        server.accept().await.unwrap().acceptor().unwrap().await
+    })
+    .await
+    .expect("timed out reading resumed ClientHello")
+    .unwrap();
+
+    // Keep `Accepted` alive while the client sends early data. The endpoint must buffer the
+    // resulting datagrams until configuration selection creates the connection.
+    let mut early_stream = client_conn.open_uni().await.unwrap();
+    early_stream.write_all(EARLY_DATA).await.unwrap();
+    early_stream.finish().unwrap();
+    sleep(Duration::from_millis(25)).await;
+    assert_eq!(server.open_connections(), 0);
+
+    let server_conn = accepted
+        .accept_with(selected_config)
+        .unwrap()
+        .into_0rtt()
+        .unwrap_or_else(|_| unreachable!("servers always have 0.5-RTT keys"));
+    let mut received = timeout(Duration::from_secs(5), server_conn.accept_uni())
+        .await
+        .expect("buffered 0-RTT stream was not replayed")
+        .unwrap();
+    assert!(received.is_0rtt());
+    assert_eq!(received.read_to_end(usize::MAX).await.unwrap(), EARLY_DATA);
+    client_conn.authenticated().await.unwrap();
+    early_stream.stopped().await.unwrap();
+
+    client_conn.close(0u32.into(), b"done");
+    let _ = wait_closed(&server_conn).await;
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+}
+
+#[tokio::test]
+async fn staged_acceptor_verifies_client_identity() {
+    let _guard = subscribe();
+    let server_identity = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let client_identity = rcgen::generate_simple_self_signed(vec!["client".into()]).unwrap();
+
+    let provider = Arc::new(default_provider());
+    let mut client_roots = RootCertStore::empty();
+    client_roots
+        .add(client_identity.cert.der().clone())
+        .unwrap();
+    let verifier = WebPkiClientVerifier::builder(Arc::new(client_roots), provider.as_ref())
+        .build()
+        .unwrap();
+    let server_crypto = rustls::ServerConfig::builder(provider)
+        .with_client_cert_verifier(Arc::new(verifier))
+        .with_single_cert(
+            Arc::new(Identity::from_cert_chain(vec![server_identity.cert.der().clone()]).unwrap()),
+            PrivatePkcs8KeyDer::from(server_identity.signing_key.serialize_der()).into(),
+        )
+        .unwrap();
+    let selected_config = Arc::new(crate::ServerConfig::with_crypto(Arc::new(
+        crate::crypto::rustls::QuicServerConfig::try_from(server_crypto).unwrap(),
+    )));
+    let server = Endpoint::new(
+        EndpointConfig::default(),
+        Some((*selected_config).clone()),
+        UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+
+    let client_config = |identity: Option<&rcgen::CertifiedKey<rcgen::KeyPair>>| {
+        let mut roots = RootCertStore::empty();
+        roots.add(server_identity.cert.der().clone()).unwrap();
+        let builder = rustls::ClientConfig::builder(Arc::new(default_provider()))
+            .with_root_certificates(roots);
+        let crypto = if let Some(identity) = identity {
+            builder
+                .with_client_auth_cert(
+                    Arc::new(Identity::from_cert_chain(vec![identity.cert.der().clone()]).unwrap()),
+                    PrivatePkcs8KeyDer::from(identity.signing_key.serialize_der()).into(),
+                )
+                .unwrap()
+        } else {
+            builder.with_no_client_auth().unwrap()
+        };
+        ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()))
+    };
+
+    let authenticated_client = client_endpoint(client_config(Some(&client_identity)));
+    let (accepted, client_connecting) = begin_staged_accept(&authenticated_client, &server).await;
+    let server_connecting = accepted.accept_with(selected_config.clone()).unwrap();
+    let (client_conn, server_conn) = join!(client_connecting, server_connecting);
+    let client_conn = client_conn.unwrap();
+    let server_conn = server_conn.unwrap();
+    assert!(server_conn.peer_identity().is_some());
+    client_conn.close(0u32.into(), b"authenticated");
+    let _ = wait_closed(&server_conn).await;
+    wait_idle(&server).await;
+    wait_idle(&authenticated_client).await;
+
+    let anonymous_client = client_endpoint(client_config(None));
+    let (accepted, client_connecting) = begin_staged_accept(&anonymous_client, &server).await;
+    let server_connecting = accepted.accept_with(selected_config).unwrap();
+    let (client_result, server_result) = join!(client_connecting, server_connecting);
+    assert!(
+        server_result.is_err(),
+        "missing client certificate reached the application"
+    );
+    if let Ok(client_conn) = client_result {
+        assert!(matches!(
+            wait_closed(&client_conn).await,
+            crate::ConnectionError::ConnectionClosed(_)
+                | crate::ConnectionError::ApplicationClosed(_)
+        ));
+    }
+    wait_idle(&server).await;
+    wait_idle(&anonymous_client).await;
+    assert_eq!(server.open_connections(), 0);
+}
+
+#[tokio::test]
+async fn dropping_pending_staged_acceptor_releases_incoming_slot() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let server = factory.endpoint_with_max_incoming(1);
+    let fragmented_client = fragmented_client_endpoint(&factory);
+    let connecting = fragmented_client
+        .connect(server.local_addr().unwrap(), "localhost")
+        .unwrap();
+    let acceptor = server.accept().await.unwrap().acceptor().unwrap();
+
+    assert_eq!(server.open_connections(), 0);
+    assert_wait_idle_pending(&server).await;
+    drop(acceptor);
+    assert!(
+        timeout(Duration::from_secs(5), connecting)
+            .await
+            .unwrap()
+            .is_err()
+    );
+    wait_idle(&server).await;
+    wait_idle(&fragmented_client).await;
+
+    // With max_incoming=1, a subsequent successful staged accept proves the dropped future
+    // released its reservation.
+    let client = factory.endpoint();
+    let (client_conn, server_conn) = establish_staged_connection(&client, &server).await;
+    client_conn.close(0u32.into(), b"done");
+    let _ = wait_closed(&server_conn).await;
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+}
+
+#[tokio::test]
+async fn dropping_or_refusing_accepted_releases_incoming_slot() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let server = factory.endpoint_with_max_incoming(1);
+
+    for refuse in [false, true] {
+        let client = factory.endpoint();
+        let (accepted, connecting) = begin_staged_accept(&client, &server).await;
+        assert_eq!(server.open_connections(), 0);
+        assert_wait_idle_pending(&server).await;
+        if refuse {
+            accepted.refuse();
+        } else {
+            drop(accepted);
+        }
+        client.close(0u32.into(), b"test cleanup");
+        assert!(
+            timeout(Duration::from_secs(5), connecting)
+                .await
+                .unwrap()
+                .is_err()
+        );
+        wait_idle(&server).await;
+        wait_idle(&client).await;
+    }
+
+    let client = factory.endpoint();
+    let (client_conn, server_conn) = establish_staged_connection(&client, &server).await;
+    assert_eq!(server.open_connections(), 1);
+    client_conn.close(0u32.into(), b"done");
+    let _ = wait_closed(&server_conn).await;
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+}
+
+#[tokio::test]
+async fn endpoint_close_cancels_pending_staged_acceptor() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let server = factory.endpoint();
+    let client = fragmented_client_endpoint(&factory);
+    let connecting = client
+        .connect(server.local_addr().unwrap(), "localhost")
+        .unwrap();
+    let acceptor = server.accept().await.unwrap().acceptor().unwrap();
+    tokio::pin!(acceptor);
+
+    // Poll once to register the staged acceptor's dedicated notification and confirm the
+    // fragmented ClientHello has not completed yet.
+    tokio::select! {
+        biased;
+        result = &mut acceptor => panic!("fragmented ClientHello unexpectedly completed: {}", result.is_ok()),
+        _ = std::future::ready(()) => {}
+    }
+    assert_wait_idle_pending(&server).await;
+    server.close(0u32.into(), b"closing");
+    let result = timeout(Duration::from_secs(5), &mut acceptor)
+        .await
+        .expect("endpoint close did not wake staged acceptor");
+    let Err(error) = result else {
+        panic!("staged acceptor completed after endpoint close");
+    };
+    assert!(matches!(error, crate::ConnectionError::LocallyClosed));
+    client.close(0u32.into(), b"test cleanup");
+    assert!(
+        timeout(Duration::from_secs(5), connecting)
+            .await
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(server.open_connections(), 0);
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+}
+
+#[tokio::test]
+async fn endpoint_close_rejects_staged_accept_after_client_hello() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let server = factory.endpoint();
+    let client = factory.endpoint();
+    let (accepted, connecting) = begin_staged_accept(&client, &server).await;
+
+    assert_eq!(server.open_connections(), 0);
+    assert_wait_idle_pending(&server).await;
+    server.close(0u32.into(), b"closing");
+    let Err(error) = accepted.accept() else {
+        panic!("staged accept succeeded after endpoint close");
+    };
+    assert!(matches!(error, crate::ConnectionError::LocallyClosed));
+
+    client.close(0u32.into(), b"test cleanup");
+    assert!(
+        timeout(Duration::from_secs(5), connecting)
+            .await
+            .unwrap()
+            .is_err()
+    );
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+    assert_eq!(server.open_connections(), 0);
+}
+
+#[derive(Default)]
+struct HandshakeBlocker {
+    state: Mutex<HandshakeBlockerState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct HandshakeBlockerState {
+    started: bool,
+    released: bool,
+}
+
+impl HandshakeBlocker {
+    fn block(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.started = true;
+        self.changed.notify_all();
+        while !state.released {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    fn wait_until_started(&self) {
+        let state = self.state.lock().unwrap();
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| !state.started)
+            .unwrap();
+        assert!(state.started, "timed out waiting for handshake to start");
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.released = true;
+        self.changed.notify_all();
+    }
+}
+
+struct HandshakeReleaseGuard(Arc<HandshakeBlocker>);
+
+impl Drop for HandshakeReleaseGuard {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+struct BlockingServerConfig {
+    inner: Arc<dyn ProtoServerConfig>,
+    blocker: Arc<HandshakeBlocker>,
+}
+
+impl ProtoServerConfig for BlockingServerConfig {
+    fn initial_keys(
+        &self,
+        version: u32,
+        dst_cid: ConnectionId,
+    ) -> Result<Keys, UnsupportedVersion> {
+        self.inner.initial_keys(version, dst_cid)
+    }
+
+    fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
+        self.inner.retry_tag(version, orig_dst_cid, packet)
+    }
+
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+    ) -> Box<dyn Session> {
+        self.blocker.block();
+        self.inner.clone().start_session(version, params)
+    }
+}
+
+fn blocking_server_pair() -> (Endpoint, Endpoint, Arc<HandshakeBlocker>) {
+    let factory = EndpointFactory::new();
+    let key = PrivateKeyDer::Pkcs8(factory.cert.signing_key.serialize_der().into());
+    let mut server_config =
+        crate::ServerConfig::with_single_cert(vec![factory.cert.cert.der().clone()], key).unwrap();
+    let blocker = Arc::new(HandshakeBlocker::default());
+    server_config.crypto = Arc::new(BlockingServerConfig {
+        inner: server_config.crypto.clone(),
+        blocker: blocker.clone(),
+    });
+
+    let server = Endpoint::new(
+        factory.endpoint_config.clone(),
+        Some(server_config),
+        UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+
+    let mut roots = RootCertStore::empty();
+    roots.add(factory.cert.cert.der().clone()).unwrap();
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    client
+        .set_default_client_config(ClientConfig::with_root_certificates(Arc::new(roots)).unwrap());
+
+    (client, server, blocker)
+}
+
+async fn wait_for_blocked_handshake(blocker: Arc<HandshakeBlocker>) {
+    tokio::task::spawn_blocking(move || blocker.wait_until_started())
+        .await
+        .unwrap();
+}
+
+async fn accept_with_blocked_start_session(
+    server: Endpoint,
+) -> Result<crate::Connection, crate::ConnectionError> {
+    let incoming = server.accept().await.unwrap();
+    // The test crypto provider intentionally blocks in `start_session`, so run
+    // accept on the blocking pool rather than parking a Tokio worker thread.
+    let connecting = tokio::task::spawn_blocking(move || incoming.accept())
+        .await
+        .unwrap()?;
+    connecting.await
+}
+
+struct BlockedHandshake {
+    client: Endpoint,
+    server: Endpoint,
+    blocker: Arc<HandshakeBlocker>,
+    release_guard: HandshakeReleaseGuard,
+    accept: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+    connect: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+}
+
+fn blocked_handshake() -> BlockedHandshake {
+    let (client, server, blocker) = blocking_server_pair();
+    let server_addr = server.local_addr().unwrap();
+
+    let accept = tokio::spawn({
+        let server = server.clone();
+        async move { accept_with_blocked_start_session(server).await }
+    });
+    let connect = tokio::spawn({
+        let client = client.clone();
+        async move { client.connect(server_addr, "localhost").unwrap().await }
+    });
+
+    BlockedHandshake {
+        client,
+        server,
+        blocker: blocker.clone(),
+        release_guard: HandshakeReleaseGuard(blocker),
+        accept,
+        connect,
+    }
+}
+
+async fn await_connection(
+    task: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+) -> Result<crate::Connection, crate::ConnectionError> {
+    timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn assert_wait_idle_pending(endpoint: &Endpoint) {
+    assert!(
+        timeout(Duration::from_millis(50), endpoint.wait_idle())
+            .await
+            .is_err()
+    );
+}
+
+async fn wait_idle(endpoint: &Endpoint) {
+    timeout(Duration::from_secs(5), endpoint.wait_idle())
+        .await
+        .unwrap();
+}
+
+async fn wait_closed(conn: &crate::Connection) -> crate::ConnectionError {
+    timeout(Duration::from_secs(5), conn.closed())
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -528,13 +1220,11 @@ fn run_echo(args: EchoArgs) {
 
         let mut roots = RootCertStore::empty();
         roots.add(cert).unwrap();
-        let mut client_crypto =
-            rustls::ClientConfig::builder_with_provider(default_provider().into())
-                .with_safe_default_protocol_versions()
-                .unwrap()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-        client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        let mut client_crypto = rustls::ClientConfig::builder(Arc::new(default_provider()))
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+            .unwrap();
+        client_crypto.key_log = Arc::new(rustls_util::KeyLogFile::new());
 
         let client = {
             let _guard = runtime.enter();
@@ -756,6 +1446,82 @@ async fn rebind_recv() {
     let mut stream = connection.accept_uni().await.unwrap();
     assert_eq!(stream.read_to_end(MSG.len()).await.unwrap(), MSG);
     server.await.unwrap();
+}
+
+/// Verify endpoint behavior while a connection is between `start_accept` and `finish_accept`:
+/// `open_connections` must be 0, and `wait_idle` must not complete while `pending_accepts > 0`.
+/// After the accept completes and the connection is closed, `wait_idle` must resolve.
+#[tokio::test]
+async fn split_accept_wait_idle_and_open_connections() {
+    let _guard = subscribe();
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake();
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    assert_eq!(server.open_connections(), 0);
+    assert_wait_idle_pending(&server).await;
+
+    blocker.release();
+
+    let client_conn = await_connection(connect).await.unwrap();
+    let server_conn = await_connection(accept).await.unwrap();
+    assert_eq!(server.open_connections(), 1);
+
+    client_conn.close(0u32.into(), b"done");
+    let _ = wait_closed(&client_conn).await;
+    let _ = wait_closed(&server_conn).await;
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+}
+
+/// Verify that calling `Endpoint::close` while a connection is in the `Accepting` state
+/// (between `start_accept` and `finish_accept`) produces `LocallyClosed` on the server side
+/// and `ConnectionClosed` on the client side, and that `wait_idle` resolves afterward.
+#[tokio::test]
+async fn split_accept_close_during_pending_accept() {
+    let _guard = subscribe();
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake();
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    server.close(0u32.into(), b"closing");
+    assert_wait_idle_pending(&server).await;
+
+    blocker.release();
+
+    match await_connection(accept).await {
+        Ok(conn) => {
+            let err = wait_closed(&conn).await;
+            assert!(matches!(err, crate::ConnectionError::LocallyClosed));
+        }
+        Err(err) => assert!(matches!(err, crate::ConnectionError::LocallyClosed)),
+    }
+
+    match await_connection(connect).await {
+        Ok(conn) => {
+            let err = wait_closed(&conn).await;
+            assert!(matches!(err, crate::ConnectionError::ConnectionClosed(_)));
+        }
+        Err(err) => {
+            assert!(matches!(err, crate::ConnectionError::ConnectionClosed(_)));
+        }
+    }
+
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+    assert_eq!(server.open_connections(), 0);
 }
 
 #[tokio::test]
