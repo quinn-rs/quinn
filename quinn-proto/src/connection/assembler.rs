@@ -1,5 +1,5 @@
 use std::{
-    cmp::Ordering,
+    cmp::{Ordering, max},
     collections::{BinaryHeap, binary_heap::PeekMut},
     mem,
 };
@@ -103,6 +103,8 @@ impl Assembler {
     /// This makes sure we're not unnecessarily holding on to many larger allocations.
     /// We merge contiguous chunks in the process of doing so.
     fn defragment(&mut self) {
+        // Chunks smaller than min_chunk_size are merged regardless of fragmentation
+        let min_chunk_size = max(self.buffered.div_ceil(MAX_CHUNKS), MIN_RETAINED_CHUNK_SIZE);
         let new = BinaryHeap::with_capacity(self.data.len());
         let old = mem::replace(&mut self.data, new);
         let mut buffers = old.into_sorted_vec();
@@ -114,7 +116,7 @@ impl Assembler {
             let size = chunk.bytes.len();
             offset = chunk.offset + size as u64;
             self.buffered += size;
-            if !chunk.defragmented {
+            if !chunk.defragmented || size < min_chunk_size {
                 fragmented_buffered += size;
             }
         }
@@ -122,11 +124,12 @@ impl Assembler {
         let mut buffer = BytesMut::with_capacity(fragmented_buffered);
         let mut offset = 0;
         for chunk in buffers.into_iter().rev() {
-            if chunk.defragmented {
-                // bytes might be empty after try_mark_defragment
-                if !chunk.bytes.is_empty() {
-                    self.data.push(chunk);
-                }
+            // bytes might be empty after try_mark_defragment
+            if chunk.bytes.is_empty() {
+                continue;
+            }
+            if chunk.defragmented && chunk.bytes.len() >= min_chunk_size {
+                self.data.push(chunk);
                 continue;
             }
             // Overlap is resolved by try_mark_defragment
@@ -356,6 +359,12 @@ pub(crate) struct TooManyChunks;
 /// Independent of how much memory those spans over-allocate. A frame is rejected only
 /// if compaction cannot get the count back down to this.
 const MAX_CHUNKS: usize = 1024;
+
+/// Minimum size of a defragmented chunk that is retained without coalescing.
+///
+/// Chunks below this size will be copied on every compaction. 128 bytes balances
+/// being cheap to copy while reducing the overhead of many small buffer nodes.
+const MIN_RETAINED_CHUNK_SIZE: usize = 128;
 
 /// Chunk count past which `insert` compacts before deciding whether to reject
 ///
@@ -674,6 +683,37 @@ mod test {
             Some(Chunk::new(0, Bytes::from_static(b"abc")))
         );
         assert_eq!(x.read(3, false), None);
+    }
+
+    #[test]
+    fn ordered_lossless_stream_is_not_rejected() {
+        const FRAME_LEN: usize = 32;
+
+        let mut x = Assembler::new();
+        let data = Bytes::from(vec![0; FRAME_LEN]);
+        let mut offset = 0u64;
+        while offset < (2 * COMPACT_THRESHOLD * FRAME_LEN) as u64 {
+            x.insert(offset, data.clone(), FRAME_LEN)
+                .expect("contiguous lossless data must not be rejected");
+            offset += FRAME_LEN as u64;
+        }
+    }
+
+    #[test]
+    fn defrag_respects_max_chunks_at_rounding_boundary() {
+        let mut x = Assembler::new();
+        let data = Bytes::from(vec![0; MIN_RETAINED_CHUNK_SIZE]);
+        let mut offset = 0;
+        // Fill with minimium sized chunks.
+        for _ in 0..MAX_CHUNKS {
+            x.insert(offset, data.clone(), data.len()).unwrap();
+            offset += data.len() as u64;
+        }
+        // Add 1 extra chunk, defragment must coalesce the previous
+        // chunks to stay within MAX_CHUNKS
+        x.insert(offset, Bytes::from_static(b"x"), 1).unwrap();
+        x.defragment();
+        assert!(x.data.len() <= MAX_CHUNKS);
     }
 
     #[test]
