@@ -7,7 +7,7 @@ use std::{
 };
 
 use rustls::{
-    NamedGroup,
+    crypto::{CryptoProvider, Identity, kx::NamedGroup},
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
 };
 use tracing::info;
@@ -27,6 +27,11 @@ async fn post_quantum_key_exchange_large_mtu() {
     check_post_quantum_key_exchange(1433).await;
 }
 
+#[tokio::test]
+async fn post_quantum_handshake_data_after_hello_retry_request() {
+    check_post_quantum_handshake_data_after_hello_retry_request().await;
+}
+
 async fn check_post_quantum_key_exchange(min_mtu: u16) {
     let _ = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -35,7 +40,12 @@ async fn check_post_quantum_key_exchange(min_mtu: u16) {
 
     let server_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
 
-    let (endpoint, server_cert) = make_server_endpoint(server_addr, min_mtu).unwrap();
+    let (endpoint, server_cert) = make_server_endpoint(
+        server_addr,
+        min_mtu,
+        Arc::new(rustls_aws_lc_rs::DEFAULT_PROVIDER),
+    )
+    .unwrap();
     let server_addr = endpoint.local_addr().unwrap();
     // accept a single connection
     let jh = tokio::spawn(async move {
@@ -55,8 +65,12 @@ async fn check_post_quantum_key_exchange(min_mtu: u16) {
         )
     });
 
-    let endpoint =
-        make_client_endpoint(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)), server_cert).unwrap();
+    let endpoint = make_client_endpoint(
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+        server_cert,
+        Arc::new(rustls_aws_lc_rs::DEFAULT_PROVIDER),
+    )
+    .unwrap();
     // connect to server
     let connection = endpoint
         .connect(server_addr, "localhost")
@@ -73,19 +87,73 @@ async fn check_post_quantum_key_exchange(min_mtu: u16) {
     jh.await.unwrap();
 }
 
+async fn check_post_quantum_handshake_data_after_hello_retry_request() {
+    // The client initially shares X25519, while the server only supports X25519MLKEM768, forcing
+    // a HelloRetryRequest before the negotiated group becomes available as handshake data.
+    let server_provider = Arc::new(CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![rustls_aws_lc_rs::kx_group::X25519MLKEM768]),
+        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
+    });
+    let (server, server_cert) = make_server_endpoint(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        1433,
+        server_provider,
+    )
+    .unwrap();
+    let server_addr = server.local_addr().unwrap();
+
+    let client_provider = Arc::new(CryptoProvider {
+        kx_groups: std::borrow::Cow::Owned(vec![
+            rustls_aws_lc_rs::kx_group::X25519,
+            rustls_aws_lc_rs::kx_group::X25519MLKEM768,
+        ]),
+        ..rustls_aws_lc_rs::DEFAULT_PROVIDER
+    });
+    let client = make_client_endpoint(
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+        server_cert,
+        client_provider,
+    )
+    .unwrap();
+
+    let server_task = async {
+        let mut connecting = server.accept().await.unwrap().accept().unwrap();
+        let handshake_data = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            connecting.handshake_data(),
+        )
+        .await
+        .expect("timed out waiting for handshake data")
+        .unwrap()
+        .downcast::<HandshakeData>()
+        .unwrap();
+        assert_eq!(
+            handshake_data.negotiated_key_exchange_group,
+            NamedGroup::X25519MLKEM768
+        );
+        connecting.await.unwrap()
+    };
+    let client_task = client.connect(server_addr, "localhost").unwrap();
+    let (server_connection, client_connection) = tokio::join!(server_task, client_task);
+    let client_connection = client_connection.unwrap();
+
+    client_connection.close(0u32.into(), b"done");
+    server_connection.closed().await;
+    server.wait_idle().await;
+    client.wait_idle().await;
+}
+
 fn make_client_endpoint(
     bind_addr: SocketAddr,
     server_cert: CertificateDer<'static>,
+    provider: Arc<CryptoProvider>,
 ) -> Result<Endpoint, Box<dyn Error + Send + Sync + 'static>> {
     let mut certs = rustls::RootCertStore::empty();
     certs.add(server_cert)?;
-    let rustls_config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .unwrap()
-    .with_root_certificates(certs)
-    .with_no_client_auth();
+    let rustls_config = rustls::ClientConfig::builder(provider)
+        .with_root_certificates(certs)
+        .with_no_client_auth()
+        .unwrap();
 
     let client_cfg =
         quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(rustls_config).unwrap()));
@@ -97,20 +165,20 @@ fn make_client_endpoint(
 fn make_server_endpoint(
     bind_addr: SocketAddr,
     min_mtu: u16,
+    provider: Arc<CryptoProvider>,
 ) -> Result<(Endpoint, CertificateDer<'static>), Box<dyn Error + Send + Sync + 'static>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let cert = CertificateDer::from(cert.cert);
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
         QuicServerConfig::try_from(
-            rustls::ServerConfig::builder_with_provider(Arc::new(
-                rustls::crypto::aws_lc_rs::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert.clone()], key.into())
-            .unwrap(),
+            rustls::ServerConfig::builder(provider)
+                .with_no_client_auth()
+                .with_single_cert(
+                    Arc::new(Identity::from_cert_chain(vec![cert.clone()]).unwrap()),
+                    key.into(),
+                )
+                .unwrap(),
         )
         .unwrap(),
     ));
