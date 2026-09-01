@@ -75,9 +75,9 @@ impl Assembler {
                 continue;
             }
 
+            let mut front = self.data.pop_front().unwrap();
             if ordered && self.bytes_read > front.offset {
                 // Advance front to the slice of useful data
-                // Advancing the offset can push the front past data[1]; both exits below fix that
                 let skip = (self.bytes_read - front.offset) as usize;
                 front.bytes.advance(skip);
                 front.offset = self.bytes_read;
@@ -85,30 +85,22 @@ impl Assembler {
             }
 
             let chunk = if max_length < front.bytes.len() {
-                let offset = front.offset;
+                // Take a prefix of the front buffer and reinsert the remainder
+                let chunk = Chunk::new(front.offset, front.bytes.split_to(max_length));
                 front.offset += max_length as u64;
-                let bytes = front.bytes.split_to(max_length);
-                self.restore_front_order();
-                Chunk::new(offset, bytes)
+                let idx = self.data.iter().take_while(|other| **other < front).count();
+                self.data.insert(idx, front);
+                chunk
             } else {
+                // Take the entirety of the front buffer
                 self.allocated -= front.allocation_size;
-                let offset = front.offset;
-                let bytes = mem::take(&mut front.bytes);
-                self.data.pop_front();
-                Chunk::new(offset, bytes)
+                Chunk::new(front.offset, front.bytes)
             };
 
             self.bytes_read += chunk.bytes.len() as u64;
             self.buffered -= chunk.bytes.len();
             return Some(chunk);
         }
-    }
-
-    /// Restore ordering after `read` advanced the front's offset
-    fn restore_front_order(&mut self) {
-        let chunk = self.data.pop_front().unwrap();
-        let idx = self.data.iter().take_while(|other| **other < chunk).count();
-        self.data.insert(idx, chunk);
     }
 
     /// Copy fragmented chunk data to new chunks backed by a single buffer
