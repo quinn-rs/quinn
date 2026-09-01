@@ -106,11 +106,8 @@ impl Assembler {
 
     /// Restore ordering after `read` advanced the front's offset
     fn restore_front_order(&mut self) {
-        if self.data.len() < 2 || self.data[0] <= self.data[1] {
-            return;
-        }
         let chunk = self.data.pop_front().unwrap();
-        let idx = self.data.partition_point(|other| *other <= chunk);
+        let idx = self.data.iter().take_while(|other| **other < chunk).count();
         self.data.insert(idx, chunk);
     }
 
