@@ -84,23 +84,23 @@ impl Assembler {
                 self.buffered -= skip;
             }
 
-            if max_length < front.bytes.len() {
-                self.bytes_read += max_length as u64;
+            let chunk = if max_length < front.bytes.len() {
                 let offset = front.offset;
                 front.offset += max_length as u64;
-                self.buffered -= max_length;
                 let bytes = front.bytes.split_to(max_length);
                 self.restore_front_order();
-                return Some(Chunk::new(offset, bytes));
-            }
+                Chunk::new(offset, bytes)
+            } else {
+                self.allocated -= front.allocation_size;
+                let offset = front.offset;
+                let bytes = mem::take(&mut front.bytes);
+                self.data.pop_front();
+                Chunk::new(offset, bytes)
+            };
 
-            self.bytes_read += front.bytes.len() as u64;
-            self.buffered -= front.bytes.len();
-            self.allocated -= front.allocation_size;
-            let offset = front.offset;
-            let bytes = mem::take(&mut front.bytes);
-            self.data.pop_front();
-            return Some(Chunk::new(offset, bytes));
+            self.bytes_read += chunk.bytes.len() as u64;
+            self.buffered -= chunk.bytes.len();
+            return Some(chunk);
         }
     }
 
