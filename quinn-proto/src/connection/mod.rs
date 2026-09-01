@@ -483,9 +483,25 @@ impl Connection {
 
         // If we need to send a probe, make sure we have something to send.
         for space in SpaceId::iter() {
-            let request_immediate_ack =
-                space == SpaceId::Data && self.peer_supports_ack_frequency();
-            self.spaces[space].maybe_queue_probe(request_immediate_ack, &self.streams);
+            if space != SpaceId::Data {
+                self.spaces[space].maybe_queue_probe(false, false, &self.streams);
+                continue;
+            }
+
+            let has_ack_eliciting_data = self.can_send_1rtt(
+                Ord::min(segment_size, usize::from(INITIAL_MTU)).saturating_sub(
+                    self.predict_1rtt_overhead(Some(
+                        self.packet_number_filter.peek(&self.spaces[SpaceId::Data]),
+                    )),
+                ),
+            );
+            let request_immediate_ack = self.peer_supports_ack_frequency();
+
+            self.spaces[space].maybe_queue_probe(
+                request_immediate_ack,
+                has_ack_eliciting_data,
+                &self.streams,
+            );
         }
 
         // Check whether we need to send a close message
@@ -3667,6 +3683,11 @@ impl Connection {
 
     fn peer_supports_ack_frequency(&self) -> bool {
         self.peer_params.min_ack_delay.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn disable_peer_ack_frequency(&mut self) {
+        self.peer_params.min_ack_delay = None;
     }
 
     /// Send an IMMEDIATE_ACK frame to the remote endpoint
