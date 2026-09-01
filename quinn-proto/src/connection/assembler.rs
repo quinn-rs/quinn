@@ -62,27 +62,25 @@ impl Assembler {
         loop {
             let front = self.data.front_mut()?;
 
-            if ordered {
-                if front.offset > self.bytes_read {
-                    // Next buffer starts after the current read index
-                    return None;
-                }
+            if ordered && front.offset > self.bytes_read {
+                // Next buffer starts after the current read index
+                return None;
+            }
 
-                if front.end() <= self.bytes_read {
-                    // Next buffer ends before the current read index
-                    self.buffered -= front.bytes.len();
-                    self.allocated -= front.allocation_size;
-                    self.data.pop_front();
-                    continue;
-                }
+            if ordered && front.end() <= self.bytes_read {
+                // Next buffer ends before the current read index
+                self.buffered -= front.bytes.len();
+                self.allocated -= front.allocation_size;
+                self.data.pop_front();
+                continue;
+            }
 
-                if let Some(skip) = self.bytes_read.checked_sub(front.offset) {
-                    // Advance front to the slice of useful data
-                    // Advancing the offset can push the front past data[1]; both exits below fix that
-                    front.bytes.advance(skip as usize);
-                    front.offset += skip;
-                    self.buffered -= skip as usize;
-                }
+            if ordered && let Some(skip) = self.bytes_read.checked_sub(front.offset) {
+                // Advance front to the slice of useful data
+                // Advancing the offset can push the front past data[1]; both exits below fix that
+                front.bytes.advance(skip as usize);
+                front.offset += skip;
+                self.buffered -= skip as usize;
             }
 
             if max_length < front.bytes.len() {
