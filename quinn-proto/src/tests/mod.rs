@@ -1917,6 +1917,9 @@ fn tail_loss_small_segment_size() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
+    // Keep IMMEDIATE_ACK out of the probe so the test isolates whether the available
+    // DATAGRAM suppresses the fallback PING.
+    pair.client_conn_mut(client_ch).disable_peer_ack_frequency();
 
     // No datagrams frames received in the handshake.
     let server_stats = pair.server_conn_mut(server_ch).stats();
@@ -1936,6 +1939,7 @@ fn tail_loss_small_segment_size() {
     // Doing one step makes the client advance time to the PTO fire time.
     info!("stepping forward to PTO");
     pair.step();
+    let ping_count = pair.client_conn_mut(client_ch).stats().frame_tx.ping;
 
     // Still no datagrams frames received by the server.
     let server_stats = pair.server_conn_mut(server_ch).stats();
@@ -1958,6 +1962,59 @@ fn tail_loss_small_segment_size() {
     // Finally the server should have received some datagrams.
     let server_stats = pair.server_conn_mut(server_ch).stats();
     assert_eq!(server_stats.frame_rx.datagram, DGRAM_NUM);
+
+    // DATAGRAM frames are ack-eliciting, so the loss probe does not need an additional PING.
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(client_stats.frame_tx.ping, ping_count);
+}
+
+#[test]
+fn tail_loss_probe_keeps_ping_when_datagram_does_not_fit() {
+    let _guard = subscribe();
+
+    const PATH_MTU: u16 = 1452;
+
+    let client_config = {
+        let mut config = client_config();
+        Arc::get_mut(&mut config.transport)
+            .unwrap()
+            .initial_mtu(PATH_MTU)
+            .mtu_discovery_config(None);
+        config
+    };
+
+    let mut pair = Pair::default();
+    pair.mtu = PATH_MTU as usize;
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+
+    pair.client_conn_mut(client_ch).disable_peer_ack_frequency();
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), PATH_MTU);
+
+    // Establish an outstanding ack-eliciting packet and discard it.
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+    assert!(!pair.server.inbound.is_empty());
+    pair.server.inbound.clear();
+
+    // Advance to the PTO without transmitting the queued loss probe yet.
+    pair.step();
+    let ping_count = pair.client_conn_mut(client_ch).stats().frame_tx.ping;
+
+    // This fits the normal path MTU, but not a loss probe capped to INITIAL_MTU.
+    let datagram_len = pair.client_datagrams(client_ch).max_size().unwrap();
+    assert!(datagram_len > INITIAL_MTU as usize);
+    pair.client_datagrams(client_ch)
+        .send(vec![0; datagram_len].into(), false)
+        .unwrap();
+
+    pair.drive();
+
+    // The probe must retain its PING when the queued DATAGRAM cannot fit in that packet.
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(client_stats.frame_tx.ping, ping_count + 2);
+
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(server_stats.frame_rx.datagram, 1);
 }
 
 // Respect max_datagrams when TLP happens

@@ -119,6 +119,7 @@ impl PacketSpace {
     pub(super) fn maybe_queue_probe(
         &mut self,
         request_immediate_ack: bool,
+        has_ack_eliciting_data: bool,
         streams: &StreamsState,
     ) {
         if self.loss_probes == 0 {
@@ -133,6 +134,12 @@ impl PacketSpace {
 
         if !self.pending.is_empty(streams) {
             // There's real data to send here, no need to make something up
+            return;
+        }
+
+        if has_ack_eliciting_data {
+            // A fitting DATAGRAM is held outside `pending` until packet assembly, but it
+            // still makes the probe ack-eliciting without a fallback frame.
             return;
         }
 
