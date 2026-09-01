@@ -2,7 +2,7 @@
 use std::io::{self, IoSlice};
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 use std::net::{SocketAddr, SocketAddrV6};
-#[cfg(apple)]
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::time::Duration;
@@ -715,4 +715,183 @@ fn recv_transport_error_ipv6() {
     if let Some(addr) = err.addr {
         assert_eq!(addr.ip(), dst.ip());
     }
+}
+
+/// The DSCP marking under test: AF41 (RFC 2597)
+#[cfg(unix)]
+const DSCP: u8 = 34;
+
+#[test]
+#[cfg(unix)]
+fn dscp_preserved_v6() {
+    test_dscp_preserved(false);
+}
+
+#[test]
+#[cfg(all(unix, not(any(target_os = "openbsd", target_os = "netbsd", solarish))))]
+fn dscp_preserved_v4() {
+    test_dscp_preserved(true);
+}
+
+/// DSCP set on the socket via `setsockopt` must survive the per-packet ECN
+/// cmsg
+///
+/// The `IP_TOS` / `IPV6_TCLASS` cmsg attached to every datagram overrides the
+/// socket-level option, so a cmsg valued solely from the ECN codepoint would
+/// rewrite the wire TOS byte to `ecn` — zeroing DSCP markings the application
+/// configured before handing the socket over. (Windows is unaffected: its
+/// `IP_ECN` / `IPV6_ECN` options touch only the ECN bits.)
+///
+/// Sends one datagram over loopback through `UdpSocketState` on a DSCP-tagged
+/// socket and receives it with a raw `recvmsg` requesting the TOS byte.
+#[cfg(unix)]
+fn test_dscp_preserved(ipv4: bool) {
+    use std::{io::ErrorKind, time::Duration};
+
+    let tos = DSCP << 2;
+    let ecn = EcnCodepoint::Ect0;
+
+    let loopback: IpAddr = match ipv4 {
+        true => Ipv4Addr::LOCALHOST.into(),
+        false => Ipv6Addr::LOCALHOST.into(),
+    };
+
+    let recv = UdpSocket::bind((loopback, 0)).unwrap();
+    recv.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let (level, name) = match ipv4 {
+        // `libc` lacks `IP_RECVTOS` on solarish, where `dscp_preserved_v4` is
+        // disabled
+        #[cfg(not(solarish))]
+        true => (libc::IPPROTO_IP, libc::IP_RECVTOS),
+        #[cfg(solarish)]
+        true => unreachable!("dscp_preserved_v4 is disabled on solarish"),
+        false => (libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS),
+    };
+    set_socket_int_option(&recv, level, name, 1);
+    let dst = recv.local_addr().unwrap();
+
+    // Tag the sender *before* constructing `UdpSocketState`, as an
+    // application configuring DSCP would
+    let send = UdpSocket::bind((loopback, 0)).unwrap();
+    let (level, name) = match ipv4 {
+        true => (libc::IPPROTO_IP, libc::IP_TOS),
+        false => (libc::IPPROTO_IPV6, libc::IPV6_TCLASS),
+    };
+    set_socket_int_option(&send, level, name, tos as libc::c_int);
+
+    let send_state = UdpSocketState::new((&send).into()).unwrap();
+    let transmit = Transmit {
+        destination: dst,
+        ecn: Some(ecn),
+        contents: b"dscp",
+        segment_size: None,
+        src_ip: None,
+    };
+    // `UdpSocketState::new` sets the socket nonblocking; loopback won't
+    // backpressure a 4-byte datagram, but retry `WouldBlock` to be safe
+    for _ in 0..10 {
+        match send_state.try_send((&send).into(), &transmit) {
+            Ok(()) => break,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => panic!("try_send failed: {e}"),
+        }
+    }
+
+    let wire_tos = recv_tos(&recv);
+    assert_eq!(
+        wire_tos >> 2,
+        DSCP,
+        "DSCP clobbered: wire TOS byte was {wire_tos:#04x} (DSCP {}, ECN {:#04b})",
+        wire_tos >> 2,
+        wire_tos & 0b11,
+    );
+    // On Android API level <= 25 the IPv4 `IP_TOS` control message is not
+    // supported: `sendmsg` fails with `EINVAL` and quinn-udp resends without
+    // the cmsg, so the socket-level DSCP survives but the ECN codepoint is
+    // lost (mirrors the ECN exemption in `test_send_recv`)
+    if ipv4
+        && cfg!(target_os = "android")
+        && std::env::var("API_LEVEL")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .expect("API_LEVEL environment variable to be set on Android")
+            <= 25
+    {
+        assert_eq!(wire_tos & 0b11, 0, "no ECN expected on Android API <= 25");
+    } else {
+        assert_eq!(wire_tos & 0b11, ecn as u8, "ECN bits should still be set");
+    }
+}
+
+/// Sets a `c_int`-valued socket option via `setsockopt`, panicking on failure
+#[cfg(unix)]
+fn set_socket_int_option(
+    socket: &impl AsRawFd,
+    level: libc::c_int,
+    name: libc::c_int,
+    value: libc::c_int,
+) {
+    let rc = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            level,
+            name,
+            &value as *const _ as *const libc::c_void,
+            size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    assert_eq!(rc, 0, "setsockopt({level}, {name}) failed");
+}
+
+/// Receives one datagram and returns its TOS / traffic-class byte
+#[cfg(unix)]
+fn recv_tos(sock: &UdpSocket) -> u8 {
+    use std::io::Error;
+
+    let mut buf = [0u8; 64];
+    let mut iov = libc::iovec {
+        iov_base: buf.as_mut_ptr() as *mut libc::c_void,
+        iov_len: buf.len(),
+    };
+    // Aligned control buffer
+    let mut ctrl = [0u64; 16];
+    let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+    hdr.msg_iov = &mut iov;
+    hdr.msg_iovlen = 1;
+    hdr.msg_control = ctrl.as_mut_ptr() as *mut libc::c_void;
+    hdr.msg_controllen = size_of_val(&ctrl) as _;
+
+    let n = unsafe { libc::recvmsg(sock.as_raw_fd(), &mut hdr, 0) };
+    assert!(n >= 0, "recvmsg failed: {}", Error::last_os_error());
+
+    let mut cmsg = unsafe { libc::CMSG_FIRSTHDR(&hdr) };
+    while !cmsg.is_null() {
+        let c = unsafe { &*cmsg };
+        // FreeBSD types the received cmsg `IP_RECVTOS` rather than `IP_TOS`;
+        // `libc` lacks the constant on solarish, where only the v6 variant of
+        // the DSCP test runs
+        #[cfg(not(solarish))]
+        let is_v4_tos = c.cmsg_level == libc::IPPROTO_IP
+            && (c.cmsg_type == libc::IP_TOS || c.cmsg_type == libc::IP_RECVTOS);
+        #[cfg(solarish)]
+        let is_v4_tos = false;
+        let is_tos =
+            is_v4_tos || (c.cmsg_level == libc::IPPROTO_IPV6 && c.cmsg_type == libc::IPV6_TCLASS);
+        if is_tos {
+            // Delivered as a single byte on BSD/macOS and a host-order int on
+            // Linux; either way the value is in the first byte on
+            // little-endian, and Linux (the only big-endian target in
+            // practice) writes a full int we can read unaligned
+            let data = unsafe { libc::CMSG_DATA(cmsg) };
+            let len = c.cmsg_len as usize - unsafe { libc::CMSG_LEN(0) } as usize;
+            return match len {
+                1 => unsafe { *data },
+                _ => unsafe { (data as *const libc::c_int).read_unaligned() as u8 },
+            };
+        }
+        cmsg = unsafe { libc::CMSG_NXTHDR(&hdr, cmsg) };
+    }
+    panic!("no TOS/TCLASS cmsg on received datagram");
 }
