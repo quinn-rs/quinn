@@ -59,47 +59,42 @@ impl Assembler {
 
     /// Get the the next chunk
     pub(super) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
-        loop {
-            let front = self.data.front_mut()?;
-
-            if ordered && front.end() <= self.bytes_read {
-                // Next buffer ends before the current read index
-                self.buffered -= front.bytes.len();
-                self.allocated -= front.allocation_size;
-                self.data.pop_front();
-                continue;
-            }
-
-            if ordered && front.offset > self.bytes_read {
-                // Next buffer starts after the current read index
-                return None;
-            }
-
-            let mut front = self.data.pop_front().unwrap();
-            if ordered && let Some(skip) = self.bytes_read.checked_sub(front.offset) {
-                // Advance front to the slice of useful data
-                front.bytes.advance(skip as usize);
-                front.offset = self.bytes_read;
-                self.buffered -= skip as usize;
-            }
-
-            let chunk = if max_length < front.bytes.len() {
-                // Take a prefix of the front buffer and reinsert the remainder
-                let chunk = Chunk::new(front.offset, front.bytes.split_to(max_length));
-                front.offset += max_length as u64;
-                let idx = self.data.iter().take_while(|other| **other < front).count();
-                self.data.insert(idx, front);
-                chunk
-            } else {
-                // Take the entirety of the front buffer
-                self.allocated -= front.allocation_size;
-                Chunk::new(front.offset, front.bytes)
-            };
-
-            self.bytes_read += chunk.bytes.len() as u64;
-            self.buffered -= chunk.bytes.len();
-            return Some(chunk);
+        while ordered && self.data.front()?.end() <= self.bytes_read {
+            // Next buffer ends before the current read index
+            let front = self.data.pop_front().unwrap();
+            self.buffered -= front.bytes.len();
+            self.allocated -= front.allocation_size;
         }
+
+        if ordered && self.data.front()?.offset > self.bytes_read {
+            // Next buffer starts after the current read index
+            return None;
+        }
+
+        let mut front = self.data.pop_front()?;
+        if ordered && let Some(skip) = self.bytes_read.checked_sub(front.offset) {
+            // Advance front to the slice of useful data
+            front.bytes.advance(skip as usize);
+            front.offset = self.bytes_read;
+            self.buffered -= skip as usize;
+        }
+
+        let chunk = if max_length < front.bytes.len() {
+            // Take a prefix of the front buffer and reinsert the remainder
+            let chunk = Chunk::new(front.offset, front.bytes.split_to(max_length));
+            front.offset += max_length as u64;
+            let idx = self.data.iter().take_while(|other| **other < front).count();
+            self.data.insert(idx, front);
+            chunk
+        } else {
+            // Take the entirety of the front buffer
+            self.allocated -= front.allocation_size;
+            Chunk::new(front.offset, front.bytes)
+        };
+
+        self.bytes_read += chunk.bytes.len() as u64;
+        self.buffered -= chunk.bytes.len();
+        Some(chunk)
     }
 
     /// Copy fragmented chunk data to new chunks backed by a single buffer
