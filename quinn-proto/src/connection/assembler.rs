@@ -80,7 +80,7 @@ impl Assembler {
                 // Advancing the offset can push the front past data[1]; both exits below fix that
                 let skip = (self.bytes_read - front.offset) as usize;
                 front.bytes.advance(skip);
-                front.offset += skip as u64;
+                front.offset = self.bytes_read;
                 self.buffered -= skip;
             }
 
