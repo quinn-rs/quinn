@@ -79,7 +79,7 @@ impl Assembler {
                 // Advance front to the slice of useful data
                 // Advancing the offset can push the front past data[1]; both exits below fix that
                 front.bytes.advance(skip as usize);
-                front.offset += skip;
+                front.offset = self.bytes_read;
                 self.buffered -= skip as usize;
             }
 
