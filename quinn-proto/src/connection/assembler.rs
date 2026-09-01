@@ -62,17 +62,17 @@ impl Assembler {
         loop {
             let front = self.data.front_mut()?;
 
-            if ordered && front.offset > self.bytes_read {
-                // Next buffer starts after the current read index
-                return None;
-            }
-
             if ordered && front.end() <= self.bytes_read {
                 // Next buffer ends before the current read index
                 self.buffered -= front.bytes.len();
                 self.allocated -= front.allocation_size;
                 self.data.pop_front();
                 continue;
+            }
+
+            if ordered && front.offset > self.bytes_read {
+                // Next buffer starts after the current read index
+                return None;
             }
 
             let mut front = self.data.pop_front().unwrap();
