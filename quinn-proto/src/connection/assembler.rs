@@ -76,13 +76,12 @@ impl Assembler {
                     continue;
                 }
 
-                // Advance front to the slice of useful data
-                let skip = (self.bytes_read - front.offset) as usize;
-                // Advancing the offset can push the front past data[1]; both exits below fix that
-                if skip > 0 {
-                    front.bytes.advance(skip);
-                    front.offset += skip as u64;
-                    self.buffered -= skip;
+                if let Some(skip) = self.bytes_read.checked_sub(front.offset) {
+                    // Advance front to the slice of useful data
+                    // Advancing the offset can push the front past data[1]; both exits below fix that
+                    front.bytes.advance(skip as usize);
+                    front.offset += skip;
+                    self.buffered -= skip as usize;
                 }
             }
 
