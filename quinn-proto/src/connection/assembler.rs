@@ -60,45 +60,45 @@ impl Assembler {
     /// Get the the next chunk
     pub(super) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
         loop {
-            let chunk = self.data.front_mut()?;
+            let front = self.data.front_mut()?;
 
             if ordered {
-                if chunk.offset > self.bytes_read {
-                    // Next chunk is after current read index
+                if front.offset > self.bytes_read {
+                    // Next buffer starts after the current read index
                     return None;
-                } else if (chunk.offset + chunk.bytes.len() as u64) <= self.bytes_read {
-                    // Next chunk is useless as the read index is beyond its end
-                    self.buffered -= chunk.bytes.len();
-                    self.allocated -= chunk.allocation_size;
+                } else if (front.offset + front.bytes.len() as u64) <= self.bytes_read {
+                    // Next buffer ends before the current read index
+                    self.buffered -= front.bytes.len();
+                    self.allocated -= front.allocation_size;
                     self.data.pop_front();
                     continue;
                 }
 
-                // Determine `start` and `len` of the slice of useful data in chunk
-                let start = (self.bytes_read - chunk.offset) as usize;
+                // Advance front to the slice of useful data
+                let skip = (self.bytes_read - front.offset) as usize;
                 // Advancing the offset can push the front past data[1]; both exits below fix that
-                if start > 0 {
-                    chunk.bytes.advance(start);
-                    chunk.offset += start as u64;
-                    self.buffered -= start;
+                if skip > 0 {
+                    front.bytes.advance(skip);
+                    front.offset += skip as u64;
+                    self.buffered -= skip;
                 }
             }
 
-            if max_length < chunk.bytes.len() {
+            if max_length < front.bytes.len() {
                 self.bytes_read += max_length as u64;
-                let offset = chunk.offset;
-                chunk.offset += max_length as u64;
+                let offset = front.offset;
+                front.offset += max_length as u64;
                 self.buffered -= max_length;
-                let bytes = chunk.bytes.split_to(max_length);
+                let bytes = front.bytes.split_to(max_length);
                 self.restore_front_order();
                 return Some(Chunk::new(offset, bytes));
             }
 
-            self.bytes_read += chunk.bytes.len() as u64;
-            self.buffered -= chunk.bytes.len();
-            self.allocated -= chunk.allocation_size;
-            let offset = chunk.offset;
-            let bytes = mem::take(&mut chunk.bytes);
+            self.bytes_read += front.bytes.len() as u64;
+            self.buffered -= front.bytes.len();
+            self.allocated -= front.allocation_size;
+            let offset = front.offset;
+            let bytes = mem::take(&mut front.bytes);
             self.data.pop_front();
             return Some(Chunk::new(offset, bytes));
         }
