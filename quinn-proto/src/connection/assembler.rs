@@ -62,28 +62,26 @@ impl Assembler {
         loop {
             let front = self.data.front_mut()?;
 
-            if ordered {
-                if front.offset > self.bytes_read {
-                    // Next buffer starts after the current read index
-                    return None;
-                }
+            if ordered && front.offset > self.bytes_read {
+                // Next buffer starts after the current read index
+                return None;
+            }
 
-                if front.end() <= self.bytes_read {
-                    // Next buffer ends before the current read index
-                    self.buffered -= front.bytes.len();
-                    self.allocated -= front.allocation_size;
-                    self.data.pop_front();
-                    continue;
-                }
+            if ordered && front.end() <= self.bytes_read {
+                // Next buffer ends before the current read index
+                self.buffered -= front.bytes.len();
+                self.allocated -= front.allocation_size;
+                self.data.pop_front();
+                continue;
+            }
 
-                if self.bytes_read > front.offset {
-                    // Advance front to the slice of useful data
-                    // Advancing the offset can push the front past data[1]; both exits below fix that
-                    let skip = (self.bytes_read - front.offset) as usize;
-                    front.bytes.advance(skip);
-                    front.offset += skip as u64;
-                    self.buffered -= skip;
-                }
+            if ordered && self.bytes_read > front.offset {
+                // Advance front to the slice of useful data
+                // Advancing the offset can push the front past data[1]; both exits below fix that
+                let skip = (self.bytes_read - front.offset) as usize;
+                front.bytes.advance(skip);
+                front.offset += skip as u64;
+                self.buffered -= skip;
             }
 
             if max_length < front.bytes.len() {
