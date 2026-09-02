@@ -25,7 +25,7 @@ pub use send::{FinishError, WriteError, Written};
 
 mod state;
 #[allow(unreachable_pub)] // fuzzing only
-pub use state::StreamsState;
+pub use state::{FlowControlStats, StreamsState};
 
 /// Access to streams
 pub struct Streams<'a> {
