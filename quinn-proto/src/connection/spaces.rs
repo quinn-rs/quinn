@@ -12,9 +12,9 @@ use tracing::trace;
 use super::assembler::Assembler;
 use super::sent_packets::SentPackets;
 use crate::{
-    Dir, Duration, Instant, SocketAddr, StreamId, TransportError, VarInt, cid_queue::CidQueue,
-    connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
-    shared::IssuedCid,
+    AckFrequencyConfig, Dir, Duration, Instant, SocketAddr, StreamId, TransportError, VarInt,
+    cid_queue::CidQueue, connection::StreamsState, crypto::Keys, frame, packet::SpaceId,
+    range_set::ArrayRangeSet, shared::IssuedCid,
 };
 
 pub(super) struct PacketSpace {
@@ -660,6 +660,11 @@ impl PendingAcks {
         }
     }
 
+    pub(super) fn set_ack_frequency_config(&mut self, config: &AckFrequencyConfig) {
+        self.ack_eliciting_threshold = config.ack_eliciting_threshold.into_inner();
+        self.reordering_threshold = config.reordering_threshold.into_inner();
+    }
+
     pub(super) fn set_ack_frequency_params(&mut self, frame: &frame::AckFrequency) {
         self.ack_eliciting_threshold = frame.ack_eliciting_threshold.into_inner();
         self.reordering_threshold = frame.reordering_threshold.into_inner();
@@ -1053,6 +1058,39 @@ mod test {
         dedup.insert(0);
         acks.packet_received(Instant::now(), 0, true, &dedup);
         assert!(!acks.immediate_ack_required);
+    }
+
+    #[test]
+    fn pending_acks_respects_initial_ack_frequency() {
+        let now = Instant::now();
+        let mut dedup = Dedup::new();
+
+        let mut every_packet = PendingAcks::new();
+        every_packet.set_ack_frequency_config(
+            AckFrequencyConfig::default()
+                .ack_eliciting_threshold(VarInt::from_u32(0))
+                .reordering_threshold(VarInt::from_u32(0)),
+        );
+        assert_eq!(every_packet.reordering_threshold, 0);
+        dedup.insert(0);
+        every_packet.packet_received(now, 0, true, &dedup);
+        assert!(every_packet.immediate_ack_required);
+
+        let mut every_fourth_packet = PendingAcks::new();
+        every_fourth_packet.set_ack_frequency_config(
+            AckFrequencyConfig::default()
+                .ack_eliciting_threshold(VarInt::from_u32(3))
+                .reordering_threshold(VarInt::from_u32(4)),
+        );
+        assert_eq!(every_fourth_packet.reordering_threshold, 4);
+        for packet_number in 0..3 {
+            dedup.insert(packet_number);
+            every_fourth_packet.packet_received(now, packet_number, true, &dedup);
+            assert!(!every_fourth_packet.immediate_ack_required);
+        }
+        dedup.insert(3);
+        every_fourth_packet.packet_received(now, 3, true, &dedup);
+        assert!(every_fourth_packet.immediate_ack_required);
     }
 
     #[test]

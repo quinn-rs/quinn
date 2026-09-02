@@ -32,6 +32,10 @@ impl AckFrequencyState {
         }
     }
 
+    pub(super) fn set_max_ack_delay(&mut self, max_ack_delay: Duration) {
+        self.max_ack_delay = max_ack_delay;
+    }
+
     /// Returns the `max_ack_delay` that should be requested of the peer when sending an
     /// ACK_FREQUENCY frame
     pub(super) fn candidate_max_ack_delay(
