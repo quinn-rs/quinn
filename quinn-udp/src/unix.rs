@@ -147,21 +147,6 @@ impl UdpSocketState {
             {
                 crate::log::debug!("Ignoring error setting SO_TIMESTAMPNS on socket: {_err:?}");
             }
-
-            if is_ipv4 || !io.only_v6()? {
-                if let Err(_err) =
-                    set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON)
-                {
-                    crate::log::debug!("ignoring error setting IP_RECVERR on socket: {_err:?}");
-                }
-            }
-            if !is_ipv4 {
-                if let Err(_err) =
-                    set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)
-                {
-                    crate::log::debug!("ignoring error setting IPV6_RECVERR on socket: {_err:?}");
-                }
-            }
         }
         #[cfg(any(target_os = "freebsd", apple))]
         {
@@ -307,13 +292,56 @@ impl UdpSocketState {
         recv_single(socket.0, bufs, meta)
     }
 
-    /// Receives a pending, asynchronous transport-layer error from this socket
+    /// Enables asynchronous transport-layer error reception for this socket
     ///
-    /// On Linux and Android this pops one entry from the socket error queue
-    /// (`MSG_ERRQUEUE`). Returns `None` if the queue is empty or if the
-    /// underlying platform is unsupported.
+    /// On Linux and Android, this enables the socket error queue via
+    /// `IP_RECVERR`/`IPV6_RECVERR`, allowing ICMP errors to be retrieved with
+    /// [`recv_transport_error`]. On other platforms, this method is a no-op and
+    /// [`recv_transport_error`] will always return `None`.
+    ///
+    /// # Cost
+    ///
+    /// On Linux and Android, queued ICMP errors are charged against the socket's
+    /// receive buffer (`sk_rmem_alloc`). If the buffer is full, incoming errors
+    /// are silently dropped by the kernel. There is no overhead when the error
+    /// queue is empty.
+    ///
+    /// # Usage
+    ///
+    /// When this feature is enabled, the kernel may return a pending error on the
+    /// next `sendmsg` or `recvmsg` call, preventing that operation from completing.
+    /// To avoid this, callers should drain the error queue via
+    /// [`recv_transport_error`] before sending or receiving.
+    ///
+    /// [`recv_transport_error`]: Self::recv_transport_error
+    pub fn enable_transport_errors(&self, _socket: UdpSockRef<'_>) -> io::Result<()> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let io = _socket.0;
+            let addr = io.local_addr()?;
+            let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
+
+            if is_ipv4 || !io.only_v6()? {
+                set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON)?;
+            }
+
+            if !is_ipv4 {
+                set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Receives one pending asynchronous transport-layer error from this socket
+    ///
+    /// Returns `None` if the error queue is empty or the underlying platform is
+    /// unsupported. On Linux and Android, errors are only available if
+    /// [`enable_transport_errors`] has been called first.
     ///
     /// Returns an error if the underlying system call fails unexpectedly.
+    ///
+    /// [`enable_transport_errors`]: Self::enable_transport_errors
     pub fn recv_transport_error(
         &self,
         _socket: UdpSockRef<'_>,
