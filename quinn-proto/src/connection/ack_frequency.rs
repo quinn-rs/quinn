@@ -17,7 +17,7 @@ pub(super) struct AckFrequencyState {
     // Receiving ACK_FREQUENCY frames
     //
     last_ack_frequency_frame: Option<u64>,
-    pub(super) max_ack_delay: Duration,
+    max_ack_delay: Duration,
 }
 
 impl AckFrequencyState {
@@ -30,6 +30,15 @@ impl AckFrequencyState {
             last_ack_frequency_frame: None,
             max_ack_delay: default_max_ack_delay,
         }
+    }
+
+    /// Returns the duration after which a delayed ACK must be sent
+    ///
+    /// One timer granularity shorter than the `max_ack_delay` the peer subtracts from its RTT
+    /// samples, so that late-firing alarms don't push the actual delay past that bound
+    /// (RFC 9000 §18.2 expects advertised `max_ack_delay` to absorb alarm slop).
+    pub(super) fn max_ack_delay_timer(&self) -> Duration {
+        self.max_ack_delay.saturating_sub(TIMER_GRANULARITY)
     }
 
     /// Returns the `max_ack_delay` that should be requested of the peer when sending an

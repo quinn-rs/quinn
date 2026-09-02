@@ -171,6 +171,13 @@ impl TransportParameters {
                 .datagram_receive_buffer_size
                 .map(|x| (x.min(u16::MAX.into()) as u16).into()),
             grease_quic_bit: endpoint_config.grease_quic_bit,
+            // One granularity above the timer base the MaxAckDelay timer is derived from:
+            // RFC 9000 §18.2 says the advertisement SHOULD include "the receiver's expected
+            // delays in alarms firing", and the peer clamps the ack delay it subtracts from
+            // RTT samples to this value, so alarm slop must fit under it
+            max_ack_delay: VarInt(
+                Self::default().max_ack_delay.0 + TIMER_GRANULARITY.as_millis() as u64,
+            ),
             min_ack_delay: Some(
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
             ),
@@ -751,6 +758,22 @@ mod test {
         assert_eq!(
             TransportParameters::read(Side::Client, &mut buf.as_slice()).unwrap(),
             params
+        );
+    }
+
+    #[test]
+    fn advertised_max_ack_delay_includes_alarm_headroom() {
+        let params = TransportParameters::new(
+            &TransportConfig::default(),
+            &EndpointConfig::default(),
+            &crate::cid_generator::RandomConnectionIdGenerator::default(),
+            ConnectionId::new(&[]),
+            None,
+            &mut rand::rng(),
+        );
+        assert_eq!(
+            params.max_ack_delay.0,
+            TransportParameters::default().max_ack_delay.0 + TIMER_GRANULARITY.as_millis() as u64
         );
     }
 

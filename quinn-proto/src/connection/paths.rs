@@ -349,11 +349,13 @@ impl RttEstimator {
         self.min = cmp::min(self.min, self.latest);
         // Based on RFC6298.
         if let Some(smoothed) = self.smoothed {
-            let adjusted_rtt = if self.min + ack_delay <= self.latest {
-                self.latest - ack_delay
-            } else {
-                self.latest
-            };
+            // RFC 9002 §5.3 forbids subtracting ack_delay if the result would fall below
+            // min_rtt. We clamp to min_rtt rather than falling back to the raw sample
+            // (Appendix A.7, non-normative): ack_delay includes receiver processing time
+            // that min_rtt also contains, so on low-RTT paths the honest adjustment
+            // routinely lands below min_rtt and the raw fallback would feed the entire
+            // ack delay (typically max_ack_delay, ~25ms) into the smoothed RTT.
+            let adjusted_rtt = cmp::max(self.min, self.latest.saturating_sub(ack_delay));
             let var_sample = smoothed.abs_diff(adjusted_rtt);
             self.var = (3 * self.var + var_sample) / 4;
             self.smoothed = Some((7 * smoothed + adjusted_rtt) / 8);
@@ -465,5 +467,60 @@ impl InFlight {
     fn remove(&mut self, packet: &SentPacket) {
         self.bytes -= u64::from(packet.size);
         self.ack_eliciting -= u64::from(packet.ack_eliciting);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rtt_first_sample_ignores_ack_delay() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(333));
+        rtt.update(Duration::from_millis(10), Duration::from_micros(100));
+        assert_eq!(rtt.get(), Duration::from_micros(100));
+        assert_eq!(rtt.min(), Duration::from_micros(100));
+        assert_eq!(rtt.var, Duration::from_micros(50));
+    }
+
+    #[test]
+    fn rtt_subtracts_ack_delay_when_above_min() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(333));
+        rtt.update(Duration::ZERO, Duration::from_micros(100));
+        // Raw sample 25.2ms with 25ms ack delay adjusts to 200µs
+        rtt.update(Duration::from_millis(25), Duration::from_micros(25_200));
+        assert_eq!(rtt.get(), Duration::from_nanos((7 * 100_000 + 200_000) / 8));
+        assert_eq!(rtt.min(), Duration::from_micros(100));
+    }
+
+    #[test]
+    fn rtt_clamps_adjusted_sample_to_min() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(333));
+        rtt.update(Duration::ZERO, Duration::from_micros(80));
+        // Honest adjustment (26.1ms - 26.05ms = 50µs) lands below min_rtt (80µs) because
+        // ack_delay includes receiver processing time that min_rtt also contains. The
+        // sample must clamp to min_rtt, not fall back to the raw 26.1ms.
+        rtt.update(Duration::from_micros(26_050), Duration::from_micros(26_100));
+        assert_eq!(rtt.get(), Duration::from_micros(80));
+        assert_eq!(rtt.min(), Duration::from_micros(80));
+    }
+
+    #[test]
+    fn rtt_ack_delay_exceeding_sample_saturates() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(333));
+        rtt.update(Duration::ZERO, Duration::from_micros(80));
+        rtt.update(Duration::from_millis(30), Duration::from_millis(10));
+        assert_eq!(rtt.get(), Duration::from_micros(80));
+    }
+
+    #[test]
+    fn rtt_min_tracks_raw_samples() {
+        let mut rtt = RttEstimator::new(Duration::from_millis(333));
+        rtt.update(Duration::ZERO, Duration::from_micros(100));
+        rtt.update(Duration::ZERO, Duration::from_micros(50));
+        assert_eq!(rtt.min(), Duration::from_micros(50));
+        // min ignores ack delay: a 60µs raw sample does not lower it further
+        rtt.update(Duration::from_micros(40), Duration::from_micros(60));
+        assert_eq!(rtt.min(), Duration::from_micros(50));
     }
 }
