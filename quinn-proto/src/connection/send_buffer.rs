@@ -2,7 +2,7 @@ use std::{collections::VecDeque, ops::Range};
 
 use bytes::{Buf, Bytes};
 
-use crate::{VarInt, range_set::RangeSet};
+use crate::{VarInt, range_set::ArrayRangeSet};
 
 /// Buffer of outgoing retransmittable stream data
 #[derive(Default, Debug)]
@@ -20,9 +20,9 @@ pub(super) struct SendBuffer {
     /// Acknowledged ranges which couldn't be discarded yet as they don't include the earliest
     /// offset in `unacked`
     // TODO: Recover storage from these by compacting (#700)
-    acks: RangeSet,
+    acks: ArrayRangeSet,
     /// Previously transmitted ranges deemed lost
-    retransmits: RangeSet,
+    retransmits: ArrayRangeSet,
 }
 
 impl SendBuffer {
