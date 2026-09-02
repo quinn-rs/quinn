@@ -71,7 +71,8 @@ pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram, FrameType};
 
 mod endpoint;
 pub use crate::endpoint::{
-    AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, Incoming, RetryError,
+    AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, HandshakeBytesError,
+    Incoming, RetryError,
 };
 
 mod packet;
