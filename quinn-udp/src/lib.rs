@@ -89,6 +89,14 @@ mod log {
 #[cfg(not(wasm_browser))]
 pub use imp::UdpSocketState;
 
+#[cfg_attr(not(windows), allow(dead_code))]
+fn should_set_ipv4_options(addr: SocketAddr, v6only: bool) -> bool {
+    match addr {
+        SocketAddr::V4(_) => true,
+        SocketAddr::V6(addr) => !v6only && addr.ip().is_unspecified(),
+    }
+}
+
 /// Number of UDP packets to send/receive at a time
 #[cfg(not(wasm_browser))]
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
@@ -346,9 +354,29 @@ impl EcnCodepoint {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
     use super::*;
+
+    #[test]
+    fn ipv4_options_are_only_for_ipv4_or_wildcard_dual_stack() {
+        assert!(should_set_ipv4_options(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4433)),
+            false,
+        ));
+        assert!(should_set_ipv4_options(
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 4433, 0, 0)),
+            false,
+        ));
+        assert!(!should_set_ipv4_options(
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 4433, 0, 0)),
+            false,
+        ));
+        assert!(!should_set_ipv4_options(
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 4433, 0, 0)),
+            true,
+        ));
+    }
 
     #[test]
     fn effective_segment_size() {
