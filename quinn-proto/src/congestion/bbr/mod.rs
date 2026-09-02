@@ -483,6 +483,10 @@ impl Controller for Bbr {
         self.cwnd = self.cwnd.max(self.min_cwnd);
     }
 
+    fn set_window(&mut self, size: u64) {
+        self.cwnd = size;
+    }
+
     fn window(&self) -> u64 {
         if self.mode == Mode::ProbeRtt {
             return self.get_probe_rtt_cwnd();
@@ -541,7 +545,12 @@ impl Default for BbrConfig {
 }
 
 impl ControllerFactory for BbrConfig {
-    fn build(self: Arc<Self>, _now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+    fn build(
+        self: Arc<Self>,
+        _now: Instant,
+        current_mtu: u16,
+        _config: &crate::TransportConfig,
+    ) -> Box<dyn Controller> {
         Box::new(Bbr::new(self, current_mtu))
     }
 }

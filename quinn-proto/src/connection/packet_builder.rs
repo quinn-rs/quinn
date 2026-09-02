@@ -4,7 +4,7 @@ use tracing::{debug, trace, trace_span};
 
 use super::{Connection, SentFrames, spaces::SentPacket};
 use crate::{
-    ConnectionId, Instant, TransportError, TransportErrorCode,
+    ConnectionId, EcnCodepoint, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
     frame::{self, Close},
     packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
@@ -14,6 +14,7 @@ pub(super) struct PacketBuilder {
     pub(super) datagram_start: usize,
     pub(super) space: SpaceId,
     pub(super) partial_encode: PartialEncode,
+    pub(super) ecn: Option<EcnCodepoint>,
     pub(super) ack_eliciting: bool,
     pub(super) exact_number: u64,
     pub(super) short_header: bool,
@@ -39,6 +40,7 @@ impl PacketBuilder {
         buffer: &mut Vec<u8>,
         buffer_capacity: usize,
         datagram_start: usize,
+        ecn: Option<EcnCodepoint>,
         ack_eliciting: bool,
         conn: &mut Connection,
     ) -> Option<Self> {
@@ -164,6 +166,7 @@ impl PacketBuilder {
             min_size,
             max_size,
             tag_len,
+            ecn,
             ack_eliciting,
             _span: span,
         })
@@ -188,6 +191,7 @@ impl PacketBuilder {
         sent: Option<SentFrames>,
         buffer: &mut Vec<u8>,
     ) {
+        let ecn = self.ecn;
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
@@ -206,6 +210,7 @@ impl PacketBuilder {
             largest_acked: sent.largest_acked,
             time_sent: now,
             size,
+            ecn,
             ack_eliciting,
             retransmits: sent.retransmits,
             stream_frames: sent.stream_frames,

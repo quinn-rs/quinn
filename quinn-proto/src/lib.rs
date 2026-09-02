@@ -59,15 +59,16 @@ mod config;
 #[cfg(feature = "qlog")]
 pub use config::QlogConfig;
 pub use config::{
-    AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
-    ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
+    AckFrequencyConfig, ClientConfig, ConfigError, EcnMode, EndpointConfig, IdleTimeout,
+    MtuDiscoveryConfig, ServerConfig, StdSystemTime, TimeSource, TransportConfig,
+    ValidationTokenConfig,
 };
 
 pub mod crypto;
 
 mod frame;
 use crate::frame::Frame;
-pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram, FrameType};
+pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram, EcnCounts, FrameType};
 
 mod endpoint;
 pub use crate::endpoint::{

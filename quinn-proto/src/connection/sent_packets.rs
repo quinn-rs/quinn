@@ -248,6 +248,7 @@ mod tests {
             path_generation: 0,
             time_sent: Instant::now(),
             size,
+            ecn: None,
             ack_eliciting: false,
             largest_acked: None,
             retransmits: Default::default(),
