@@ -567,8 +567,16 @@ fn max_gso_segments(socket: &impl AsRawSocket) -> usize {
         WinSock::UDP_SEND_MSG_SIZE,
         GSO_SIZE,
     ) {
-        // Empirically found on Windows 11 x64
-        Ok(()) => 512,
+        Ok(()) => {
+            // Disable USO again at the socket level so that it is only enabled per message through
+            // the `UDP_SEND_MSG_SIZE` control message. This mirrors the Linux behaviour, see:
+            // - https://github.com/quinn-rs/quinn/issues/2818
+            // - https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-udp-socket-options
+            let _ = set_socket_option(socket, WinSock::IPPROTO_UDP, WinSock::UDP_SEND_MSG_SIZE, 0);
+
+            // Empirically found on Windows 11 x64
+            512
+        }
         Err(_) => 1,
     }
 }

@@ -241,6 +241,28 @@ fn gso() {
     );
 }
 
+/// A single datagram larger than the segment size used to probe for GSO support must be
+/// delivered as one datagram. The probe must not leave segmentation enabled on the socket.
+#[test]
+fn large_single_datagram_is_not_segmented() {
+    let send = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let recv = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let dst_addr = recv.local_addr().unwrap();
+    // Larger than the 1500 byte segment size of the GSO probe.
+    let msg = vec![0xCD; 2048];
+    test_send_recv(
+        &send.into(),
+        &recv.into(),
+        Transmit {
+            destination: dst_addr,
+            ecn: None,
+            contents: &msg,
+            segment_size: None,
+            src_ip: None,
+        },
+    );
+}
+
 #[test]
 fn socket_buffers() {
     const BUFFER_SIZE: usize = 123456;
