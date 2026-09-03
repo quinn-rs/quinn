@@ -3716,8 +3716,8 @@ fn voluntary_ack_with_large_datagrams() {
 #[test]
 fn ack_bundled_with_datagrams() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, server_ch) = pair.connect();
+    let mut pair = Pair::default_with_deterministic_pns();
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_deterministic_pns());
 
     // Send packet from client and then send from server. the packet from server should include ACKs
     pair.client_datagrams(client_ch)
