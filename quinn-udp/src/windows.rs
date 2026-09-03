@@ -1,6 +1,6 @@
 use std::{
     io::{self, IoSliceMut},
-    mem,
+    mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr},
     os::windows::io::AsRawSocket,
     ptr,
@@ -56,21 +56,9 @@ impl UdpSocketState {
         let addr = socket.0.local_addr()?;
         let is_ipv6 = addr.as_socket_ipv6().is_some();
         let v6only = unsafe {
-            let mut result: u32 = 0;
-            let mut len = size_of_val(&result) as i32;
-            let rc = WinSock::getsockopt(
-                socket.0.as_raw_socket() as _,
-                WinSock::IPPROTO_IPV6,
-                WinSock::IPV6_V6ONLY as _,
-                &mut result as *mut _ as _,
-                &mut len,
-            );
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            result != 0
-        };
-        let is_ipv4 = addr.as_socket_ipv4().is_some() || !v6only;
+            get_socket_option::<u32>(&*socket.0, WinSock::IPPROTO_IPV6, WinSock::IPV6_V6ONLY as _)
+        }?;
+        let is_ipv4 = addr.as_socket_ipv4().is_some() || v6only == 0;
 
         // We don't support old versions of Windows that do not enable access to `WSARecvMsg()`
         if WSARECVMSG_PTR.is_none() {
@@ -481,6 +469,32 @@ fn send(
     match rc {
         0 => Ok(()),
         _ => Err(io::Error::last_os_error()),
+    }
+}
+
+/// Reads a socket option into a zero-initialized `T`.
+///
+/// # Safety
+///
+/// `T` must be valid for the all-zero bit pattern: Windows may fill fewer bytes than
+/// `size_of::<T>()`, as it does for `IPV6_V6ONLY`.
+unsafe fn get_socket_option<T>(socket: &impl AsRawSocket, level: i32, name: i32) -> io::Result<T> {
+    let mut value = MaybeUninit::<T>::zeroed();
+    let mut len = size_of::<T>() as i32;
+    let rc = unsafe {
+        WinSock::getsockopt(
+            socket.as_raw_socket() as usize,
+            level,
+            name,
+            value.as_mut_ptr() as _,
+            &mut len,
+        )
+    };
+
+    match rc == 0 {
+        // SAFETY: `value` is zero-initialized and `getsockopt` only writes within it.
+        true => Ok(unsafe { value.assume_init() }),
+        false => Err(io::Error::last_os_error()),
     }
 }
 
