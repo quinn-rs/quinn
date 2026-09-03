@@ -612,6 +612,25 @@ impl Connection {
             .clone_box()
     }
 
+    /// Current number of locally initiated unidirectional streams that may be concurrently open
+    pub fn max_locally_initiated_concurrent_uni_streams(&self) -> u64 {
+        let conn = self
+            .0
+            .state
+            .lock("max_locally_initiated_concurrent_streams");
+        conn.inner
+            .max_locally_initiated_concurrent_streams(Dir::Uni)
+    }
+
+    /// Current number of locally initiated bidirectional streams that may be concurrently open
+    pub fn max_locally_initiated_concurrent_bi_streams(&self) -> u64 {
+        let conn = self
+            .0
+            .state
+            .lock("max_locally_initiated_concurrent_streams");
+        conn.inner.max_locally_initiated_concurrent_streams(Dir::Bi)
+    }
+
     /// Succeeds when an incoming connection is proven not to be a replay attack.
     ///
     /// Only interesting for `Connection`s obtained from [`Connecting::into_0rtt`]. On 1-RTT
