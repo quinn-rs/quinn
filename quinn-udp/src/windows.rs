@@ -53,12 +53,19 @@ impl UdpSocketState {
         );
 
         socket.0.set_nonblocking(true)?;
-        let addr = socket.0.local_addr()?;
-        let is_ipv6 = addr.as_socket_ipv6().is_some();
+        let info = unsafe {
+            get_socket_option::<WinSock::WSAPROTOCOL_INFOW>(
+                &*socket.0,
+                WinSock::SOL_SOCKET,
+                WinSock::SO_PROTOCOL_INFOW,
+            )
+        }?;
+        let family = info.iAddressFamily;
+        let is_ipv6 = family == c_int::from(WinSock::AF_INET6);
         let v6only = unsafe {
             get_socket_option::<u32>(&*socket.0, WinSock::IPPROTO_IPV6, WinSock::IPV6_V6ONLY as _)
         }?;
-        let is_ipv4 = addr.as_socket_ipv4().is_some() || v6only == 0;
+        let is_ipv4 = family == c_int::from(WinSock::AF_INET) || v6only == 0;
 
         // We don't support old versions of Windows that do not enable access to `WSARecvMsg()`
         if WSARECVMSG_PTR.is_none() {
