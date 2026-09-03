@@ -409,6 +409,10 @@ fn finish_stream_simple() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Readable { id })) if id == s
+    );
     // Receive-only streams do not get `StreamFinished` events
     assert_eq!(pair.server_conn_mut(client_ch).streams().send_streams(), 0);
     assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
@@ -783,10 +787,10 @@ fn zero_rtt_rejection() {
     let s2 = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
     assert_eq!(s, s2);
 
+    // The server discarded its 0-RTT keys, so it never decrypted the STREAM frame and has no
+    // state for `s2`
     let mut recv = pair.server_recv(server_ch, s2);
-    let mut chunks = recv.read(false).unwrap();
-    assert_eq!(chunks.next(usize::MAX), Err(ReadError::Blocked));
-    let _ = chunks.finalize();
+    assert_eq!(recv.read(false).err(), Some(ReadableError::ClosedStream));
     assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
 }
 
@@ -1061,6 +1065,10 @@ fn stream_id_limit() {
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Readable { id })) if id == s
+    );
     assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
 
     let mut recv = pair.server_recv(server_ch, s);
@@ -1095,6 +1103,10 @@ fn stream_id_limit() {
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Readable { id })) if id == s
     );
     assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
@@ -1189,6 +1201,10 @@ fn key_update_simple() {
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Bi }))
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Readable { id })) if id == s
     );
     assert_matches!(pair.server_streams(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
@@ -2359,6 +2375,10 @@ fn finish_acked() {
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Readable { id })) if id == s
     );
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
 
