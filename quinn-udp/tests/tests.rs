@@ -47,6 +47,16 @@ fn basic() {
 }
 
 #[test]
+fn state_before_bind() {
+    for domain in [socket2::Domain::IPV6, socket2::Domain::IPV4] {
+        let Ok(socket) = Socket::new(domain, socket2::Type::DGRAM, None) else {
+            continue;
+        };
+        UdpSocketState::new((&socket).into()).unwrap();
+    }
+}
+
+#[test]
 fn basic_src_ip() {
     let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
         .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
