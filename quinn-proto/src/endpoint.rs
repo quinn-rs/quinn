@@ -172,6 +172,13 @@ impl Endpoint {
                     debug!("dropping packet with unsupported version");
                     return None;
                 }
+                // RFC 9000 §5.2.2: "Servers MUST drop smaller packets that specify unsupported
+                // versions." Responding to short packets would let a spoofed source elicit a
+                // Version Negotiation packet larger than the datagram that triggered it.
+                if datagram_len < MIN_INITIAL_SIZE as usize {
+                    debug!("dropping short packet with unsupported version");
+                    return None;
+                }
                 trace!("sending version negotiation");
                 // Negotiate versions
                 Header::VersionNegotiate {

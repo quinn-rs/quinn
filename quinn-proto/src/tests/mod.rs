@@ -53,15 +53,17 @@ fn version_negotiate_server() {
     let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
     let now = Instant::now();
     let mut buf = Vec::with_capacity(server.config().get_max_udp_payload_size() as usize);
-    let event = server.handle(
-        now,
-        client_addr,
-        None,
-        None,
-        // Long-header packet with reserved version number
-        hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
-        &mut buf,
-    );
+    // Long-header packet with reserved version number
+    let header = hex!("80 0a1a2a3a 04 00000000 04 00000000 00");
+
+    // RFC 9000 §5.2.2: packets too small to initiate a connection are dropped
+    let event = server.handle(now, client_addr, None, None, header[..].into(), &mut buf);
+    assert!(event.is_none());
+    assert!(buf.is_empty());
+
+    let mut packet = header.to_vec();
+    packet.resize(MIN_INITIAL_SIZE as usize, 0);
+    let event = server.handle(now, client_addr, None, None, packet[..].into(), &mut buf);
     let Some(DatagramEvent::Response(Transmit { .. })) = event else {
         panic!("expected a response");
     };
