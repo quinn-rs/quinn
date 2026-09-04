@@ -361,7 +361,7 @@ impl StreamsState {
         let Some(stream) = self
             .send
             .get_mut(&id)
-            .map(get_or_insert_send(max_send_data))
+            .map(|opt| opt.get_or_insert_with(|| Send::new(max_send_data)))
         else {
             return;
         };
@@ -755,7 +755,7 @@ impl StreamsState {
         if let Some(ss) = self
             .send
             .get_mut(&id)
-            .map(get_or_insert_send(max_send_data))
+            .map(|opt| opt.get_or_insert_with(|| Send::new(max_send_data)))
         {
             if ss.increase_max_data(offset) {
                 if write_limit > 0 {
@@ -968,13 +968,6 @@ impl StreamsState {
             Dir::Bi => self.initial_max_stream_data_bidi_remote,
         }
     }
-}
-
-#[inline]
-pub(super) fn get_or_insert_send(
-    max_data: VarInt,
-) -> impl Fn(&mut Option<Box<Send>>) -> &mut Box<Send> {
-    move |opt| opt.get_or_insert_with(|| Send::new(max_data))
 }
 
 #[inline]
