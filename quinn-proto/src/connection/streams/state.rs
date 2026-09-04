@@ -266,7 +266,7 @@ impl StreamsState {
         let Some(rs) = self
             .recv
             .get_mut(&id)
-            .map(get_or_insert_recv(self.stream_receive_window))
+            .map(|opt| get_or_insert_recv(opt, self.stream_receive_window))
         else {
             trace!("dropping frame for closed stream");
             return Ok(ShouldTransmit(false));
@@ -316,7 +316,7 @@ impl StreamsState {
         let Some(rs) = self
             .recv
             .get_mut(&id)
-            .map(get_or_insert_recv(self.stream_receive_window))
+            .map(|opt| get_or_insert_recv(opt, self.stream_receive_window))
         else {
             trace!("received RESET_STREAM on closed stream");
             return Ok(ShouldTransmit(false));
@@ -971,18 +971,14 @@ impl StreamsState {
 }
 
 #[inline]
-pub(super) fn get_or_insert_recv(
-    initial_max_data: u64,
-) -> impl FnMut(&mut Option<StreamRecv>) -> &mut Recv {
-    move |opt| {
-        *opt = opt.take().map(|s| match s {
-            StreamRecv::Free(recv) => StreamRecv::Open(recv),
-            s => s,
-        });
-        opt.get_or_insert_with(|| StreamRecv::Open(Recv::new(initial_max_data)))
-            .as_open_recv_mut()
-            .unwrap()
-    }
+pub(super) fn get_or_insert_recv(opt: &mut Option<StreamRecv>, initial_max_data: u64) -> &mut Recv {
+    *opt = opt.take().map(|s| match s {
+        StreamRecv::Free(recv) => StreamRecv::Open(recv),
+        s => s,
+    });
+    opt.get_or_insert_with(|| StreamRecv::Open(Recv::new(initial_max_data)))
+        .as_open_recv_mut()
+        .unwrap()
 }
 
 #[cfg(test)]
