@@ -50,7 +50,7 @@ impl Assembler {
             let mut recvd = RangeSet::new();
             recvd.insert(0..self.bytes_read);
             for chunk in &self.data {
-                recvd.insert(chunk.offset..chunk.offset + chunk.bytes.len() as u64);
+                recvd.insert(chunk.offset..chunk.end());
             }
             self.state = State::Unordered { recvd };
         }
@@ -66,7 +66,7 @@ impl Assembler {
                 if front.offset > self.bytes_read {
                     // Next buffer starts after the current read index
                     return None;
-                } else if (front.offset + front.bytes.len() as u64) <= self.bytes_read {
+                } else if front.end() <= self.bytes_read {
                     // Next buffer ends before the current read index
                     self.buffered -= front.bytes.len();
                     self.allocated -= front.allocation_size;
@@ -146,7 +146,7 @@ impl Assembler {
                     self.data
                         .push_back(Buffer::new_defragmented(offset, buffer.split().freeze()));
                 }
-                offset = chunk.offset + chunk.bytes.len() as u64;
+                offset = chunk.end();
                 self.data.push_back(chunk);
                 continue;
             }
@@ -300,6 +300,11 @@ impl Buffer {
             allocation_size,
             defragmented: true,
         }
+    }
+
+    /// Exclusive upper bound of the covered index range
+    fn end(&self) -> u64 {
+        self.offset + self.bytes.len() as u64
     }
 
     /// Discards data before `offset` and flags `self` as defragmented if it has good utilization
