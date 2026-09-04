@@ -36,10 +36,15 @@ rustls-log = ["rustls?/logging"]
 # Enable qlog support
 qlog = ["dep:qlog"]
 
-# Internal (PRIVATE!) features used to aid testing.
+# Internal (PRIVATE!) features.
 # Don't rely on these whatsoever. They may disappear at any time.
 
+# Used only to aid testing.
 __rustls-post-quantum-test =  []
+
+# Re-exports split-accept state types required by the `quinn` crate.
+# This doc-hidden API is an implementation detail.
+__internal_split_accept = []
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }

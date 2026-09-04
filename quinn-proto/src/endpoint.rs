@@ -46,6 +46,7 @@ pub struct Endpoint {
     rng: StdRng,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
+    pending_accepts: usize,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
@@ -79,6 +80,7 @@ impl Endpoint {
             },
             index: ConnectionIndex::default(),
             connections: Slab::new(),
+            pending_accepts: 0,
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
             config,
             server_config,
@@ -217,16 +219,15 @@ impl Endpoint {
             match route_to {
                 RouteDatagramTo::Incoming(incoming_idx) => {
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
-                    let config = &self.server_config.as_ref().unwrap();
 
                     if incoming_buffer
                         .total_bytes
                         .checked_add(datagram_len as u64)
-                        .is_some_and(|n| n <= config.incoming_buffer_size)
+                        .is_some_and(|n| n <= incoming_buffer.size_limit)
                         && self
                             .all_incoming_buffers_total_bytes
                             .checked_add(datagram_len as u64)
-                            .is_some_and(|n| n <= config.incoming_buffer_size_total)
+                            .is_some_and(|n| n <= incoming_buffer.total_size_limit)
                     {
                         incoming_buffer.datagrams.push(event);
                         incoming_buffer.total_bytes += datagram_len as u64;
@@ -512,7 +513,12 @@ impl Endpoint {
             }
         };
 
-        let incoming_idx = self.incoming_buffers.insert(IncomingBuffer::default());
+        let incoming_idx = self.incoming_buffers.insert(IncomingBuffer {
+            datagrams: Vec::new(),
+            total_bytes: 0,
+            size_limit: server_config.incoming_buffer_size,
+            total_size_limit: server_config.incoming_buffer_size_total,
+        });
         self.index
             .insert_initial_incoming(header.dst_cid, incoming_idx);
 
@@ -537,11 +543,30 @@ impl Endpoint {
     // box err to avoid clippy::result_large_err
     pub fn accept(
         &mut self,
-        mut incoming: Incoming,
+        incoming: Incoming,
         now: Instant,
         buf: &mut Vec<u8>,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<(ConnectionHandle, Connection), Box<AcceptError>> {
+        let accepting = self.start_accept(incoming, now, buf, server_config)?;
+        match accepting.finish_without_endpoint() {
+            Ok(accepted) => Ok(self.finish_accept(accepted)),
+            Err(error) => Err(self.finish_accept_error(error, buf)),
+        }
+    }
+
+    /// First phase of connection acceptance: everything that requires `&mut Endpoint`.
+    /// Reserves CIDs and routing state, but does NOT create the connection, process the first
+    /// packet, or replay buffered datagrams. This is the minimum work that must happen under the
+    /// endpoint lock.
+    #[doc(hidden)]
+    pub fn start_accept(
+        &mut self,
+        mut incoming: Incoming,
+        now: Instant,
+        buf: &mut Vec<u8>,
+        server_config: Option<Arc<ServerConfig>>,
+    ) -> Result<Accepting, Box<AcceptError>> {
         let remote_address_validated = incoming.remote_address_validated();
 
         let packet_number = incoming.packet.header.number.expand(0);
@@ -605,11 +630,8 @@ impl Endpoint {
             }));
         };
 
-        incoming.improper_drop_warner.dismiss();
-        let incoming_buffer = self.remove_incoming_buffer(incoming.incoming_idx);
-
-        let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
+        let accepting_idx = incoming.incoming_idx;
+        let loc_cid = self.new_cid(RouteDatagramTo::Incoming(accepting_idx));
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -623,7 +645,7 @@ impl Endpoint {
         params.retry_src_cid = incoming.token.retry_src_cid;
         let mut pref_addr_cid = None;
         if server_config.has_preferred_address() {
-            let cid = self.new_cid(RouteDatagramTo::Connection(ch));
+            let cid = self.new_cid(RouteDatagramTo::Incoming(accepting_idx));
             pref_addr_cid = Some(cid);
             params.preferred_address = Some(PreferredAddress {
                 address_v4: server_config.preferred_address_v4,
@@ -633,75 +655,99 @@ impl Endpoint {
             });
         }
 
-        let tls = server_config.crypto.clone().start_session(version, &params);
-        let transport_config = server_config.transport.clone();
+        // Gather everything needed to create the Connection outside the lock.
         let mut rng_seed = [0; 32];
         self.rng.fill_bytes(&mut rng_seed);
-        let mut conn = Connection::new(
-            self.config.clone(),
-            transport_config,
-            dst_cid,
-            loc_cid,
-            src_cid,
-            incoming.addresses.remote,
-            incoming.addresses.local_ip,
-            tls,
-            self.local_cid_generator.cid_len(),
-            self.local_cid_generator.cid_lifetime(),
-            incoming.received_at,
-            version,
-            self.allow_mtud,
-            rng_seed,
-            SideArgs::Server {
-                server_config,
-                pref_addr_cid,
-                path_validated: remote_address_validated,
-            },
-        );
+        let endpoint_config = self.config.clone();
+        let cid_len = self.local_cid_generator.cid_len();
+        let cid_lifetime = self.local_cid_generator.cid_lifetime();
+        let allow_mtud = self.allow_mtud;
 
-        self.register_connection(
-            ch,
-            dst_cid,
+        let reservation = AcceptReservation {
+            incoming_idx: accepting_idx,
+            init_cid: dst_cid,
+            addresses: incoming.addresses,
             loc_cid,
             pref_addr_cid,
-            incoming.addresses,
+        };
+        self.pending_accepts += 1;
+
+        Ok(Accepting {
+            reservation,
+            version,
+            src_cid,
+            packet_number,
+            incoming,
+            // Deferred connection creation state
+            server_config,
+            params,
+            remote_address_validated,
+            rng_seed,
+            endpoint_config,
+            cid_len,
+            cid_lifetime,
+            allow_mtud,
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn finish_accept(&mut self, accepted: Accepted) -> (ConnectionHandle, Connection) {
+        let Accepted {
+            reservation,
+            mut conn,
+            guard,
+        } = accepted;
+        guard.dismiss();
+        let accepting_buffer = self.remove_accept_reservation(&reservation);
+        let ch = ConnectionHandle(self.connections.vacant_key());
+        self.register_connection(
+            ch,
+            reservation.init_cid,
+            reservation.loc_cid,
+            reservation.pref_addr_cid,
+            reservation.addresses,
             Side::Server,
         );
+        trace!(id = ch.0, icid = %reservation.init_cid, "new connection");
 
-        match conn.handle_first_packet(
-            incoming.received_at,
-            incoming.addresses.remote,
-            incoming.ecn,
-            packet_number,
-            incoming.packet,
-            incoming.rest,
-        ) {
-            Ok(()) => {
-                trace!(id = ch.0, icid = %dst_cid, "new connection");
-
-                for event in incoming_buffer.datagrams {
-                    conn.handle_event(ConnectionEvent(ConnectionEventInner::Datagram(event)))
-                }
-
-                Ok((ch, conn))
-            }
-            Err(e) => {
-                debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
-                let response = match e {
-                    ConnectionError::TransportError(ref e) => Some(self.initial_close(
-                        version,
-                        incoming.addresses,
-                        &incoming.crypto,
-                        src_cid,
-                        e.clone(),
-                        buf,
-                    )),
-                    _ => None,
-                };
-                Err(Box::new(AcceptError { cause: e, response }))
-            }
+        for event in accepting_buffer.datagrams {
+            conn.handle_event(ConnectionEvent(ConnectionEventInner::Datagram(event)))
         }
+
+        (ch, conn)
+    }
+
+    /// Clean up after a failed [`Accepting::finish_without_endpoint`] and optionally generate a
+    /// close response.
+    #[doc(hidden)]
+    pub fn finish_accept_error(
+        &mut self,
+        error: Box<AcceptingError>,
+        buf: &mut Vec<u8>,
+    ) -> Box<AcceptError> {
+        let AcceptingError {
+            cause,
+            reservation,
+            version,
+            src_cid,
+            crypto,
+            guard,
+        } = *error;
+        guard.dismiss();
+        debug!("handshake failed: {}", cause);
+        let response = match cause {
+            ConnectionError::TransportError(ref e) => Some(self.initial_close(
+                version,
+                reservation.addresses,
+                &crypto,
+                src_cid,
+                e.clone(),
+                buf,
+            )),
+            _ => None,
+        };
+        self.remove_accept_reservation(&reservation);
+        Box::new(AcceptError { cause, response })
     }
 
     /// Check if we should refuse a connection attempt regardless of the packet's contents
@@ -809,6 +855,17 @@ impl Endpoint {
     fn remove_incoming_state(&mut self, incoming: &Incoming) {
         self.index.remove_initial(incoming.packet.header.dst_cid);
         self.remove_incoming_buffer(incoming.incoming_idx);
+    }
+
+    fn remove_accept_reservation(&mut self, reservation: &AcceptReservation) -> IncomingBuffer {
+        self.index.remove_initial(reservation.init_cid);
+        self.index.retire(reservation.loc_cid);
+        if let Some(cid) = reservation.pref_addr_cid {
+            self.index.retire(cid);
+        }
+        debug_assert!(self.pending_accepts > 0);
+        self.pending_accepts -= 1;
+        self.remove_incoming_buffer(reservation.incoming_idx)
     }
 
     fn remove_incoming_buffer(&mut self, incoming_idx: usize) -> IncomingBuffer {
@@ -962,8 +1019,16 @@ impl Endpoint {
         self.connections.len()
     }
 
+    /// Number of incoming accepts that have reserved endpoint state but have not yet been
+    /// finalized into active connections.
+    #[doc(hidden)]
+    pub fn pending_accepts(&self) -> usize {
+        self.pending_accepts
+    }
+
     /// Counter for the number of bytes currently used
     /// in the buffers for Initial and 0-RTT messages for pending incoming connections
+    /// and accepts that are still being finalized
     pub fn incoming_buffer_bytes(&self) -> u64 {
         self.all_incoming_buffers_total_bytes
     }
@@ -1011,6 +1076,7 @@ impl fmt::Debug for Endpoint {
             .field("rng", &self.rng)
             .field("index", &self.index)
             .field("connections", &self.connections)
+            .field("pending_accepts", &self.pending_accepts)
             .field("config", &self.config)
             .field("server_config", &self.server_config)
             // incoming_buffers too large
@@ -1024,10 +1090,13 @@ impl fmt::Debug for Endpoint {
 }
 
 /// Buffered Initial and 0-RTT messages for a pending incoming connection
-#[derive(Default)]
 struct IncomingBuffer {
     datagrams: Vec<DatagramConnectionEvent>,
     total_bytes: u64,
+    /// Limits captured when the attempt first arrived, so replacing the endpoint's server
+    /// configuration only affects new incoming attempts.
+    size_limit: u64,
+    total_size_limit: u64,
 }
 
 /// Part of protocol state incoming datagrams can be routed to
@@ -1282,6 +1351,29 @@ impl Drop for IncomingImproperDropWarner {
     }
 }
 
+/// Warns if a finalized split-accept state (`Accepted`/`AcceptingError`) is dropped without being
+/// passed back to `Endpoint::finish_accept`/`finish_accept_error`. Doing so leaks the reserved
+/// CIDs, the buffered Initial/0-RTT slot, and the pending-accept count, since that cleanup needs
+/// the endpoint and cannot run from `Drop`. The earlier `Accepting` state is instead covered by
+/// the `Incoming` it still holds, whose own warner stays armed until `finish_without_endpoint`.
+struct AcceptDropGuard;
+
+impl AcceptDropGuard {
+    fn dismiss(self) {
+        mem::forget(self);
+    }
+}
+
+impl Drop for AcceptDropGuard {
+    fn drop(&mut self) {
+        warn!(
+            "quinn_proto split-accept state dropped without passing to \
+             Endpoint::finish_accept/finish_accept_error (leaks reserved CIDs, buffered packets, \
+             and the pending-accept slot)"
+        );
+    }
+}
+
 /// Errors in the parameters being used to create a new connection
 ///
 /// These arise before any I/O has been performed.
@@ -1322,6 +1414,121 @@ pub struct AcceptError {
     pub cause: ConnectionError,
     /// Optional response to transmit back
     pub response: Option<Transmit>,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct AcceptReservation {
+    incoming_idx: usize,
+    init_cid: ConnectionId,
+    addresses: FourTuple,
+    loc_cid: ConnectionId,
+    pref_addr_cid: Option<ConnectionId>,
+}
+
+/// Internal split-accept success state used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; re-exported only with __internal_split_accept
+pub struct Accepted {
+    reservation: AcceptReservation,
+    conn: Connection,
+    guard: AcceptDropGuard,
+}
+
+/// Internal split-accept handle used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; re-exported only with __internal_split_accept
+pub struct Accepting {
+    reservation: AcceptReservation,
+    version: u32,
+    src_cid: ConnectionId,
+    packet_number: u64,
+    incoming: Incoming,
+    // State for deferred Connection creation
+    server_config: Arc<ServerConfig>,
+    params: TransportParameters,
+    remote_address_validated: bool,
+    rng_seed: [u8; 32],
+    endpoint_config: Arc<EndpointConfig>,
+    cid_len: usize,
+    cid_lifetime: Option<Duration>,
+    allow_mtud: bool,
+}
+
+impl Accepting {
+    /// Complete computationally expensive connection setup steps without holding the endpoint lock.
+    ///
+    /// Creates the `Connection` and processes the first packet.
+    /// None of this requires `&mut Endpoint`.
+    ///
+    /// On success, returns the connection plus the reservation that still needs to be activated
+    /// under the endpoint lock.
+    #[doc(hidden)]
+    pub fn finish_without_endpoint(self) -> Result<Accepted, Box<AcceptingError>> {
+        self.incoming.improper_drop_warner.dismiss();
+
+        let transport_config = self.server_config.transport.clone();
+        let tls = self
+            .server_config
+            .crypto
+            .clone()
+            .start_session(self.version, &self.params);
+        let mut conn = Connection::new(
+            self.endpoint_config,
+            transport_config,
+            self.reservation.init_cid,
+            self.reservation.loc_cid,
+            self.src_cid,
+            self.incoming.addresses.remote,
+            self.incoming.addresses.local_ip,
+            tls,
+            self.cid_len,
+            self.cid_lifetime,
+            self.incoming.received_at,
+            self.version,
+            self.allow_mtud,
+            self.rng_seed,
+            SideArgs::Server {
+                server_config: self.server_config,
+                pref_addr_cid: self.reservation.pref_addr_cid,
+                path_validated: self.remote_address_validated,
+            },
+        );
+
+        match conn.handle_first_packet(
+            self.incoming.received_at,
+            self.incoming.addresses.remote,
+            self.incoming.ecn,
+            self.packet_number,
+            self.incoming.packet,
+            self.incoming.rest,
+        ) {
+            Ok(()) => Ok(Accepted {
+                reservation: self.reservation,
+                conn,
+                guard: AcceptDropGuard,
+            }),
+            Err(e) => Err(Box::new(AcceptingError {
+                cause: e,
+                reservation: self.reservation,
+                version: self.version,
+                src_cid: self.src_cid,
+                crypto: self.incoming.crypto,
+                guard: AcceptDropGuard,
+            })),
+        }
+    }
+}
+
+/// Internal split-accept failure state used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; re-exported only with __internal_split_accept
+pub struct AcceptingError {
+    cause: ConnectionError,
+    reservation: AcceptReservation,
+    version: u32,
+    src_cid: ConnectionId,
+    crypto: Keys,
+    guard: AcceptDropGuard,
 }
 
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
