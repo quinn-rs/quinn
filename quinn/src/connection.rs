@@ -62,7 +62,7 @@ impl Connecting {
             runtime.clone(),
         );
 
-        let driver = ConnectionDriver(conn.clone());
+        let driver = ConnectionDriver::new(conn.clone());
         runtime.spawn(Box::pin(
             async {
                 if let Err(e) = driver.await {
@@ -237,19 +237,31 @@ impl Future for ZeroRttAccepted {
 /// packets still in flight from the peer are handled gracefully.
 #[must_use = "connection drivers must be spawned for their connections to function"]
 #[derive(Debug)]
-struct ConnectionDriver(ConnectionRef);
+struct ConnectionDriver {
+    conn: ConnectionRef,
+    span: Span,
+}
+
+impl ConnectionDriver {
+    fn new(conn: ConnectionRef) -> Self {
+        let span = {
+            let conn = &mut conn.state.lock("poll");
+            debug_span!("drive", id = conn.handle.0)
+        };
+
+        Self { conn, span }
+    }
+}
 
 impl Future for ConnectionDriver {
     type Output = Result<(), io::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let conn = &mut *self.0.state.lock("poll");
+        let conn = &mut *self.conn.state.lock("poll");
+        let _guard = self.span.enter();
 
-        let span = debug_span!("drive", id = conn.handle.0);
-        let _guard = span.enter();
-
-        if let Err(e) = conn.process_conn_events(&self.0.shared, cx) {
-            conn.terminate(e, &self.0.shared);
+        if let Err(e) = conn.process_conn_events(&self.conn.shared, cx) {
+            conn.terminate(e, &self.conn.shared);
             return Poll::Ready(Ok(()));
         }
         let mut keep_going = conn.drive_transmit(cx)?;
@@ -257,7 +269,7 @@ impl Future for ConnectionDriver {
         // might need to reset a timer. Hence, we must loop until neither happens.
         keep_going |= conn.drive_timer(cx);
         conn.forward_endpoint_events();
-        conn.forward_app_events(&self.0.shared);
+        conn.forward_app_events(&self.conn.shared);
 
         if !conn.inner.is_drained() {
             if keep_going {
