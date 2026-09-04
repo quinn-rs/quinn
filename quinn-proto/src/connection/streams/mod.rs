@@ -8,11 +8,7 @@ use thiserror::Error;
 use tracing::trace;
 
 use super::spaces::{Retransmits, ThinRetransmits};
-use crate::{
-    Dir, StreamId, VarInt,
-    connection::streams::state::{get_or_insert_recv, get_or_insert_send},
-    frame,
-};
+use crate::{Dir, StreamId, VarInt, connection::streams::state::get_or_insert_recv, frame};
 
 mod recv;
 use recv::Recv;
@@ -248,7 +244,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
-            .map(get_or_insert_send(max_send_data))
+            .map(|opt| opt.get_or_insert_with(|| Send::new(max_send_data)))
             .ok_or(WriteError::ClosedStream)?;
 
         if limit == 0 {
@@ -294,7 +290,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
-            .map(get_or_insert_send(max_send_data))
+            .map(|opt| opt.get_or_insert_with(|| Send::new(max_send_data)))
             .ok_or(FinishError::ClosedStream)?;
 
         let was_pending = stream.is_pending();
@@ -316,7 +312,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
-            .map(get_or_insert_send(max_send_data))
+            .map(|opt| opt.get_or_insert_with(|| Send::new(max_send_data)))
             .ok_or(ClosedStream { _private: () })?;
 
         if matches!(stream.state, SendState::ResetSent) {
@@ -345,7 +341,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
-            .map(get_or_insert_send(max_send_data))
+            .map(|opt| opt.get_or_insert_with(|| Send::new(max_send_data)))
             .ok_or(ClosedStream { _private: () })?;
 
         stream.priority = priority;
