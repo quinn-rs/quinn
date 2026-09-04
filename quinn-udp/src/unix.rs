@@ -5,19 +5,13 @@ use std::{
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::fd::AsRawFd,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    time::Duration,
 };
 
 use socket2::SockRef;
 
-use super::{
-    EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, TransportError, UdpSockRef, cmsg,
-    log_sendmsg_error,
-};
+use super::{EcnCodepoint, RecvMeta, SendCount, Transmit, TransportError, UdpSockRef, cmsg};
 
 #[cfg(apple_fast)]
 use super::apple_fast::{msghdr_x, recv_via_recvmsg_x, send};
@@ -30,7 +24,6 @@ use super::linux::{LinuxError, gso};
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocketState {
-    last_send_error: Mutex<Instant>,
     max_gso_segments: AtomicUsize,
     gro_segments: usize,
     may_fragment: bool,
@@ -196,9 +189,7 @@ impl UdpSocketState {
             let _ = io.set_send_buffer_size(Self::MIN_SAFE_SNDBUF);
         }
 
-        let now = Instant::now();
         Ok(Self {
-            last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
             max_gso_segments: AtomicUsize::new(gso::max_gso_segments(&*io)),
             gro_segments,
             may_fragment,
@@ -210,36 +201,19 @@ impl UdpSocketState {
         })
     }
 
-    /// Sends a [`Transmit`] on the given socket
+    /// Sends a prefix of a [`Transmit`] without any additional error handling.
     ///
-    /// This function will only ever return errors of kind [`io::ErrorKind::WouldBlock`].
-    /// All other errors will be logged and converted to `Ok`.
-    ///
-    /// UDP transmission errors are considered non-fatal because higher-level protocols must
-    /// employ retransmits and timeouts anyway in order to deal with UDP's unreliable nature.
-    /// Thus, logging is most likely the only thing you can do with these errors.
-    ///
-    /// If you would like to handle these errors yourself, use [`UdpSocketState::try_send`]
-    /// instead.
-    #[deprecated(note = "silences I/O errors; use `UdpSocketState::try_send() instead")]
-    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        match send(self, socket.0, transmit) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
-            // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
-            //   these by automatically clamping the MTUD upper bound to the interface MTU.
-            Err(e) if e.raw_os_error() == Some(libc::EMSGSIZE) => Ok(()),
-            Err(e) => {
-                log_sendmsg_error(&self.last_send_error, e, transmit);
+    /// Returns the number of leading datagrams accepted by the kernel. The prefix is limited to
+    /// the platform's current segmentation capacity. Use [`Transmit::advance`] with the return
+    /// value and retry any returned remainder.
+    pub fn try_send(
+        &self,
+        socket: UdpSockRef<'_>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<SendCount> {
+        let sent = send(self, socket.0, transmit.limit(self.max_gso_segments()))?;
 
-                Ok(())
-            }
-        }
-    }
-
-    /// Sends a [`Transmit`] on the given socket without any additional error handling
-    pub fn try_send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        send(self, socket.0, transmit)
+        Ok(SendCount::from_datagram_count(sent))
     }
 
     #[cfg(not(any(
@@ -503,13 +477,59 @@ impl UdpSocketState {
     }
 }
 
-#[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd")))]
-fn send(
-    #[allow(unused_variables)] // only used on Linux
-    state: &UdpSocketState,
-    io: SockRef<'_>,
-    transmit: &Transmit<'_>,
-) -> io::Result<()> {
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn send(state: &UdpSocketState, io: SockRef<'_>, mut transmit: Transmit<'_>) -> io::Result<usize> {
+    let dst_addr = socket2::SockAddr::from(transmit.destination);
+
+    loop {
+        let mut msg_hdr: libc::msghdr = unsafe { mem::zeroed() };
+        let mut iovec: libc::iovec = unsafe { mem::zeroed() };
+        let mut cmsgs = cmsg::Aligned([0u8; cmsg::LEN]);
+        prepare_msg(
+            &transmit,
+            &dst_addr,
+            &mut msg_hdr,
+            &mut iovec,
+            &mut cmsgs,
+            true,
+            state.sendmsg_einval(),
+        );
+
+        match retry_if_interrupted(|| unsafe { libc::sendmsg(io.as_raw_fd(), &msg_hdr, 0) }) {
+            Ok(_) => return Ok(transmit.datagram_count()),
+            Err(e)
+                if matches!(e.raw_os_error(), Some(libc::EINVAL) | Some(libc::EIO))
+                    && transmit.datagram_count() > 1 =>
+            {
+                if state.max_gso_segments.swap(1, Ordering::Relaxed) > 1 {
+                    crate::log::info!(
+                        "`libc::sendmsg` failed with {e}; halting segmentation offload"
+                    );
+                }
+
+                transmit = transmit.limit(1);
+                continue;
+            }
+            Err(e)
+                if matches!(e.raw_os_error(), Some(libc::EINVAL) | Some(libc::EIO))
+                    && !state.sendmsg_einval() =>
+            {
+                state.set_sendmsg_einval();
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+#[cfg(not(any(
+    apple,
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "linux",
+    target_os = "android"
+)))]
+fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: Transmit<'_>) -> io::Result<usize> {
     #[allow(unused_mut)] // only mutable on FreeBSD
     let mut encode_src_ip = true;
     #[cfg(target_os = "freebsd")]
@@ -522,75 +542,39 @@ fn send(
             }
         }
     }
-    let mut msg_hdr: libc::msghdr = unsafe { mem::zeroed() };
-    let mut iovec: libc::iovec = unsafe { mem::zeroed() };
-    let mut cmsgs = cmsg::Aligned([0u8; cmsg::LEN]);
     let dst_addr = socket2::SockAddr::from(transmit.destination);
-    prepare_msg(
-        transmit,
-        &dst_addr,
-        &mut msg_hdr,
-        &mut iovec,
-        &mut cmsgs,
-        encode_src_ip,
-        state.sendmsg_einval(),
-    );
 
     loop {
-        let n = unsafe { libc::sendmsg(io.as_raw_fd(), &msg_hdr, 0) };
+        let mut msg_hdr: libc::msghdr = unsafe { mem::zeroed() };
+        let mut iovec: libc::iovec = unsafe { mem::zeroed() };
+        let mut cmsgs = cmsg::Aligned([0u8; cmsg::LEN]);
+        prepare_msg(
+            &transmit,
+            &dst_addr,
+            &mut msg_hdr,
+            &mut iovec,
+            &mut cmsgs,
+            encode_src_ip,
+            state.sendmsg_einval(),
+        );
 
-        if n >= 0 {
-            return Ok(());
-        }
-
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            // Retry the transmission
-            io::ErrorKind::Interrupted => continue,
-            io::ErrorKind::WouldBlock => return Err(e),
-            _ => {
-                // Some network adapters and drivers do not support GSO. Unfortunately, Linux
-                // offers no easy way for us to detect this short of an EIO or sometimes EINVAL
-                // when we try to actually send datagrams using it.
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                if let Some(libc::EIO) | Some(libc::EINVAL) = e.raw_os_error() {
-                    // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
-                    // may already be in the pipeline, so we need to tolerate additional failures.
-                    if state.max_gso_segments() > 1 {
-                        crate::log::info!(
-                            "`libc::sendmsg` failed with {e}; halting segmentation offload"
-                        );
-                        state.max_gso_segments.store(1, Ordering::Relaxed);
-                    }
-                }
-
-                // Some arguments to `sendmsg` are not supported. Switch to
-                // fallback mode and retry if we haven't already.
+        match retry_if_interrupted(|| unsafe { libc::sendmsg(io.as_raw_fd(), &msg_hdr, 0) }) {
+            Ok(_) => return Ok(transmit.datagram_count()),
+            Err(e)
                 if matches!(e.raw_os_error(), Some(libc::EINVAL) | Some(libc::EIO))
-                    && !state.sendmsg_einval()
-                {
-                    state.set_sendmsg_einval();
-                    prepare_msg(
-                        transmit,
-                        &dst_addr,
-                        &mut msg_hdr,
-                        &mut iovec,
-                        &mut cmsgs,
-                        encode_src_ip,
-                        state.sendmsg_einval(),
-                    );
-                    continue;
-                }
-
-                return Err(e);
+                    && !state.sendmsg_einval() =>
+            {
+                state.set_sendmsg_einval();
+                continue;
             }
+            Err(e) => return Err(e),
         }
     }
 }
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
-fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-    send_single(state, io, transmit)
+fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: Transmit<'_>) -> io::Result<usize> {
+    send_single(state, io, &transmit)
 }
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple))]
@@ -599,11 +583,12 @@ pub(crate) fn send_single(
     state: &UdpSocketState,
     io: SockRef<'_>,
     transmit: &Transmit<'_>,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
     let mut ctrl = cmsg::Aligned([0u8; cmsg::LEN]);
     let addr = socket2::SockAddr::from(transmit.destination);
+
     prepare_msg(
         transmit,
         &addr,
@@ -616,7 +601,8 @@ pub(crate) fn send_single(
     #[cfg(apple)]
     state.check_send_buffer_limit(transmit.contents.len(), &hdr)?;
     retry_if_interrupted(|| unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) })?;
-    Ok(())
+
+    Ok(transmit.datagram_count())
 }
 
 /// Receive using the batched `recvmmsg` syscall
