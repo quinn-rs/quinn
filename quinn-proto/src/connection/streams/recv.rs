@@ -266,7 +266,7 @@ impl<'a> Chunks<'a> {
         };
 
         let mut recv =
-            match get_or_insert_recv(streams.stream_receive_window)(entry.get_mut()).stopped {
+            match get_or_insert_recv(entry.get_mut(), streams.stream_receive_window).stopped {
                 true => return Err(ReadableError::ClosedStream),
                 false => entry.remove().unwrap().into_inner(), // this can't fail due to the previous get_or_insert_with
             };
