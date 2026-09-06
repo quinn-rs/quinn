@@ -49,18 +49,26 @@ impl Send {
         }
     }
 
-    pub(super) fn write<S: BytesSource>(
-        &mut self,
-        source: &mut S,
-        limit: u64,
-    ) -> Result<Written, WriteError> {
+    /// Get how many bytes could be written immediately while respecting stream-level limits
+    ///
+    /// Always returns `Ok(0)` if blocked, never returns `WriteError::Blocked`. Returning `Err`
+    /// indicates that this stream cannot ever be written on again.
+    fn write_limit(&self) -> Result<u64, WriteError> {
         if !self.is_writable() {
             return Err(WriteError::ClosedStream);
         }
         if let Some(error_code) = self.stop_reason {
             return Err(WriteError::Stopped(error_code));
         }
-        let budget = self.max_data - self.pending.offset();
+        Ok(self.max_data - self.pending.offset())
+    }
+
+    pub(super) fn write<S: BytesSource>(
+        &mut self,
+        source: &mut S,
+        limit: u64,
+    ) -> Result<Written, WriteError> {
+        let budget = self.write_limit()?;
         if budget == 0 {
             return Err(WriteError::Blocked);
         }
