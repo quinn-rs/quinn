@@ -260,7 +260,27 @@ impl<'a> SendStream<'a> {
         }
 
         let was_pending = stream.is_pending();
-        let written = stream.write(source, connection_write_limit)?;
+
+        let stream_write_limit = stream.write_limit()?;
+        if stream_write_limit == 0 {
+            return Err(WriteError::Blocked);
+        }
+        let mut write_limit = connection_write_limit.min(stream_write_limit) as usize;
+
+        let mut written = Written::default();
+        loop {
+            let (chunk, chunks_consumed) = source.pop_chunk(write_limit);
+            written.chunks += chunks_consumed;
+            written.bytes += chunk.len();
+
+            if chunk.is_empty() {
+                break;
+            }
+
+            write_limit -= chunk.len();
+            stream.pending.write(chunk);
+        }
+
         self.state.data_sent += written.bytes as u64;
         self.state.unacked_data += written.bytes as u64;
         trace!(stream = %self.id, "wrote {} bytes", written.bytes);
