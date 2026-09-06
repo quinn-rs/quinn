@@ -246,14 +246,20 @@ impl<'a> SendStream<'a> {
         Ok(connection_limit.min(stream_limit) as usize)
     }
 
-    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
-        if self.conn_state.is_closed() {
-            trace!(%self.id, "write blocked; connection draining");
-            return Err(WriteError::Blocked);
-        }
+    /// Ensure that a [`StreamEvent::Writable`] event is emitted once [`write_limit`][2]
+    /// transitions from `Ok(0)` to a non-zero value
+    ///
+    /// It is invalid to call this if `self.write_limit() != Ok(0)`.
+    ///
+    /// [2]: Self::write_limit
+    fn mark_blocked(&mut self) {
+        debug_assert_eq!(
+            self.write_limit(),
+            Ok(0),
+            "Called mark_blocked when write_limit is not Ok(0)"
+        );
 
         let connection_limit = self.state.write_limit();
-        let mut limit = self.write_limit()?;
 
         let max_send_data = self.state.max_send_data(self.id);
         let stream = self
@@ -279,13 +285,31 @@ impl<'a> SendStream<'a> {
                 self.state.data_blocked_limit = Some(self.state.max_data);
                 self.pending.data_blocked = true;
             }
-        } else if limit == 0 && stream.data_blocked_limit != Some(stream.max_data) {
+        } else if stream.data_blocked_limit != Some(stream.max_data) {
             stream.data_blocked_limit = Some(stream.max_data);
             self.pending.stream_data_blocked.insert(self.id);
         }
-        if limit == 0 {
+    }
+
+    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
+        if self.conn_state.is_closed() {
+            trace!(%self.id, "write blocked; connection draining");
             return Err(WriteError::Blocked);
         }
+
+        let mut limit = self.write_limit()?;
+        if limit == 0 {
+            self.mark_blocked();
+            return Err(WriteError::Blocked);
+        }
+
+        let max_send_data = self.state.max_send_data(self.id);
+        let stream = self
+            .state
+            .send
+            .get_mut(&self.id)
+            .unwrap() // Unwrap safety: write_limit() would have returned Err(ClosedStream)
+            .get_or_insert_with(|| Send::new(max_send_data));
 
         let was_pending = stream.is_pending();
 
