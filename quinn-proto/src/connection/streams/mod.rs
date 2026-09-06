@@ -232,11 +232,12 @@ impl<'a> SendStream<'a> {
 
     /// Get how many bytes could be written immediately
     ///
-    /// It is invalid to call this if `self.conn_state.is_closed()`.
-    ///
     /// Always returns `Ok(0)` if blocked, never returns `WriteError::Blocked`.
     fn write_limit(&self) -> Result<usize, WriteError> {
-        debug_assert!(!self.conn_state.is_closed());
+        if self.conn_state.is_closed() {
+            return Ok(0);
+        }
+
         let connection_limit = self.state.write_limit();
         let stream_limit = match self.state.send.get(&self.id) {
             None => return Err(WriteError::ClosedStream),
@@ -258,6 +259,11 @@ impl<'a> SendStream<'a> {
             Ok(0),
             "Called mark_blocked when write_limit is not Ok(0)"
         );
+
+        if self.conn_state.is_closed() {
+            trace!(%self.id, "write blocked; connection draining");
+            return;
+        }
 
         let connection_limit = self.state.write_limit();
 
@@ -292,11 +298,6 @@ impl<'a> SendStream<'a> {
     }
 
     fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
-        if self.conn_state.is_closed() {
-            trace!(%self.id, "write blocked; connection draining");
-            return Err(WriteError::Blocked);
-        }
-
         let mut limit = self.write_limit()?;
         if limit == 0 {
             self.mark_blocked();
