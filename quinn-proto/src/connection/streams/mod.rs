@@ -247,6 +247,8 @@ impl<'a> SendStream<'a> {
             .ok_or(WriteError::ClosedStream)?
             .get_or_insert_with(|| Send::new(max_send_data));
 
+        let stream_write_limit = stream.write_limit()?;
+
         if connection_write_limit == 0 {
             trace!(
                 stream = %self.id, max_data = self.state.max_data, data_sent = self.state.data_sent,
@@ -261,7 +263,6 @@ impl<'a> SendStream<'a> {
 
         let was_pending = stream.is_pending();
 
-        let stream_write_limit = stream.write_limit()?;
         if stream_write_limit == 0 {
             return Err(WriteError::Blocked);
         }
