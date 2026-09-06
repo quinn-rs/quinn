@@ -66,29 +66,29 @@ impl Send {
     pub(super) fn write<S: BytesSource>(
         &mut self,
         source: &mut S,
-        limit: u64,
+        connection_write_limit: u64,
     ) -> Result<Written, WriteError> {
-        let budget = self.write_limit()?;
-        if budget == 0 {
+        let stream_write_limit = self.write_limit()?;
+        if stream_write_limit == 0 {
             return Err(WriteError::Blocked);
         }
-        let mut limit = limit.min(budget) as usize;
+        let mut write_limit = connection_write_limit.min(stream_write_limit) as usize;
 
-        let mut result = Written::default();
+        let mut written = Written::default();
         loop {
-            let (chunk, chunks_consumed) = source.pop_chunk(limit);
-            result.chunks += chunks_consumed;
-            result.bytes += chunk.len();
+            let (chunk, chunks_consumed) = source.pop_chunk(write_limit);
+            written.chunks += chunks_consumed;
+            written.bytes += chunk.len();
 
             if chunk.is_empty() {
                 break;
             }
 
-            limit -= chunk.len();
+            write_limit -= chunk.len();
             self.pending.write(chunk);
         }
 
-        Ok(result)
+        Ok(written)
     }
 
     /// Update stream state due to a reset sent by the local application
