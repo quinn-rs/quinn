@@ -230,11 +230,13 @@ impl<'a> SendStream<'a> {
         self.write_source(&mut BytesArray::from_chunks(data))
     }
 
-    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
-        if self.conn_state.is_closed() {
-            trace!(%self.id, "write blocked; connection draining");
-            return Err(WriteError::Blocked);
-        }
+    /// Get how many bytes could be written immediately
+    ///
+    /// It is invalid to call this if `self.conn_state.is_closed()`.
+    ///
+    /// Always returns `Ok(0)` if blocked, never returns `WriteError::Blocked`.
+    fn write_limit(&self) -> Result<usize, WriteError> {
+        debug_assert!(!self.conn_state.is_closed());
 
         let connection_write_limit = self.state.write_limit();
 
@@ -248,8 +250,20 @@ impl<'a> SendStream<'a> {
             .as_ref()
             .map(|stream| stream.write_limit())
             .unwrap_or_else(|| Ok(max_send_data.into()))?;
-        let mut write_limit = connection_write_limit.min(stream_write_limit) as usize;
 
+        Ok(connection_write_limit.min(stream_write_limit) as usize)
+    }
+
+    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
+        if self.conn_state.is_closed() {
+            trace!(%self.id, "write blocked; connection draining");
+            return Err(WriteError::Blocked);
+        }
+
+        let connection_write_limit = self.state.write_limit();
+        let mut write_limit = self.write_limit()?;
+
+        let max_send_data = self.state.max_send_data(self.id);
         let stream = self
             .state
             .send
