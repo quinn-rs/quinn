@@ -58,7 +58,7 @@ impl Send {
     ///
     /// Always returns `Ok(0)` if blocked, never returns `WriteError::Blocked`. Returning `Err`
     /// indicates that this stream cannot ever be written on again.
-    fn write_limit(&self) -> Result<u64, WriteError> {
+    pub(super) fn write_limit(&self) -> Result<u64, WriteError> {
         if !self.is_writable() {
             return Err(WriteError::ClosedStream);
         }
@@ -66,34 +66,6 @@ impl Send {
             return Err(WriteError::Stopped(error_code));
         }
         Ok(self.max_data - self.pending.offset())
-    }
-
-    pub(super) fn write<S: BytesSource>(
-        &mut self,
-        source: &mut S,
-        connection_limit: u64,
-    ) -> Result<Written, WriteError> {
-        let stream_limit = self.write_limit()?;
-        if stream_limit == 0 {
-            return Err(WriteError::Blocked);
-        }
-        let mut limit = connection_limit.min(stream_limit) as usize;
-
-        let mut written = Written::default();
-        loop {
-            let (chunk, chunks_consumed) = source.pop_chunk(limit);
-            written.chunks += chunks_consumed;
-            written.bytes += chunk.len();
-
-            if chunk.is_empty() {
-                break;
-            }
-
-            limit -= chunk.len();
-            self.pending.write(chunk);
-        }
-
-        Ok(written)
     }
 
     /// Update stream state due to a reset sent by the local application
