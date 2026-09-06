@@ -294,13 +294,22 @@ impl<'a> SendStream<'a> {
         }
     }
 
-    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
-        let mut write_limit = self.write_limit()?;
-
-        if write_limit == 0 {
+    /// Get a non-zero [`write_limit()`][1] value, or call [`mark_blocked()`][2] and return
+    /// [`WriteError::Blocked`]
+    ///
+    /// [1]: Self::write_limit
+    /// [2]: Self::mark_blocked
+    fn write_limit_or_mark_blocked(&mut self) -> Result<usize, WriteError> {
+        let limit = self.write_limit()?;
+        if limit == 0 {
             self.mark_blocked();
             return Err(WriteError::Blocked);
         }
+        Ok(limit)
+    }
+
+    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
+        let mut write_limit = self.write_limit_or_mark_blocked()?;
 
         let max_send_data = self.state.max_send_data(self.id);
         let stream = self
