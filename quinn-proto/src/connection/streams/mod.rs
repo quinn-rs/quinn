@@ -267,17 +267,30 @@ impl<'a> SendStream<'a> {
         }
 
         let was_pending = stream.is_pending();
-        let written = match stream.write(source, connection_limit) {
-            Ok(written) => written,
-            Err(WriteError::Blocked) => {
-                if stream.data_blocked_limit != Some(stream.max_data) {
-                    stream.data_blocked_limit = Some(stream.max_data);
-                    self.pending.stream_data_blocked.insert(self.id);
-                }
-                return Err(WriteError::Blocked);
+        let stream_limit = stream.write_limit()?;
+        if stream_limit == 0 {
+            if stream.data_blocked_limit != Some(stream.max_data) {
+                stream.data_blocked_limit = Some(stream.max_data);
+                self.pending.stream_data_blocked.insert(self.id);
             }
-            Err(e) => return Err(e),
-        };
+            return Err(WriteError::Blocked);
+        }
+        let mut limit = connection_limit.min(stream_limit) as usize;
+
+        let mut written = Written::default();
+        loop {
+            let (chunk, chunks_consumed) = source.pop_chunk(limit);
+            written.chunks += chunks_consumed;
+            written.bytes += chunk.len();
+
+            if chunk.is_empty() {
+                break;
+            }
+
+            limit -= chunk.len();
+            stream.pending.write(chunk);
+        }
+
         self.state.data_sent += written.bytes as u64;
         self.state.buffered_data += written.bytes as u64;
         trace!(stream = %self.id, "wrote {} bytes", written.bytes);
