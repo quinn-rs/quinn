@@ -248,6 +248,7 @@ impl<'a> SendStream<'a> {
             .get_or_insert_with(|| Send::new(max_send_data));
 
         let stream_limit = stream.write_limit()?;
+        let mut limit = connection_limit.min(stream_limit) as usize;
 
         if connection_limit == 0 {
             trace!(
@@ -265,19 +266,15 @@ impl<'a> SendStream<'a> {
                 self.state.data_blocked_limit = Some(self.state.max_data);
                 self.pending.data_blocked = true;
             }
+        } else if limit == 0 && stream.data_blocked_limit != Some(stream.max_data) {
+            stream.data_blocked_limit = Some(stream.max_data);
+            self.pending.stream_data_blocked.insert(self.id);
+        }
+        if limit == 0 {
             return Err(WriteError::Blocked);
         }
 
         let was_pending = stream.is_pending();
-
-        if stream_limit == 0 {
-            if stream.data_blocked_limit != Some(stream.max_data) {
-                stream.data_blocked_limit = Some(stream.max_data);
-                self.pending.stream_data_blocked.insert(self.id);
-            }
-            return Err(WriteError::Blocked);
-        }
-        let mut limit = connection_limit.min(stream_limit) as usize;
 
         let mut written = Written::default();
         loop {
