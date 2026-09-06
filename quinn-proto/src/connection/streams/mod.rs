@@ -239,6 +239,16 @@ impl<'a> SendStream<'a> {
         let connection_write_limit = self.state.write_limit();
 
         let max_send_data = self.state.max_send_data(self.id);
+        let stream = self
+            .state
+            .send
+            .get(&self.id)
+            .ok_or(WriteError::ClosedStream)?;
+        let stream_write_limit = stream
+            .as_ref()
+            .map(|stream| stream.write_limit())
+            .unwrap_or_else(|| Ok(max_send_data.into()))?;
+        let mut write_limit = connection_write_limit.min(stream_write_limit) as usize;
 
         let stream = self
             .state
@@ -246,9 +256,6 @@ impl<'a> SendStream<'a> {
             .get_mut(&self.id)
             .ok_or(WriteError::ClosedStream)?
             .get_or_insert_with(|| Send::new(max_send_data));
-
-        let stream_write_limit = stream.write_limit()?;
-        let mut write_limit = connection_write_limit.min(stream_write_limit) as usize;
 
         if connection_write_limit == 0 {
             trace!(
