@@ -890,6 +890,55 @@ async fn two_datagram_readers() {
 }
 
 #[tokio::test]
+async fn retain_datagrams_unblocks_waiter() {
+    let _guard = subscribe();
+    let mut config = TransportConfig::default();
+    config.datagram_send_buffer_size(250);
+    let endpoint = endpoint_with_config(config);
+
+    let (client, server) = tokio::join!(
+        endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap(),
+        async { endpoint.accept().await.unwrap().await }
+    );
+
+    let client = client.unwrap();
+    let server = server.unwrap();
+
+    let mut cx = Context::from_waker(Waker::noop());
+
+    for tag in [0, 1] {
+        let send = server.send_datagram_wait(Bytes::from(vec![tag; 100]));
+        let mut send = pin!(send);
+        assert_eq!(send.as_mut().poll(&mut cx), Poll::Ready(Ok(())));
+    }
+
+    let send = server.send_datagram_wait(Bytes::from(vec![2; 100]));
+    let mut send = pin!(send);
+    assert!(send.as_mut().poll(&mut cx).is_pending());
+
+    server.retain_datagrams(|data| data[0] != 0);
+
+    timeout(Duration::from_secs(1), &mut send)
+        .await
+        .expect("send should be unblocked after retaining datagrams")
+        .unwrap();
+
+    let mut received = Vec::new();
+    for _ in 0..2 {
+        received.push(
+            timeout(Duration::from_secs(1), client.read_datagram())
+                .await
+                .expect("retained datagrams should arrive")
+                .unwrap()[0],
+        );
+    }
+    received.sort_unstable();
+    assert_eq!(received, [1, 2]);
+}
+
+#[tokio::test]
 async fn multiple_conns_with_zero_length_cids() {
     let _guard = subscribe();
     let mut factory = EndpointFactory::new();

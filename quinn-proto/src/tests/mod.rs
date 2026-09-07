@@ -3842,6 +3842,36 @@ fn oversized_datagrams_trigger_unblock() {
 }
 
 #[test]
+fn retain_datagrams_trigger_unblock() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+
+    // Send datagrams until the send buffer is full.
+    let max_size = pair.client_datagrams(client_ch).max_size().unwrap();
+    let data = vec![0; max_size];
+    loop {
+        match pair
+            .client_datagrams(client_ch)
+            .send(data.clone().into(), false)
+        {
+            Ok(_) => {}
+            Err(SendDatagramError::Blocked(_)) => {
+                break;
+            }
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    pair.client_datagrams(client_ch).retain(|_| false);
+
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::DatagramsUnblocked)
+    );
+}
+
+#[test]
 fn reject_short_idcid() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();

@@ -4,7 +4,7 @@ use bytes::Bytes;
 use thiserror::Error;
 use tracing::{debug, trace};
 
-use super::Connection;
+use super::{Connection, Event};
 use crate::{
     TransportError,
     frame::{Datagram, FrameStruct},
@@ -21,8 +21,8 @@ impl Datagrams<'_> {
     /// If `drop` is true, previously queued datagrams which are still unsent may be discarded to
     /// make space for this datagram, in order of oldest to newest. If `drop` is false, and there
     /// isn't enough space due to previously queued datagrams, this function will return
-    /// `SendDatagramError::Blocked`. `Event::DatagramsUnblocked` will be emitted once datagrams
-    /// have been sent.
+    /// `SendDatagramError::Blocked`. `Event::DatagramsUnblocked` will be emitted once buffer space
+    /// becomes available.
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent.
     pub fn send(&mut self, data: Bytes, drop: bool) -> Result<(), SendDatagramError> {
@@ -50,6 +50,22 @@ impl Datagrams<'_> {
         }
         self.conn.datagrams.outgoing.push_back(Datagram { data });
         Ok(())
+    }
+
+    /// Retain only outgoing datagrams for which `f` returns `true`
+    ///
+    /// The predicate is applied in queue order to every datagram that has not yet been written into
+    /// a packet. Retained datagrams remain in their original order.
+    ///
+    /// If datagrams are removed after [`send`](Self::send) returned
+    /// [`SendDatagramError::Blocked`], an [`Event::DatagramsUnblocked`] event is emitted.
+    pub fn retain(&mut self, f: impl Fn(&Datagram) -> bool) {
+        let datagram_removed = self.conn.datagrams.outgoing.retain(f);
+
+        if datagram_removed && self.conn.datagrams.send_blocked {
+            self.conn.datagrams.send_blocked = false;
+            self.conn.events.push_back(Event::DatagramsUnblocked);
+        }
     }
 
     /// Compute the maximum size of datagrams that may passed to `send_datagram`
@@ -222,6 +238,20 @@ impl DatagramBuffer {
     fn push_front(&mut self, datagram: Datagram) {
         self.payload_bytes += datagram.data.len();
         self.queue.push_front(datagram);
+    }
+
+    fn retain(&mut self, f: impl Fn(&Datagram) -> bool) -> bool {
+        let mut payload_removed = false;
+        self.queue.retain(|d| {
+            if f(d) {
+                true
+            } else {
+                self.payload_bytes -= d.data.len();
+                payload_removed = true;
+                false
+            }
+        });
+        payload_removed
     }
 
     fn memory_used(&self) -> usize {

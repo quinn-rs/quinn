@@ -509,6 +509,18 @@ impl Connection {
         }
     }
 
+    /// Retains only outgoing datagrams for which `f` returns `true`.
+    ///
+    /// The predicate is applied to datagrams that have not yet been written into a packet.
+    /// If this frees send buffer space, a pending [`send_datagram_wait`](Self::send_datagram_wait)
+    /// operation may proceed.
+    pub fn retain_datagrams(&self, f: impl Fn(&Bytes) -> bool) {
+        let conn = &mut *self.0.state.lock("retain_datagrams");
+
+        conn.inner.datagrams().retain(|d| f(&d.data));
+        conn.wake();
+    }
+
     /// Transmit `data` as an unreliable, unordered application datagram
     ///
     /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
