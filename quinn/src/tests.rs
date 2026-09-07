@@ -689,6 +689,36 @@ fn rt_threaded() -> Runtime {
 }
 
 #[tokio::test]
+async fn retry_after_rebind() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let server = factory.endpoint();
+    let client = factory.endpoint();
+    server
+        .rebind(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap())
+        .unwrap();
+
+    timeout(Duration::from_secs(5), async {
+        let connecting = client
+            .connect(server.local_addr().unwrap(), "localhost")
+            .unwrap();
+        let incoming = server.accept().await.unwrap();
+        assert!(!incoming.remote_address_validated());
+        incoming.retry().unwrap();
+
+        let incoming = server.accept().await.unwrap();
+        assert!(incoming.remote_address_validated());
+        let (accepted, connected) = join!(incoming, connecting);
+        let _server_connection = accepted.unwrap();
+        let _client_connection = connected.unwrap();
+        server.close(0u32.into(), b"done");
+        client.close(0u32.into(), b"done");
+    })
+    .await
+    .expect("retried handshake must complete using the rebound socket");
+}
+
+#[tokio::test]
 async fn rebind_recv() {
     let _guard = subscribe();
 

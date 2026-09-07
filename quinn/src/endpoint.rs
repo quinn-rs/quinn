@@ -280,6 +280,7 @@ impl Endpoint {
         let addr = socket.local_addr()?;
         let mut inner = self.inner.state.lock().unwrap();
         inner.prev_socket = Some(mem::replace(&mut inner.socket, socket));
+        inner.sender = inner.socket.create_sender();
         inner.ipv6 = addr.is_ipv6();
 
         // Update connection socket references
