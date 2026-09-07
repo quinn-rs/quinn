@@ -421,6 +421,17 @@ impl StreamsState {
         self.data_blocked_limit == Some(self.max_data)
     }
 
+    /// Limit to send in a `STREAM_DATA_BLOCKED` frame for stream `id`, if one could be sent
+    ///
+    /// `None` if the stream is no longer writable, was stopped by the peer, or the peer has raised
+    /// the limit since the frame was queued.
+    pub(crate) fn stream_data_blocked_limit(&self, id: StreamId) -> Option<u64> {
+        let stream = self.send.get(&id)?.as_ref()?;
+        stream.data_blocked_limit.filter(|&limit| {
+            stream.is_writable() && stream.stop_reason.is_none() && limit == stream.max_data
+        })
+    }
+
     pub(in crate::connection) fn write_control_frames(
         &mut self,
         buf: &mut Vec<u8>,
@@ -561,6 +572,24 @@ impl StreamsState {
                 buf.write_var(self.max_data);
                 stats.data_blocked += 1;
             }
+        }
+
+        // STREAM_DATA_BLOCKED
+        while buf.len() + 17 < max_size {
+            let Some(&id) = pending.stream_data_blocked.iter().next() else {
+                break;
+            };
+            pending.stream_data_blocked.remove(&id);
+            let Some(limit) = self.stream_data_blocked_limit(id) else {
+                continue;
+            };
+            retransmits.get_or_create().stream_data_blocked.insert(id);
+
+            trace!(stream = %id, limit, "STREAM_DATA_BLOCKED");
+            buf.write(frame::FrameType::STREAM_DATA_BLOCKED);
+            buf.write(id);
+            buf.write_var(limit);
+            stats.stream_data_blocked += 1;
         }
     }
 
