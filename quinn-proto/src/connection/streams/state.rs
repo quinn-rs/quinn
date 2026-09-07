@@ -139,6 +139,10 @@ pub struct StreamsState {
     receive_window_shrink_debt: u64,
     /// Whether the locally-initiated stream limit has been hit, per direction
     pub(super) streams_blocked: [bool; 2],
+    /// Value of `max_data` for which a `DATA_BLOCKED` frame was most recently queued
+    ///
+    /// A new frame is only queued once the peer has raised the limit.
+    pub(super) data_blocked_limit: Option<u64>,
 }
 
 impl StreamsState {
@@ -184,6 +188,7 @@ impl StreamsState {
             initial_max_stream_data_bidi_remote: 0u32.into(),
             receive_window_shrink_debt: 0,
             streams_blocked: [false, false],
+            data_blocked_limit: None,
         };
 
         for dir in Dir::iter() {
@@ -249,6 +254,7 @@ impl StreamsState {
         self.data_sent = 0;
         self.unacked_data = 0;
         self.connection_blocked.clear();
+        self.data_blocked_limit = None;
     }
 
     /// Process incoming stream frame
@@ -403,6 +409,11 @@ impl StreamsState {
             .is_some_and(|s| s.can_send_flow_control())
     }
 
+    /// Whether a `DATA_BLOCKED` frame could be sent
+    pub(crate) fn can_send_data_blocked(&self) -> bool {
+        self.data_blocked_limit == Some(self.max_data)
+    }
+
     pub(in crate::connection) fn write_control_frames(
         &mut self,
         buf: &mut Vec<u8>,
@@ -550,6 +561,19 @@ impl StreamsState {
             match dir {
                 Dir::Uni => stats.streams_blocked_uni += 1,
                 Dir::Bi => stats.streams_blocked_bidi += 1,
+            }
+        }
+
+        // DATA_BLOCKED
+        if pending.data_blocked && buf.len() + 9 < max_size {
+            pending.data_blocked = false;
+            // The peer may have raised the limit since the frame was queued
+            if self.can_send_data_blocked() {
+                retransmits.get_or_create().data_blocked = true;
+                trace!(limit = self.max_data, "DATA_BLOCKED");
+                buf.write(frame::FrameType::DATA_BLOCKED);
+                buf.write_var(self.max_data);
+                stats.data_blocked += 1;
             }
         }
     }
