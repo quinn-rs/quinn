@@ -174,7 +174,7 @@ impl DatagramState {
     pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
         let mut dropped_any = false;
         self.outgoing.queue.retain(|datagram| {
-            let result = datagram.data.len() < max_payload;
+            let result = datagram.data.len() <= max_payload;
             if !result {
                 trace!(
                     "dropping {} byte datagram violating {} byte limit",
@@ -302,6 +302,23 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn drop_oversized_keeps_datagrams_at_limit() {
+        let mut state = DatagramState::default();
+        state.outgoing.push_back(Datagram {
+            data: Bytes::from_static(&[0; 10]),
+        });
+        state.outgoing.push_back(Datagram {
+            data: Bytes::from_static(&[0; 11]),
+        });
+
+        assert!(state.drop_oversized(10));
+
+        assert_eq!(state.outgoing.queue.len(), 1);
+        assert_eq!(state.outgoing.queue[0].data.len(), 10);
+        assert_eq!(state.outgoing.payload_bytes, 10);
     }
 }
 
