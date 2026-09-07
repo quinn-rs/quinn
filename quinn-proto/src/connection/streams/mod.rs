@@ -260,6 +260,13 @@ impl<'a> SendStream<'a> {
                 stream.connection_blocked = true;
                 self.state.connection_blocked.push(self.id);
             }
+            // Only report blocking on the peer's limit, not on our own send window
+            if self.state.data_sent == self.state.max_data
+                && self.state.data_blocked_limit != Some(self.state.max_data)
+            {
+                self.state.data_blocked_limit = Some(self.state.max_data);
+                self.pending.data_blocked = true;
+            }
             return Err(WriteError::Blocked);
         }
 

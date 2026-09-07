@@ -308,6 +308,7 @@ pub(super) struct SentPacket {
 #[derive(Debug, Default, Clone)]
 pub struct Retransmits {
     pub(super) max_data: bool,
+    pub(super) data_blocked: bool,
     pub(super) max_stream_id: [bool; 2],
     pub(super) reset_stream: Vec<(StreamId, VarInt)>,
     pub(super) stop_sending: Vec<frame::StopSending>,
@@ -352,6 +353,7 @@ impl Retransmits {
 
     pub(super) fn is_empty(&self, streams: &StreamsState) -> bool {
         !self.max_data
+            && !(self.data_blocked && streams.can_send_data_blocked())
             && !self.max_stream_id.into_iter().any(|x| x)
             && self.reset_stream.is_empty()
             && self.stop_sending.is_empty()
@@ -378,6 +380,7 @@ impl ::std::ops::BitOrAssign for Retransmits {
         // We reduce in-stream head-of-line blocking by queueing retransmits before other data for
         // STREAM and CRYPTO frames.
         self.max_data |= rhs.max_data;
+        self.data_blocked |= rhs.data_blocked;
         for dir in Dir::iter() {
             self.max_stream_id[dir as usize] |= rhs.max_stream_id[dir as usize];
         }
