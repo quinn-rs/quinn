@@ -271,7 +271,10 @@ impl Future for ConnectionDriver {
                 // If the connection hasn't processed all tasks, schedule it again
                 cx.waker().wake_by_ref();
             } else {
-                conn.driver = Some(cx.waker().clone());
+                match conn.driver.as_mut() {
+                    Some(old_waker) => old_waker.clone_from(cx.waker()),
+                    None => conn.driver = Some(cx.waker().clone()),
+                };
             }
             return Poll::Pending;
         }
