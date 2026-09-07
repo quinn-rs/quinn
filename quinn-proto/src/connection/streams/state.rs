@@ -339,6 +339,8 @@ impl StreamsState {
         let bytes_read = rs.assembler.bytes_read();
         let stopped = rs.stopped;
         let end = rs.end;
+        // Stopped streams have already returned read credits up to their highest offset.
+        let credited = if stopped { end } else { bytes_read };
         if stopped {
             // Stopped streams should be disposed immediately on reset
             let rs = self.recv.remove(&id).flatten().unwrap();
@@ -347,12 +349,12 @@ impl StreamsState {
         self.on_stream_frame(!stopped, id);
 
         // Update connection-level flow control
-        Ok(if bytes_read != final_offset.into_inner() {
-            // bytes_read is always <= end, so this won't underflow.
+        Ok(if credited != final_offset.into_inner() {
+            // credited is always <= end, so this won't underflow.
             self.data_recvd = self
                 .data_recvd
                 .saturating_add(u64::from(final_offset) - end);
-            self.add_read_credits(u64::from(final_offset) - bytes_read)
+            self.add_read_credits(u64::from(final_offset) - credited)
         } else {
             ShouldTransmit(false)
         })
@@ -1234,49 +1236,58 @@ mod tests {
 
     #[test]
     fn stopped_reset() {
-        let mut client = make(Side::Client);
-        let id = StreamId::new(Side::Server, Dir::Uni, 0);
-        // Server opens stream
-        assert_eq!(
-            client
-                .received(
-                    frame::Stream {
+        for final_offset in [32u32, 48] {
+            let mut client = make(Side::Client);
+            let initial_max_data = client.local_max_data;
+            let id = StreamId::new(Side::Server, Dir::Uni, 0);
+            // Server opens stream
+            assert_eq!(
+                client
+                    .received(
+                        frame::Stream {
+                            id,
+                            offset: 0,
+                            fin: false,
+                            data: Bytes::from_static(&[0; 32])
+                        },
+                        32
+                    )
+                    .unwrap(),
+                ShouldTransmit(false)
+            );
+
+            let mut pending = Retransmits::default();
+            let mut recv = RecvStream {
+                id,
+                state: &mut client,
+                pending: &mut pending,
+            };
+
+            recv.stop(0u32.into()).unwrap();
+            assert_eq!(pending.stop_sending.len(), 1);
+            assert!(!pending.max_data);
+            assert_eq!(client.local_max_data, initial_max_data + 32);
+
+            // Server complies
+            let prev_max = client.max_remote[Dir::Uni as usize];
+            assert_eq!(
+                client
+                    .received_reset(frame::ResetStream {
                         id,
-                        offset: 0,
-                        fin: false,
-                        data: Bytes::from_static(&[0; 32])
-                    },
-                    32
-                )
-                .unwrap(),
-            ShouldTransmit(false)
-        );
-
-        let mut pending = Retransmits::default();
-        let mut recv = RecvStream {
-            id,
-            state: &mut client,
-            pending: &mut pending,
-        };
-
-        recv.stop(0u32.into()).unwrap();
-        assert_eq!(pending.stop_sending.len(), 1);
-        assert!(!pending.max_data);
-
-        // Server complies
-        let prev_max = client.max_remote[Dir::Uni as usize];
-        assert_eq!(
-            client
-                .received_reset(frame::ResetStream {
-                    id,
-                    error_code: 0u32.into(),
-                    final_offset: 32u32.into(),
-                })
-                .unwrap(),
-            ShouldTransmit(false)
-        );
-        assert!(!client.recv.contains_key(&id), "stream state is freed");
-        assert_eq!(client.max_remote[Dir::Uni as usize], prev_max + 1);
+                        error_code: 0u32.into(),
+                        final_offset: final_offset.into(),
+                    })
+                    .unwrap(),
+                ShouldTransmit(false)
+            );
+            assert!(!client.recv.contains_key(&id), "stream state is freed");
+            assert_eq!(client.max_remote[Dir::Uni as usize], prev_max + 1);
+            assert_eq!(client.data_recvd, u64::from(final_offset));
+            assert_eq!(
+                client.local_max_data,
+                initial_max_data + u64::from(final_offset)
+            );
+        }
     }
 
     #[test]
