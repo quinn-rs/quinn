@@ -15,9 +15,8 @@ use recv::Recv;
 pub use recv::{Chunks, ReadError, ReadableError};
 
 mod send;
-pub(crate) use send::{ByteSlice, BytesArray};
-use send::{BytesSource, Send, SendState};
 pub use send::{FinishError, WriteError, Written};
+use send::{Send, SendState};
 
 mod state;
 #[allow(unreachable_pub)] // fuzzing only
@@ -217,7 +216,9 @@ impl<'a> SendStream<'a> {
     ///
     /// Returns the number of bytes successfully written.
     pub fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        Ok(self.write_source(&mut ByteSlice::from_slice(data))?.bytes)
+        let prefix_len = self.write_limit_or_mark_blocked()?.min(data.len());
+        self.write_immediate(Bytes::copy_from_slice(&data[..prefix_len]));
+        Ok(prefix_len)
     }
 
     /// Send data on the given stream
@@ -227,27 +228,78 @@ impl<'a> SendStream<'a> {
     /// [`Written::chunks`] will not count this chunk as fully written. However
     /// the chunk will be advanced and contain only non-written data after the call.
     pub fn write_chunks(&mut self, data: &mut [Bytes]) -> Result<Written, WriteError> {
-        self.write_source(&mut BytesArray::from_chunks(data))
+        let write_limit = self.write_limit_or_mark_blocked()?;
+        let mut written = Written::default();
+        for chunk in data {
+            let prefix = chunk.split_to(chunk.len().min(write_limit - written.bytes));
+            written.bytes += prefix.len();
+            self.write_immediate(prefix);
+
+            if chunk.is_empty() {
+                written.chunks += 1;
+            }
+
+            debug_assert!(written.bytes <= write_limit);
+            if written.bytes == write_limit {
+                break;
+            }
+        }
+        Ok(written)
     }
 
-    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
+    /// Get how many bytes could be written immediately
+    ///
+    /// Always returns `Ok(0)` if blocked, never returns `WriteError::Blocked`.
+    fn write_limit(&self) -> Result<usize, WriteError> {
         if self.conn_state.is_closed() {
-            trace!(%self.id, "write blocked; connection draining");
             return Err(WriteError::Blocked);
         }
 
-        let limit = self.state.write_limit();
+        let connection_write_limit = self.state.write_limit();
 
         let max_send_data = self.state.max_send_data(self.id);
+        let stream = self
+            .state
+            .send
+            .get(&self.id)
+            .ok_or(WriteError::ClosedStream)?;
+        let stream_write_limit = stream
+            .as_ref()
+            .map(|stream| stream.write_limit())
+            .unwrap_or_else(|| Ok(max_send_data.into()))?;
 
+        Ok(connection_write_limit.min(stream_write_limit) as usize)
+    }
+
+    /// Ensure that a [`StreamEvent::Writable`] event is emitted once [`write_limit`][2]
+    /// transitions from `Ok(0)` to a non-zero value
+    ///
+    /// It is invalid to call this if `self.write_limit() != Ok(0)`.
+    ///
+    /// [2]: Self::write_limit
+    fn mark_blocked(&mut self) {
+        debug_assert_eq!(
+            self.write_limit(),
+            Ok(0),
+            "Called mark_blocked when write_limit is not Ok(0)"
+        );
+
+        if self.conn_state.is_closed() {
+            trace!(%self.id, "write blocked; connection draining");
+            return;
+        }
+
+        let connection_write_limit = self.state.write_limit();
+
+        let max_send_data = self.state.max_send_data(self.id);
         let stream = self
             .state
             .send
             .get_mut(&self.id)
-            .ok_or(WriteError::ClosedStream)?
+            .unwrap() // Unwrap safety: write_limit() would have returned Err(ClosedStream)
             .get_or_insert_with(|| Send::new(max_send_data));
 
-        if limit == 0 {
+        if connection_write_limit == 0 {
             trace!(
                 stream = %self.id, max_data = self.state.max_data, data_sent = self.state.data_sent,
                 "write blocked by connection-level flow control or send window"
@@ -256,18 +308,49 @@ impl<'a> SendStream<'a> {
                 stream.connection_blocked = true;
                 self.state.connection_blocked.push(self.id);
             }
+        }
+    }
+
+    /// Get a non-zero [`write_limit()`][1] value, or call [`mark_blocked()`][2] and return
+    /// [`WriteError::Blocked`]
+    ///
+    /// [1]: Self::write_limit
+    /// [2]: Self::mark_blocked
+    fn write_limit_or_mark_blocked(&mut self) -> Result<usize, WriteError> {
+        let limit = self.write_limit()?;
+        if limit == 0 {
+            self.mark_blocked();
             return Err(WriteError::Blocked);
         }
+        Ok(limit)
+    }
+
+    /// Immediately write the entirety of `chunk` on the given stream, or panic if unable
+    ///
+    /// It is invalid to call this if `self.write_limit()` is `Err` or less than `chunk.len()`.
+    fn write_immediate(&mut self, chunk: Bytes) {
+        debug_assert!(
+            self.write_limit()
+                .is_ok_and(|write_limit| write_limit >= chunk.len()),
+            "Called write_immediate when write_limit is Err or less than chunk.len()"
+        );
+
+        let max_send_data = self.state.max_send_data(self.id);
+        let stream = self
+            .state
+            .send
+            .get_mut(&self.id)
+            .unwrap() // Unwrap safety: write_limit would be WriteError::ClosedStream
+            .get_or_insert_with(|| Send::new(max_send_data));
 
         let was_pending = stream.is_pending();
-        let written = stream.write(source, limit)?;
-        self.state.data_sent += written.bytes as u64;
-        self.state.unacked_data += written.bytes as u64;
-        trace!(stream = %self.id, "wrote {} bytes", written.bytes);
+        self.state.data_sent += chunk.len() as u64;
+        self.state.unacked_data += chunk.len() as u64;
+        trace!(stream = %self.id, "wrote {} bytes", chunk.len());
+        stream.pending.write(chunk);
         if !was_pending {
             self.state.pending.push_pending(self.id, stream.priority);
         }
-        Ok(written)
     }
 
     /// Check if this stream was stopped, get the reason if it was
