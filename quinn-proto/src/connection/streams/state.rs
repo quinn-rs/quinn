@@ -244,6 +244,7 @@ impl StreamsState {
         self.pending.clear();
         self.send_streams = 0;
         self.data_sent = 0;
+        self.unacked_data = 0;
         self.connection_blocked.clear();
     }
 
