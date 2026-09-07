@@ -1,6 +1,6 @@
 use std::{
     convert::TryInto,
-    mem,
+    iter, mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{Arc, Mutex},
 };
@@ -80,9 +80,7 @@ fn pending_incoming_survives_server_config_change() {
         pair.drive();
         for (endpoint, ch) in [(&mut pair.client, client_ch), (&mut pair.server, server_ch)] {
             let conn = endpoint.connections.get_mut(&ch).unwrap();
-            assert!(
-                std::iter::from_fn(|| conn.poll()).any(|event| matches!(event, Event::Connected))
-            );
+            assert!(iter::from_fn(|| conn.poll()).any(|event| matches!(event, Event::Connected)));
         }
     }
 }
@@ -108,7 +106,7 @@ fn pending_incoming_can_retry_after_disabling_server() {
     pair.drive();
     pair.server.assert_accept();
     assert!(
-        std::iter::from_fn(|| pair.client_conn_mut(client_ch).poll())
+        iter::from_fn(|| pair.client_conn_mut(client_ch).poll())
             .any(|event| matches!(event, Event::Connected))
     );
 }
@@ -4160,6 +4158,74 @@ fn ack_bundled_with_datagrams() {
         pair.server_conn_mut(server_ch).stats().frame_tx.acks,
         "server should not sent ACK frames"
     );
+}
+
+#[test]
+fn path_changes_unblock_oversized_datagrams() {
+    let _guard = subscribe();
+    for migrate in [false, true] {
+        let mut pair = Pair::default();
+        let (client_ch, server_ch) = pair.connect();
+        pair.drive();
+        let old_max = pair.server_datagrams(server_ch).max_size().unwrap();
+        assert!(old_max > 1200);
+        let empty_space = pair.server_datagrams(server_ch).send_buffer_space();
+        let data = Bytes::from(vec![42; old_max]);
+        loop {
+            match pair.server_datagrams(server_ch).send(data.clone(), false) {
+                Ok(()) => {}
+                Err(SendDatagramError::Blocked(_)) => break,
+                Err(error) => panic!("unexpected send error: {error}"),
+            }
+        }
+        while pair.server_conn_mut(server_ch).poll().is_some() {}
+
+        pair.mtu = 1200;
+        if migrate {
+            pair.client
+                .addr
+                .set_port(CLIENT_PORTS.lock().unwrap().next().unwrap());
+            pair.client_conn_mut(client_ch).ping();
+            pair.drive_client();
+            // Process migration without transmitting, so sends cannot free the buffer first.
+            let mut buf = Vec::new();
+            while let Some((received, ecn, packet)) = pair.server.inbound.pop_front() {
+                let Some(DatagramEvent::ConnectionEvent(ch, event)) =
+                    pair.server
+                        .handle(received, pair.client.addr, None, ecn, packet, &mut buf)
+                else {
+                    panic!("expected a connection event");
+                };
+                assert_eq!(ch, server_ch);
+                pair.server_conn_mut(ch).handle_event(event);
+            }
+            assert_eq!(
+                pair.server_conn_mut(server_ch).remote_address(),
+                pair.client.addr
+            );
+        } else {
+            let now = pair.time;
+            pair.server_conn_mut(server_ch).path_changed(now);
+        }
+
+        assert!(pair.server_datagrams(server_ch).max_size().unwrap() < old_max);
+        assert_eq!(
+            pair.server_datagrams(server_ch).send_buffer_space(),
+            empty_space
+        );
+        assert!(
+            iter::from_fn(|| pair.server_conn_mut(server_ch).poll())
+                .any(|event| matches!(event, Event::DatagramsUnblocked))
+        );
+
+        let small = Bytes::from_static(b"small");
+        pair.server_datagrams(server_ch)
+            .send(small.clone(), false)
+            .unwrap();
+        pair.drive();
+        assert_eq!(pair.client_datagrams(client_ch).recv(), Some(small));
+        assert_eq!(pair.client_datagrams(client_ch).recv(), None);
+    }
 }
 
 /// Verify that dropping oversized datagrams will trigger a DatagramsUnblocked event.
