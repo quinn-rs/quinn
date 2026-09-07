@@ -47,6 +47,73 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 // wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[test]
+fn pending_incoming_survives_server_config_change() {
+    let _guard = subscribe();
+    let replacement = ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec![
+        "replacement-only".into(),
+    ])));
+    for replacement in [None, Some(Arc::new(replacement))] {
+        let mut pair = Pair::default();
+        let client_ch = pair.begin_connect(client_config());
+        pair.drive_client();
+        let (received, ecn, data) = pair.server.inbound.pop_front().unwrap();
+        let mut response = Vec::new();
+        let Some(DatagramEvent::NewConnection(incoming)) = pair.server.handle(
+            received,
+            pair.client.addr,
+            None,
+            ecn,
+            data.clone(),
+            &mut response,
+        ) else {
+            panic!("expected an incoming connection");
+        };
+
+        pair.server.set_server_config(replacement);
+        // Retransmitted Initials must still be buffered after the configuration changes.
+        assert!(
+            pair.server
+                .handle(received, pair.client.addr, None, ecn, data, &mut response)
+                .is_none()
+        );
+        let server_ch = pair.server.try_accept(incoming, pair.time).unwrap();
+        pair.drive();
+        for (endpoint, ch) in [(&mut pair.client, client_ch), (&mut pair.server, server_ch)] {
+            let conn = endpoint.connections.get_mut(&ch).unwrap();
+            assert!(
+                std::iter::from_fn(|| conn.poll()).any(|event| matches!(event, Event::Connected))
+            );
+        }
+    }
+}
+
+#[test]
+fn pending_incoming_can_retry_after_disabling_server() {
+    let _guard = subscribe();
+    let config = server_config();
+    let mut pair = Pair::new(Default::default(), config.clone());
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.server.drive_incoming(pair.time, pair.client.addr);
+    let incoming = pair.server.waiting_incoming.pop().unwrap();
+
+    pair.server.set_server_config(None);
+    pair.server.retry(incoming);
+    pair.server.set_server_config(Some(Arc::new(config)));
+    pair.server.handle_incoming = Box::new(|incoming| {
+        assert!(incoming.remote_address_validated());
+        IncomingConnectionBehavior::Accept
+    });
+    pair.drive();
+    pair.server.assert_accept();
+    assert!(
+        std::iter::from_fn(|| pair.client_conn_mut(client_ch).poll())
+            .any(|event| matches!(event, Event::Connected))
+    );
+}
+
+#[test]
 fn version_negotiate_server() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();

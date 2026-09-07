@@ -90,6 +90,8 @@ impl Endpoint {
     }
 
     /// Replace the server configuration, affecting new incoming connections only
+    ///
+    /// Pending incoming connections retain the configuration active when they first arrived.
     pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig>>) {
         self.server_config = server_config;
     }
@@ -217,7 +219,7 @@ impl Endpoint {
             match route_to {
                 RouteDatagramTo::Incoming(incoming_idx) => {
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
-                    let config = &self.server_config.as_ref().unwrap();
+                    let config = &incoming_buffer.server_config;
 
                     if incoming_buffer
                         .total_bytes
@@ -512,7 +514,11 @@ impl Endpoint {
             }
         };
 
-        let incoming_idx = self.incoming_buffers.insert(IncomingBuffer::default());
+        let incoming_idx = self.incoming_buffers.insert(IncomingBuffer {
+            server_config,
+            datagrams: Vec::new(),
+            total_bytes: 0,
+        });
         self.index
             .insert_initial_incoming(header.dst_cid, incoming_idx);
 
@@ -551,8 +557,11 @@ impl Endpoint {
             version,
             ..
         } = incoming.packet.header;
-        let server_config =
-            server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
+        let server_config = server_config.unwrap_or_else(|| {
+            self.incoming_buffers[incoming.incoming_idx]
+                .server_config
+                .clone()
+        });
 
         if server_config
             .transport
@@ -752,10 +761,11 @@ impl Endpoint {
             return Err(RetryError(Box::new(incoming)));
         }
 
+        let server_config = self.incoming_buffers[incoming.incoming_idx]
+            .server_config
+            .clone();
         self.remove_incoming_state(&incoming);
         incoming.improper_drop_warner.dismiss();
-
-        let server_config = self.server_config.as_ref().unwrap();
 
         // First Initial
         // The peer will use this as the DCID of its following Initials. Initial DCIDs are
@@ -1024,8 +1034,8 @@ impl fmt::Debug for Endpoint {
 }
 
 /// Buffered Initial and 0-RTT messages for a pending incoming connection
-#[derive(Default)]
 struct IncomingBuffer {
+    server_config: Arc<ServerConfig>,
     datagrams: Vec<DatagramConnectionEvent>,
     total_bytes: u64,
 }
