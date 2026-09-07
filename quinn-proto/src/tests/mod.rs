@@ -980,6 +980,214 @@ fn stream_id_limit() {
 }
 
 #[test]
+fn data_blocked() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            receive_window: 10u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+
+    // Fill the connection-level window, then run into the limit
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked,
+        1
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .data_blocked,
+        1
+    );
+
+    // Being refused again at the same limit does not repeat the frame
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked,
+        1
+    );
+
+    // Running into the raised limit is reported again
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(true).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Ok(Some(chunk)) if chunk.bytes.len() == 10);
+    let _ = chunks.finalize();
+    pair.drive();
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+    let stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(stats.frame_tx.data_blocked, 2);
+    assert_eq!(stats.frame_tx.stream_data_blocked, 0);
+}
+
+#[test]
+fn data_blocked_not_sent_under_limit() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _server_ch) = pair.connect();
+
+    // Default windows are far larger than this write, so nothing is blocked
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, s).write(b"hi").unwrap();
+    pair.drive();
+
+    let stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(stats.frame_tx.data_blocked, 0);
+    assert_eq!(stats.frame_tx.stream_data_blocked, 0);
+}
+
+#[test]
+fn data_blocked_not_sent_for_local_send_window() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _server_ch) = pair.connect();
+
+    // Running out of our own send window is not the peer's flow control limit
+    pair.client_conn_mut(client_ch).set_send_window(5);
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, s).write(b"0123456789").unwrap(),
+        5
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"x"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked,
+        0
+    );
+}
+
+#[test]
+fn data_blocked_dropped_when_limit_raised() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            receive_window: 10u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+
+    // The peer raises the limit before the queued frame gets transmitted
+    pair.server_conn_mut(server_ch)
+        .set_receive_window(100u32.into());
+    pair.drive_server();
+    pair.drive();
+
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked,
+        0
+    );
+}
+
+#[test]
+fn data_blocked_retransmit() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            receive_window: 10u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive_client();
+    pair.server.inbound.clear(); // Lose the packet carrying the frame
+    pair.drive();
+
+    // Still blocked at the same limit, so the frame is sent again. A PTO may send several probes,
+    // each carrying the frame, so only check that it was repeated and got through.
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked
+            > 1
+    );
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .data_blocked
+            > 0
+    );
+}
+
+#[test]
 fn key_update_simple() {
     let _guard = subscribe();
     let mut pair = Pair::default();
