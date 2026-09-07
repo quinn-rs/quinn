@@ -313,6 +313,7 @@ pub struct Retransmits {
     pub(super) reset_stream: Vec<(StreamId, VarInt)>,
     pub(super) stop_sending: Vec<frame::StopSending>,
     pub(super) max_stream_data: FxHashSet<StreamId>,
+    pub(super) stream_data_blocked: FxHashSet<StreamId>,
     pub(super) crypto: VecDeque<frame::Crypto>,
     pub(super) new_cids: Vec<IssuedCid>,
     pub(super) retire_cids: Vec<u64>,
@@ -361,6 +362,10 @@ impl Retransmits {
                 .max_stream_data
                 .iter()
                 .all(|&id| !streams.can_send_flow_control(id))
+            && self
+                .stream_data_blocked
+                .iter()
+                .all(|&id| streams.stream_data_blocked_limit(id).is_none())
             && self.crypto.is_empty()
             && self.new_cids.is_empty()
             && self.retire_cids.is_empty()
@@ -387,6 +392,7 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.reset_stream.extend_from_slice(&rhs.reset_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
         self.max_stream_data.extend(&rhs.max_stream_data);
+        self.stream_data_blocked.extend(&rhs.stream_data_blocked);
         for crypto in rhs.crypto.into_iter().rev() {
             self.crypto.push_front(crypto);
         }
