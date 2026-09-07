@@ -4,7 +4,7 @@ use bytes::Bytes;
 use thiserror::Error;
 use tracing::{debug, trace};
 
-use super::Connection;
+use super::{Connection, Event};
 use crate::{
     TransportError,
     frame::{Datagram, FrameStruct},
@@ -53,6 +53,21 @@ impl Datagrams<'_> {
         }
         self.conn.datagrams.outgoing.push_back(Datagram { data });
         Ok(())
+    }
+
+    /// Discard queued datagrams that no longer fit the active path, waking blocked senders.
+    pub(super) fn drop_oversized(&mut self) {
+        let Some(max_datagram_size) = self.max_size() else {
+            return;
+        };
+        if !self.conn.datagrams.drop_oversized(max_datagram_size)
+            || !self.conn.datagrams.send_blocked
+        {
+            return;
+        }
+
+        self.conn.datagrams.send_blocked = false;
+        self.conn.events.push_back(Event::DatagramsUnblocked);
     }
 
     /// Compute the maximum size of datagrams that may passed to `send_datagram`
