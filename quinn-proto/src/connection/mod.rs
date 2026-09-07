@@ -1444,7 +1444,7 @@ impl Connection {
     /// Resets path-specific settings.
     ///
     /// This will force-reset several subsystems related to a specific network path.
-    /// Currently this is the congestion controller, round-trip estimator, and the MTU
+    /// Currently this is the congestion controller, round-trip estimator, pacer, and MTU
     /// discovery.
     ///
     /// This is useful when it is known the underlying network path has changed and the old
