@@ -763,6 +763,8 @@ fn zero_rtt_rejection() {
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
     const MSG: &[u8] = b"Hello, 0-RTT!";
+    pair.client_conn_mut(client_ch)
+        .set_send_window(MSG.len() as u64);
     pair.client_send(client_ch, s).write(MSG).unwrap();
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).accepted_0rtt());
@@ -788,6 +790,19 @@ fn zero_rtt_rejection() {
     assert_eq!(chunks.next(usize::MAX), Err(ReadError::Blocked));
     let _ = chunks.finalize();
     assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+
+    // Rejecting early data must release the entire send window for 1-RTT traffic.
+    assert_eq!(
+        pair.client_send(client_ch, s2).write(MSG).unwrap(),
+        MSG.len()
+    );
+    pair.client_send(client_ch, s2).finish().unwrap();
+    pair.drive();
+    let mut recv = pair.server_recv(server_ch, s2);
+    let mut chunks = recv.read(false).unwrap();
+    assert_eq!(chunks.next(usize::MAX).unwrap().unwrap().bytes, MSG);
+    assert_eq!(chunks.next(usize::MAX).unwrap(), None);
+    let _ = chunks.finalize();
 }
 
 fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: F) {
