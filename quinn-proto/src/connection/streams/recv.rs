@@ -70,7 +70,7 @@ impl Recv {
         // how much there was.
         if frame.fin
             && !self.stopped
-            && let RecvState::Recv { ref mut size } = self.state
+            && let RecvState::Recv { size } = &mut self.state
         {
             *size = Some(end);
         }
@@ -287,10 +287,10 @@ impl<'a> Chunks<'a> {
     ///
     /// Should call finalize() when done calling this.
     pub fn next(&mut self, max_length: usize) -> Result<Option<Chunk>, ReadError> {
-        let rs = match self.state {
-            ChunksState::Readable(ref mut rs) => rs,
+        let rs = match &mut self.state {
+            ChunksState::Readable(rs) => rs,
             ChunksState::Reset(error_code) => {
-                return Err(ReadError::Reset(error_code));
+                return Err(ReadError::Reset(*error_code));
             }
             ChunksState::Finished => {
                 return Ok(None);

@@ -84,7 +84,7 @@ async fn run(options: Opt) -> Result<()> {
             Ok(cert) => {
                 roots.add(CertificateDer::from(cert))?;
             }
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 info!("local server certificate not found");
             }
             Err(e) => {

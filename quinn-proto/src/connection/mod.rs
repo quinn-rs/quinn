@@ -585,7 +585,7 @@ impl Connection {
                 buf.len()
             };
 
-            let tag_len = if let Some(ref crypto) = self.spaces[space_id].crypto {
+            let tag_len = if let Some(crypto) = &self.spaces[space_id].crypto {
                 crypto.packet.local.tag_len()
             } else if space_id == SpaceId::Data {
                 self.zero_rtt_crypto.as_ref().expect(
@@ -787,7 +787,7 @@ impl Connection {
                 // sends its first Handshake packet.
                 self.discard_space(now, SpaceId::Initial);
             }
-            if let Some(ref mut prev) = self.prev_crypto {
+            if let Some(prev) = &mut self.prev_crypto {
                 prev.update_unacked = false;
             }
 
@@ -839,8 +839,8 @@ impl Connection {
                 );
                 if buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
                     let max_frame_size = builder.max_size - buf.len();
-                    match self.state {
-                        State::Closed(state::Closed { ref reason }) => {
+                    match &self.state {
+                        State::Closed(state::Closed { reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
                                 reason.encode(buf, max_frame_size)
                             } else {
@@ -2112,8 +2112,8 @@ impl Connection {
         let len = packet.header_data.len() + packet.payload.len();
         self.path.total_recvd = len as u64;
 
-        match self.state {
-            State::Handshake(ref mut state) => {
+        match &mut self.state {
+            State::Handshake(state) => {
                 state.expected_token = packet.header.token.clone();
             }
             _ => unreachable!("first packet must be delivered in Handshake state"),
@@ -2254,7 +2254,7 @@ impl Connection {
             }
             let offset = self.spaces[space].crypto_offset;
             let outgoing = Bytes::from(outgoing);
-            if let State::Handshake(ref mut state) = self.state
+            if let State::Handshake(state) = &mut self.state
                 && space == SpaceId::Initial
                 && offset == 0
                 && self.side.is_client()
@@ -2369,7 +2369,7 @@ impl Connection {
         stateless_reset: bool,
     ) {
         self.stats.udp_rx.ios += 1;
-        if let Some(ref packet) = packet {
+        if let Some(packet) = &packet {
             trace!(
                 "got {:?} packet ({} bytes) from {} using id {}",
                 packet.header.space(),
@@ -2434,8 +2434,8 @@ impl Connection {
                     trace!("dropping short packet during handshake");
                     return;
                 } else {
-                    if let Header::Initial(InitialHeader { ref token, .. }) = packet.header
-                        && let State::Handshake(ref hs) = self.state
+                    if let Header::Initial(InitialHeader { token, .. }) = &packet.header
+                        && let State::Handshake(hs) = &self.state
                         && self.side.is_server()
                         && token != &hs.expected_token
                     {
@@ -2520,7 +2520,7 @@ impl Connection {
         number: Option<u64>,
         packet: Packet,
     ) -> Result<(), ConnectionError> {
-        let state = match self.state {
+        let state = match &mut self.state {
             State::Established => {
                 match packet.header.space() {
                     SpaceId::Data => self.process_payload(now, remote, number.unwrap(), packet)?,
@@ -2556,7 +2556,7 @@ impl Connection {
                 return Ok(());
             }
             State::Draining | State::Drained => return Ok(()),
-            State::Handshake(ref mut state) => state,
+            State::Handshake(state) => state,
         };
 
         match packet.header {
@@ -2621,7 +2621,7 @@ impl Connection {
                 self.streams.retransmit_all_for_0rtt();
 
                 let token_len = packet.payload.len() - 16;
-                let ConnectionSide::Client { ref mut token, .. } = self.side else {
+                let ConnectionSide::Client { token, .. } = &mut self.side else {
                     unreachable!("we already short-circuited if we're server");
                 };
                 *token = packet.payload.freeze().split_to(token_len);
@@ -2922,7 +2922,7 @@ impl Connection {
                         self.timers.stop(Timer::PathValidation);
                         self.path.challenge = None;
                         self.path.validated = true;
-                        if let Some((_, ref mut prev_path)) = self.prev_path {
+                        if let Some((_, prev_path)) = &mut self.prev_path {
                             prev_path.challenge = None;
                             prev_path.challenge_pending = false;
                         }
@@ -3133,7 +3133,7 @@ impl Connection {
             && !is_probing_packet
             && number == self.spaces[SpaceId::Data].rx_packet
         {
-            let ConnectionSide::Server { ref server_config } = self.side else {
+            let ConnectionSide::Server { server_config } = &self.side else {
                 panic!("packets from unknown remote should be dropped by clients");
             };
             debug_assert!(
@@ -3605,7 +3605,7 @@ impl Connection {
         self.idle_timeout =
             negotiate_max_idle_timeout(self.config.max_idle_timeout, Some(params.max_idle_timeout));
         trace!("negotiated max idle timeout {:?}", self.idle_timeout);
-        if let Some(ref info) = params.preferred_address {
+        if let Some(info) = params.preferred_address {
             self.rem_cids.insert(NewConnectionId {
                 sequence: 1,
                 id: info.connection_id,

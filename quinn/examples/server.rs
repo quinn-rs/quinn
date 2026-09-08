@@ -100,7 +100,7 @@ async fn run(options: Opt) -> Result<()> {
                 CertificateDer::from(cert),
                 PrivateKeyDer::try_from(key).map_err(anyhow::Error::msg)?,
             ),
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 info!("generating self-signed certificate");
                 let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
                 let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());

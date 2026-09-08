@@ -397,7 +397,7 @@ impl RecvStream {
             ReadStatus::Failed(read, Blocked) => match read {
                 Some(val) => Poll::Ready(Ok(Some(val))),
                 None => {
-                    if let Some(ref x) = conn.error {
+                    if let Some(x) = &conn.error {
                         return Poll::Ready(Err(ReadError::ConnectionLost(x.clone())));
                     }
                     conn.blocked_readers.insert(self.stream, cx.waker().clone());

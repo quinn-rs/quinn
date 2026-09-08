@@ -295,7 +295,7 @@ mod test {
             let result = log.check_and_insert(token, issued, lifetime);
             {
                 let filter = &log.0.lock().unwrap().filter_1;
-                if let Filter::Set(ref hset) = *filter {
+                if let Filter::Set(hset) = filter {
                     assert!(hset.capacity() * size_of::<u64>() <= 800);
                     assert_eq!(hset.len(), i + 1);
                     assert!(result.is_ok());

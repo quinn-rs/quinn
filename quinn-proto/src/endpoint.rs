@@ -697,8 +697,8 @@ impl Endpoint {
             Err(e) => {
                 debug!("handshake failed: {}", e);
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
-                let response = match e {
-                    ConnectionError::TransportError(ref e) => Some(self.initial_close(
+                let response = match &e {
+                    ConnectionError::TransportError(e) => Some(self.initial_close(
                         version,
                         incoming.addresses,
                         &incoming.crypto,
