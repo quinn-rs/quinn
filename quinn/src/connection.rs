@@ -153,12 +153,17 @@ impl Connecting {
     /// [`Session`](proto::crypto::Session). For the default `rustls` session, the return value can
     /// be [`downcast`](Box::downcast) to a
     /// [`crypto::rustls::HandshakeData`](crate::crypto::rustls::HandshakeData).
+    ///
+    /// This operation is cancel-safe.
     pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, ConnectionError> {
         // Taking &mut self allows us to use a single oneshot channel rather than dealing with
         // potentially many tasks waiting on the same event. It's a bit of a hack, but keeps things
         // simple.
-        if let Some(x) = self.handshake_data_ready.take() {
+        if let Some(x) = self.handshake_data_ready.as_mut() {
             let _ = x.await;
+            // Once the data is ready, apply state changes. This prevents a panic due to
+            // inconsistent state when retrying a call to `handshake_data`.
+            self.handshake_data_ready = None;
         }
         let conn = self.conn.as_ref().unwrap();
         let inner = conn.state.lock("handshake");
