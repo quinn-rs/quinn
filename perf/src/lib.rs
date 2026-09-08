@@ -7,9 +7,9 @@ use clap::{Parser, ValueEnum};
 #[cfg(feature = "qlog")]
 use quinn::QlogConfig;
 use quinn::{
-    AckFrequencyConfig, TransportConfig, VarInt,
     congestion::{self, ControllerFactory},
     udp::UdpSocketState,
+    AckFrequencyConfig, TransportConfig, VarInt,
 };
 use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};

@@ -440,10 +440,10 @@ impl TestEndpoint {
             }
 
             for (ch, event) in endpoint_events {
-                if let Some(event) = self.handle_event(ch, event) {
-                    if let Some(conn) = self.connections.get_mut(&ch) {
-                        conn.handle_event(event);
-                    }
+                if let Some(event) = self.handle_event(ch, event)
+                    && let Some(conn) = self.connections.get_mut(&ch)
+                {
+                    conn.handle_event(event);
                 }
             }
         }

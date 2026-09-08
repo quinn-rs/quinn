@@ -57,21 +57,22 @@ impl Recv {
             ));
         }
 
-        if let Some(final_offset) = self.final_offset() {
-            if end > final_offset || (frame.fin && end != final_offset) {
-                debug!(end, final_offset, "final size error");
-                return Err(TransportError::FINAL_SIZE_ERROR(""));
-            }
+        if let Some(final_offset) = self.final_offset()
+            && (end > final_offset || (frame.fin && end != final_offset))
+        {
+            debug!(end, final_offset, "final size error");
+            return Err(TransportError::FINAL_SIZE_ERROR(""));
         }
 
         let new_bytes = self.credit_consumed_by(end, received, max_data)?;
 
         // Stopped streams don't need to wait for the actual data, they just need to know
         // how much there was.
-        if frame.fin && !self.stopped {
-            if let RecvState::Recv { ref mut size } = self.state {
-                *size = Some(end);
-            }
+        if frame.fin
+            && !self.stopped
+            && let RecvState::Recv { ref mut size } = self.state
+        {
+            *size = Some(end);
         }
 
         self.end = self.end.max(end);

@@ -11,8 +11,8 @@ use bytes::Bytes;
 use clap::Parser;
 use quinn::crypto::rustls::QuicClientConfig;
 use rustls::{
-    RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer},
+    RootCertStore,
 };
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;

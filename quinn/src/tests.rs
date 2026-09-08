@@ -1223,24 +1223,28 @@ static VTABLE: RawWakerVTable =
     RawWakerVTable::new(clone_waker, wake_waker, wake_by_ref_waker, drop_waker);
 
 unsafe fn clone_waker(data: *const ()) -> RawWaker {
-    let arc = Arc::<WakeCounter>::from_raw(data as *const WakeCounter);
+    // SAFETY: pointer always comes from `Arc::into_raw()` (see `raw_waker()`)
+    let arc = unsafe { Arc::<WakeCounter>::from_raw(data as *const WakeCounter) };
     let cloned = arc.clone();
     std::mem::forget(arc);
     raw_waker(cloned)
 }
 
 unsafe fn wake_waker(data: *const ()) {
-    let arc = Arc::<WakeCounter>::from_raw(data as *const WakeCounter);
+    // SAFETY: pointer always comes from `Arc::into_raw()` (see `raw_waker()`)
+    let arc = unsafe { Arc::<WakeCounter>::from_raw(data as *const WakeCounter) };
     arc.wakes.fetch_add(1, Ordering::SeqCst);
     // arc drops here
 }
 
 unsafe fn wake_by_ref_waker(data: *const ()) {
-    let arc = Arc::<WakeCounter>::from_raw(data as *const WakeCounter);
+    // SAFETY: pointer always comes from `Arc::into_raw()` (see `raw_waker()`)
+    let arc = unsafe { Arc::<WakeCounter>::from_raw(data as *const WakeCounter) };
     arc.wakes.fetch_add(1, Ordering::SeqCst);
     std::mem::forget(arc);
 }
 
 unsafe fn drop_waker(data: *const ()) {
-    drop(Arc::<WakeCounter>::from_raw(data as *const WakeCounter));
+    // SAFETY: pointer always comes from `Arc::into_raw()` (see `raw_waker()`)
+    drop(unsafe { Arc::<WakeCounter>::from_raw(data as *const WakeCounter) });
 }
