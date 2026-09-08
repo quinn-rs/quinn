@@ -169,7 +169,7 @@ pub(crate) enum Frame {
 impl Frame {
     pub(crate) fn ty(&self) -> FrameType {
         use Frame::*;
-        match *self {
+        match self {
             Padding => FrameType::PADDING,
             ResetStream(_) => FrameType::RESET_STREAM,
             Close(self::Close::Connection(_)) => FrameType::CONNECTION_CLOSE,
@@ -186,7 +186,7 @@ impl Frame {
             StopSending { .. } => FrameType::STOP_SENDING,
             RetireConnectionId { .. } => FrameType::RETIRE_CONNECTION_ID,
             Ack(_) => FrameType::ACK,
-            Stream(ref x) => {
+            Stream(x) => {
                 let mut ty = *STREAM_TYS.start();
                 if x.fin {
                     ty |= 0x01;
@@ -221,9 +221,9 @@ pub(crate) enum Close {
 
 impl Close {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
-        match *self {
-            Self::Connection(ref x) => x.encode(out, max_len),
-            Self::Application(ref x) => x.encode(out, max_len),
+        match self {
+            Self::Connection(x) => x.encode(out, max_len),
+            Self::Application(x) => x.encode(out, max_len),
         }
     }
 
@@ -968,14 +968,14 @@ mod test {
         Ack::encode(42, &ranges, Some(&ECN), &mut buf);
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);
-        match frames[0] {
-            Frame::Ack(ref ack) => {
+        match &frames[0] {
+            Frame::Ack(ack) => {
                 let mut packets = ack.iter().flatten().collect::<Vec<_>>();
                 packets.sort_unstable();
                 assert_eq!(&packets[..], PACKETS);
                 assert_eq!(ack.ecn, Some(ECN));
             }
-            ref x => panic!("incorrect frame {x:?}"),
+            x => panic!("incorrect frame {x:?}"),
         }
     }
 

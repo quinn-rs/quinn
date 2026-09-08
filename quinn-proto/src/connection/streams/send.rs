@@ -112,10 +112,8 @@ impl Send {
     /// Returns whether the stream has been finished and all data has been acknowledged by the peer
     pub(super) fn ack(&mut self, frame: frame::StreamMeta) -> bool {
         self.pending.ack(frame.offsets);
-        match self.state {
-            SendState::DataSent {
-                ref mut finish_acked,
-            } => {
+        match &mut self.state {
+            SendState::DataSent { finish_acked } => {
                 *finish_acked |= frame.fin;
                 *finish_acked && self.pending.is_fully_acked()
             }

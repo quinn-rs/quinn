@@ -680,9 +680,9 @@ impl ConnectionSet {
         runtime: Arc<dyn Runtime>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
-        if let Some((error_code, ref reason)) = self.close {
+        if let Some((error_code, reason)) = &self.close {
             send.send(ConnectionEvent::Close {
-                error_code,
+                error_code: *error_code,
                 reason: reason.clone(),
             })
             .unwrap();
@@ -928,14 +928,14 @@ impl RecvState {
                 }
                 // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
                 // attacker
-                Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::ConnectionReset => {
+                Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::ConnectionReset => {
                     continue;
                 }
                 // Ignore EMSGSIZE as we're currently not handling ICMPv4 Fragmentation Needed
                 // and ICMPv6 Packet Too Big (PTB) messages since they cannot be authenticated,
                 // and Datagram Packetization Layer Path MTU Discovery (DPLPMTUD) works without
                 // it anyways.
-                Poll::Ready(Err(ref e)) if is_msg_size_err(e) => {
+                Poll::Ready(Err(e)) if is_msg_size_err(&e) => {
                     continue;
                 }
                 Poll::Ready(Err(e)) => {

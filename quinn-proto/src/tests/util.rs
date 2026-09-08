@@ -146,7 +146,7 @@ impl Pair {
                 self.spins += (spin == self.last_spin) as u64;
                 self.last_spin = spin;
             }
-            if let Some(ref socket) = self.client.socket {
+            if let Some(socket) = &self.client.socket {
                 socket.send_to(&buffer, packet.destination).unwrap();
             }
             if self.server.addr == packet.destination {
@@ -170,7 +170,7 @@ impl Pair {
                 info!(packet_size, "dropping packet (max size exceeded)");
                 continue;
             }
-            if let Some(ref socket) = self.server.socket {
+            if let Some(socket) = &self.server.socket {
                 socket.send_to(&buffer, packet.destination).unwrap();
             }
             if self.client.addr == packet.destination {
@@ -354,7 +354,7 @@ impl TestEndpoint {
     }
 
     pub(super) fn drive_incoming(&mut self, now: Instant, remote: SocketAddr) {
-        if let Some(ref socket) = self.socket {
+        if let Some(socket) = &self.socket {
             loop {
                 let mut buf = [0; 8192];
                 if socket.recv_from(&mut buf).is_err() {

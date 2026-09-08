@@ -206,7 +206,7 @@ fn lifecycle() {
     pair.drive();
     assert_matches!(pair.server_conn_mut(server_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed(
-                        ApplicationClose { error_code: VarInt(42), ref reason }
+                        ApplicationClose { error_code: VarInt(42), reason }
                     )}) if reason == REASON);
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_eq!(pair.client.known_connections(), 0);
@@ -310,7 +310,7 @@ fn draft_version_compat() {
     pair.drive();
     assert_matches!(pair.server_conn_mut(server_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed(
-                        ApplicationClose { error_code: VarInt(42), ref reason }
+                        ApplicationClose { error_code: VarInt(42), reason }
                     )}) if reason == REASON);
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_eq!(pair.client.known_connections(), 0);
@@ -576,7 +576,7 @@ fn reject_self_signed_server_cert() {
     pair.drive();
 
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
-                    Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
+                    Some(Event::ConnectionLost { reason: ConnectionError::TransportError(error)})
                     if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCA.into()));
 }
 
@@ -624,7 +624,7 @@ fn reject_missing_client_cert() {
         Some(Event::Connected)
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
-                    Some(Event::ConnectionLost { reason: ConnectionError::ConnectionClosed(ref close)})
+                    Some(Event::ConnectionLost { reason: ConnectionError::ConnectionClosed(close)})
                     if close.error_code == TransportErrorCode::crypto(AlertDescription::CertificateRequired.into()));
 
     // The server never completes the connection
@@ -634,7 +634,7 @@ fn reject_missing_client_cert() {
         Some(Event::HandshakeDataReady)
     );
     assert_matches!(pair.server_conn_mut(server_ch).poll(),
-                    Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
+                    Some(Event::ConnectionLost { reason: ConnectionError::TransportError(error)})
                     if error.code == TransportErrorCode::crypto(AlertDescription::CertificateRequired.into()));
 }
 
@@ -1882,7 +1882,7 @@ fn connection_close_while_congestion_blocked() {
     }
     let (reason, delivered_at) = result.expect("server never learned of the close");
     assert_matches!(reason, ConnectionError::ApplicationClosed(
-        ApplicationClose { error_code: VarInt(42), ref reason }
+        ApplicationClose { error_code: VarInt(42), reason }
     ) if reason == REASON);
     // Close packets aren't congestion controlled and the test link has no latency, so the close
     // should arrive the moment it was issued — any delay means a timer had to rescue it

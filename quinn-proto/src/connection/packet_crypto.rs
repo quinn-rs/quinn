@@ -22,7 +22,7 @@ pub(super) fn unprotect_header(
             return None;
         }
     } else if let Some(space) = partial_decode.space() {
-        if let Some(ref crypto) = spaces[space].crypto {
+        if let Some(crypto) = &spaces[space].crypto {
             Some(&*crypto.header.remote)
         } else {
             debug!(

@@ -494,7 +494,7 @@ impl Connection {
     /// datagram, in order of oldest to newest.
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.state.lock("send_datagram");
-        if let Some(ref x) = conn.error {
+        if let Some(x) = &conn.error {
             return Err(SendDatagramError::ConnectionLost(x.clone()));
         }
         use proto::SendDatagramError::*;
@@ -809,7 +809,7 @@ fn poll_open<'a>(
     dir: Dir,
 ) -> Poll<Result<(ConnectionRef, StreamId, bool), ConnectionError>> {
     let mut state = conn.state.lock("poll_open");
-    if let Some(ref e) = state.error {
+    if let Some(e) = &state.error {
         return Poll::Ready(Err(e.clone()));
     } else if let Some(id) = state.inner.streams().open(dir) {
         let is_0rtt = state.inner.side().is_client() && state.inner.is_handshaking();
@@ -883,7 +883,7 @@ fn poll_accept<'a>(
         state.wake(); // To send additional stream ID credit
         drop(state); // Release the lock so clone can take it
         return Poll::Ready(Ok((conn.clone(), id, is_0rtt)));
-    } else if let Some(ref e) = state.error {
+    } else if let Some(e) = &state.error {
         return Poll::Ready(Err(e.clone()));
     }
     loop {
@@ -914,7 +914,7 @@ impl Future for ReadDatagram<'_> {
         // datagrams, which are necessarily finite, can be drained from a closed connection.
         if let Some(x) = state.inner.datagrams().recv() {
             return Poll::Ready(Ok(x));
-        } else if let Some(ref e) = state.error {
+        } else if let Some(e) = &state.error {
             return Poll::Ready(Err(e.clone()));
         }
         loop {
@@ -945,7 +945,7 @@ impl Future for SendDatagram<'_> {
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
         let mut state = this.conn.state.lock("SendDatagram::poll");
-        if let Some(ref e) = state.error {
+        if let Some(e) = &state.error {
             return Poll::Ready(Err(SendDatagramError::ConnectionLost(e.clone())));
         }
         use proto::SendDatagramError::*;
