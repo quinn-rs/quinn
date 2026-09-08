@@ -421,10 +421,7 @@ impl StreamsState {
     /// `None` if the stream is no longer writable, was stopped by the peer, or the peer has raised
     /// the limit since the frame was queued.
     pub(crate) fn stream_data_blocked_limit(&self, id: StreamId) -> Option<u64> {
-        let stream = self.send.get(&id)?.as_ref()?;
-        stream.data_blocked_limit.filter(|&limit| {
-            stream.is_writable() && stream.stop_reason.is_none() && limit == stream.max_data
-        })
+        self.send.get(&id)?.as_ref()?.blocked_limit()
     }
 
     pub(in crate::connection) fn write_control_frames(
