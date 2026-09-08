@@ -1571,6 +1571,290 @@ fn data_blocked_retransmit() {
 }
 
 #[test]
+fn data_blocked_keeps_connection_alive() {
+    let _guard = subscribe();
+    const IDLE_TIMEOUT: u64 = 100;
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            receive_window: 10u32.into(),
+            max_idle_timeout: Some(VarInt(IDLE_TIMEOUT)),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked,
+        1
+    );
+
+    // The server never reads. Without repeated DATA_BLOCKED frames the connection would idle out,
+    // see `idle_timeout`.
+    let end = pair.time + Duration::from_millis(10 * IDLE_TIMEOUT);
+    while pair.time < end {
+        if !pair.step()
+            && let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup())
+        {
+            pair.time = time;
+        }
+        assert!(!pair.client_conn_mut(client_ch).is_closed());
+        assert!(!pair.server_conn_mut(server_ch).is_closed());
+    }
+
+    let sent = pair
+        .client_conn_mut(client_ch)
+        .stats()
+        .frame_tx
+        .data_blocked;
+    assert!(sent > 5, "only {sent} DATA_BLOCKED frames sent");
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .data_blocked,
+        sent
+    );
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .stream_data_blocked,
+        0
+    );
+}
+
+#[test]
+fn stream_data_blocked_keeps_connection_alive() {
+    let _guard = subscribe();
+    const IDLE_TIMEOUT: u64 = 100;
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            stream_receive_window: 10u32.into(),
+            max_idle_timeout: Some(VarInt(IDLE_TIMEOUT)),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .stream_data_blocked,
+        1
+    );
+
+    let end = pair.time + Duration::from_millis(10 * IDLE_TIMEOUT);
+    while pair.time < end {
+        if !pair.step()
+            && let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup())
+        {
+            pair.time = time;
+        }
+        assert!(!pair.client_conn_mut(client_ch).is_closed());
+        assert!(!pair.server_conn_mut(server_ch).is_closed());
+    }
+
+    let sent = pair
+        .client_conn_mut(client_ch)
+        .stats()
+        .frame_tx
+        .stream_data_blocked;
+    assert!(sent > 5, "only {sent} STREAM_DATA_BLOCKED frames sent");
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .stream_data_blocked,
+        sent
+    );
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked,
+        0
+    );
+}
+
+#[test]
+fn data_blocked_repeat_stops_when_limit_raised() {
+    let _guard = subscribe();
+    const IDLE_TIMEOUT: u64 = 100;
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            receive_window: 10u32.into(),
+            max_idle_timeout: Some(VarInt(IDLE_TIMEOUT)),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+
+    let end = pair.time + Duration::from_millis(3 * IDLE_TIMEOUT);
+    while pair.time < end {
+        if !pair.step()
+            && let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup())
+        {
+            pair.time = time;
+        }
+    }
+    // The loop may stop right when the next repetition is due; let it go out before sampling
+    pair.drive();
+    let repeated = pair
+        .client_conn_mut(client_ch)
+        .stats()
+        .frame_tx
+        .data_blocked;
+    assert!(repeated > 1);
+
+    // Reading raises the limit, after which nothing is repeated any more
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(true).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Ok(Some(chunk)) if chunk.bytes.len() == 10);
+    let _ = chunks.finalize();
+    pair.drive();
+    let end = pair.time + Duration::from_millis(IDLE_TIMEOUT / 2);
+    while pair.time < end {
+        if !pair.step()
+            && let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup())
+        {
+            pair.time = time.min(end);
+        }
+    }
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked,
+        repeated
+    );
+
+    // Running into the raised limit starts repeating again
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+    let end = pair.time + Duration::from_millis(3 * IDLE_TIMEOUT);
+    while pair.time < end {
+        if !pair.step()
+            && let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup())
+        {
+            pair.time = time;
+        }
+        assert!(!pair.client_conn_mut(client_ch).is_closed());
+    }
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked
+            > repeated + 1
+    );
+}
+
+#[test]
+fn data_blocked_not_repeated_without_idle_timeout() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            receive_window: 10u32.into(),
+            max_idle_timeout: None,
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let client = ClientConfig {
+        transport: Arc::new(TransportConfig {
+            max_idle_timeout: None,
+            ..TransportConfig::default()
+        }),
+        ..client_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, _server_ch) = pair.connect_with(client);
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, s)
+            .write(b"0123456789ab")
+            .unwrap(),
+        10
+    );
+    assert_matches!(
+        pair.client_send(client_ch, s).write(b"c"),
+        Err(WriteError::Blocked)
+    );
+    pair.drive();
+
+    // Nothing can idle out, so there is nothing to keep alive
+    pair.time += Duration::from_secs(60);
+    pair.drive();
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .data_blocked,
+        1
+    );
+}
+
+#[test]
 fn key_update_simple() {
     let _guard = subscribe();
     let mut pair = Pair::default();

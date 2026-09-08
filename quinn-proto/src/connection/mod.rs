@@ -1233,8 +1233,14 @@ impl Connection {
                     trace!("sending keep-alive");
                     self.ping();
                 }
+                Timer::Blocked => {
+                    trace!("repeating blocked frames");
+                    self.streams
+                        .queue_blocked(&mut self.spaces[SpaceId::Data].pending);
+                }
                 Timer::LossDetection => {
                     self.on_loss_detection_timeout(now);
+                    self.set_blocked_timer(now);
 
                     self.config.qlog_sink.emit_recovery_metrics(
                         self.pto_count,
@@ -1610,6 +1616,7 @@ impl Connection {
         }
 
         self.set_loss_detection_timer(now);
+        self.set_blocked_timer(now);
         Ok(())
     }
 
@@ -2085,6 +2092,25 @@ impl Connection {
             _ => return,
         };
         self.timers.set(Timer::KeepAlive, now + interval);
+    }
+
+    /// Arm the timer that repeats blocked frames while nothing else is in flight
+    ///
+    /// A sender that is flow control limited should periodically remind the peer of that when it
+    /// has no ack-eliciting packets in flight, so that the connection does not idle out (RFC 9000
+    /// §4.1). Half the idle timeout leaves headroom for delays and loss.
+    fn set_blocked_timer(&mut self, now: Instant) {
+        let Some(timeout) = self.idle_timeout else {
+            return;
+        };
+        if self.state.is_closed()
+            || self.path.in_flight.ack_eliciting != 0
+            || !self.streams.blocked()
+        {
+            self.timers.stop(Timer::Blocked);
+            return;
+        }
+        self.timers.set(Timer::Blocked, now + timeout / 2);
     }
 
     fn reset_cid_retirement(&mut self) {
@@ -3754,12 +3780,17 @@ impl Connection {
             .saturating_sub(self.path.in_flight.bytes)
     }
 
-    /// Whether no timers but keepalive, idle, rtt, pushnewcid, and key discard are running
+    /// Whether no timers but keepalive, idle, rtt, pushnewcid, key discard, and blocked are running
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
         Timer::VALUES
             .iter()
-            .filter(|&&t| !matches!(t, Timer::KeepAlive | Timer::PushNewCid | Timer::KeyDiscard))
+            .filter(|&&t| {
+                !matches!(
+                    t,
+                    Timer::KeepAlive | Timer::PushNewCid | Timer::KeyDiscard | Timer::Blocked
+                )
+            })
             .filter_map(|&t| Some((t, self.timers.get(t)?)))
             .min_by_key(|&(_, time)| time)
             .is_none_or(|(timer, _)| timer == Timer::Idle)
