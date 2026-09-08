@@ -84,10 +84,10 @@ impl Endpoint {
     ))]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
-        if addr.is_ipv6() {
-            if let Err(e) = socket.set_only_v6(false) {
-                tracing::debug!(%e, "unable to make socket dual-stack");
-            }
+        if addr.is_ipv6()
+            && let Err(e) = socket.set_only_v6(false)
+        {
+            tracing::debug!(%e, "unable to make socket dual-stack");
         }
         socket.bind(&addr.into())?;
         let runtime =
@@ -126,10 +126,10 @@ impl Endpoint {
     ))]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
-        if addr.is_ipv6() {
-            if let Err(e) = socket.set_only_v6(false) {
-                tracing::debug!(%e, "unable to make socket dual-stack");
-            }
+        if addr.is_ipv6()
+            && let Err(e) = socket.set_only_v6(false)
+        {
+            tracing::debug!(%e, "unable to make socket dual-stack");
         }
         socket.bind(&addr.into())?;
         let runtime =

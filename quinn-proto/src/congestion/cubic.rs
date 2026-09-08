@@ -240,10 +240,10 @@ impl Controller for Cubic {
     }
 
     fn on_spurious_congestion_event(&mut self) {
-        if let Some(prior_state) = self.pre_congestion_state.take() {
-            if self.state.window < prior_state.window {
-                self.state = prior_state;
-            }
+        if let Some(prior_state) = self.pre_congestion_state.take()
+            && self.state.window < prior_state.window
+        {
+            self.state = prior_state;
         }
     }
 

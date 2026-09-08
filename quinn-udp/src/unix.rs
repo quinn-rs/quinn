@@ -93,12 +93,11 @@ impl UdpSocketState {
             target_os = "hurd",
             solarish
         )))]
-        if is_ipv4 || !io.only_v6()? {
-            if let Err(_err) =
+        if (is_ipv4 || !io.only_v6()?)
+            && let Err(_err) =
                 set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
-            {
-                crate::log::debug!("Ignoring error setting IP_RECVTOS on socket: {_err:?}");
-            }
+        {
+            crate::log::debug!("Ignoring error setting IP_RECVTOS on socket: {_err:?}");
         }
 
         let mut may_fragment = false;

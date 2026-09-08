@@ -31,7 +31,8 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
     /// - The `Encoder` must be dropped before `hdr` is passed to a system call, and must not be leaked.
     pub(crate) unsafe fn new(hdr: &'a mut M) -> Self {
         Self {
-            cmsg: hdr.cmsg_first_hdr().as_mut(),
+            // SAFETY: pointer is convertible to a reference (aligned, non-null, a valid value)
+            cmsg: unsafe { hdr.cmsg_first_hdr().as_mut() },
             hdr,
             len: 0,
         }
@@ -81,7 +82,8 @@ pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &impl CMsgHdr) -> T {
     debug_assert_eq!(cmsg.len(), C::cmsg_len(size_of::<T>()));
     // The payload is only aligned for `C`, which on musl is less strict than payloads such as
     // `libc::timespec`, so it cannot be read through an aligned `ptr::read`.
-    ptr::read_unaligned(cmsg.cmsg_data() as *const T)
+    // SAFETY: caller guarantees that `cmsg_data()` points to a readable, initialized value of type `T`
+    unsafe { ptr::read_unaligned(cmsg.cmsg_data() as *const T) }
 }
 
 pub(crate) struct Iter<'a, M: MsgHdr> {
@@ -98,7 +100,8 @@ impl<'a, M: MsgHdr> Iter<'a, M> {
     pub(crate) unsafe fn new(hdr: &'a M) -> Self {
         Self {
             hdr,
-            cmsg: hdr.cmsg_first_hdr().as_ref(),
+            // SAFETY: pointer is convertible to a reference (aligned, non-null, a valid value)
+            cmsg: unsafe { hdr.cmsg_first_hdr().as_ref() },
         }
     }
 }

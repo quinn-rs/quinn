@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use tracing::error;
-use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 use perf::{client, server};
 

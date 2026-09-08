@@ -879,34 +879,35 @@ impl Connection {
 
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
-            if space_id == SpaceId::Data && num_datagrams == 1 {
-                if let Some((token, remote)) = self.path_responses.pop_off_path(self.path.remote) {
-                    // `unwrap` guaranteed to succeed because `builder_storage` was populated just
-                    // above.
-                    let mut builder = builder_storage.take().unwrap();
-                    trace!("PATH_RESPONSE {:08x} (off-path)", token);
-                    buf.write(frame::FrameType::PATH_RESPONSE);
-                    buf.write(token);
-                    self.stats.frame_tx.path_response += 1;
-                    builder.pad_to(MIN_INITIAL_SIZE);
-                    builder.finish_and_track(
-                        now,
-                        self,
-                        Some(SentFrames {
-                            non_retransmits: true,
-                            ..SentFrames::default()
-                        }),
-                        buf,
-                    );
-                    self.stats.udp_tx.on_sent(1, buf.len());
-                    return Some(Transmit {
-                        destination: remote,
-                        size: buf.len(),
-                        ecn: None,
-                        segment_size: None,
-                        src_ip: self.local_ip,
-                    });
-                }
+            if space_id == SpaceId::Data
+                && num_datagrams == 1
+                && let Some((token, remote)) = self.path_responses.pop_off_path(self.path.remote)
+            {
+                // `unwrap` guaranteed to succeed because `builder_storage` was populated just
+                // above.
+                let mut builder = builder_storage.take().unwrap();
+                trace!("PATH_RESPONSE {:08x} (off-path)", token);
+                buf.write(frame::FrameType::PATH_RESPONSE);
+                buf.write(token);
+                self.stats.frame_tx.path_response += 1;
+                builder.pad_to(MIN_INITIAL_SIZE);
+                builder.finish_and_track(
+                    now,
+                    self,
+                    Some(SentFrames {
+                        non_retransmits: true,
+                        ..SentFrames::default()
+                    }),
+                    buf,
+                );
+                self.stats.udp_tx.on_sent(1, buf.len());
+                return Some(Transmit {
+                    destination: remote,
+                    size: buf.len(),
+                    ecn: None,
+                    segment_size: None,
+                    src_ip: self.local_ip,
+                });
             }
 
             let sent =
@@ -1877,13 +1878,12 @@ impl Connection {
                 self.path
                     .congestion
                     .on_mtu_update(self.path.mtud.current_mtu());
-                if let Some(max_datagram_size) = self.datagrams().max_size() {
-                    if self.datagrams.drop_oversized(max_datagram_size)
-                        && self.datagrams.send_blocked
-                    {
-                        self.datagrams.send_blocked = false;
-                        self.events.push_back(Event::DatagramsUnblocked);
-                    }
+                if let Some(max_datagram_size) = self.datagrams().max_size()
+                    && self.datagrams.drop_oversized(max_datagram_size)
+                    && self.datagrams.send_blocked
+                {
+                    self.datagrams.send_blocked = false;
+                    self.events.push_back(Event::DatagramsUnblocked);
                 }
             }
 
@@ -2254,10 +2254,12 @@ impl Connection {
             }
             let offset = self.spaces[space].crypto_offset;
             let outgoing = Bytes::from(outgoing);
-            if let State::Handshake(ref mut state) = self.state {
-                if space == SpaceId::Initial && offset == 0 && self.side.is_client() {
-                    state.client_hello = Some(outgoing.clone());
-                }
+            if let State::Handshake(ref mut state) = self.state
+                && space == SpaceId::Initial
+                && offset == 0
+                && self.side.is_client()
+            {
+                state.client_hello = Some(outgoing.clone());
             }
             self.spaces[space].crypto_offset += outgoing.len() as u64;
             trace!("wrote {} {:?} CRYPTO bytes", outgoing.len(), space);
@@ -2432,16 +2434,16 @@ impl Connection {
                     trace!("dropping short packet during handshake");
                     return;
                 } else {
-                    if let Header::Initial(InitialHeader { ref token, .. }) = packet.header {
-                        if let State::Handshake(ref hs) = self.state {
-                            if self.side.is_server() && token != &hs.expected_token {
-                                // Clients must send the same retry token in every Initial. Initial
-                                // packets can be spoofed, so we discard rather than killing the
-                                // connection.
-                                warn!("discarding Initial with invalid retry token");
-                                return;
-                            }
-                        }
+                    if let Header::Initial(InitialHeader { ref token, .. }) = packet.header
+                        && let State::Handshake(ref hs) = self.state
+                        && self.side.is_server()
+                        && token != &hs.expected_token
+                    {
+                        // Clients must send the same retry token in every Initial. Initial
+                        // packets can be spoofed, so we discard rather than killing the
+                        // connection.
+                        warn!("discarding Initial with invalid retry token");
+                        return;
                     }
 
                     if !self.state.is_closed() {
@@ -3227,11 +3229,11 @@ impl Connection {
 
         // Subtract 1 to account for the CID we supplied while handshaking
         let mut n = self.peer_params.issue_cids_limit() - 1;
-        if let ConnectionSide::Server { server_config } = &self.side {
-            if server_config.has_preferred_address() {
-                // We also sent a CID in the transport parameters
-                n -= 1;
-            }
+        if let ConnectionSide::Server { server_config } = &self.side
+            && server_config.has_preferred_address()
+        {
+            // We also sent a CID in the transport parameters
+            n -= 1;
         }
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(now, n));
@@ -3336,15 +3338,16 @@ impl Connection {
         }
 
         // PATH_RESPONSE
-        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
-            if let Some(token) = self.path_responses.pop_on_path(self.path.remote) {
-                sent.non_retransmits = true;
-                sent.requires_padding = true;
-                trace!("PATH_RESPONSE {:08x}", token);
-                buf.write(frame::FrameType::PATH_RESPONSE);
-                buf.write(token);
-                self.stats.frame_tx.path_response += 1;
-            }
+        if buf.len() + 9 < max_size
+            && space_id == SpaceId::Data
+            && let Some(token) = self.path_responses.pop_on_path(self.path.remote)
+        {
+            sent.non_retransmits = true;
+            sent.requires_padding = true;
+            trace!("PATH_RESPONSE {:08x}", token);
+            buf.write(frame::FrameType::PATH_RESPONSE);
+            buf.write(token);
+            self.stats.frame_tx.path_response += 1;
         }
 
         // CRYPTO
@@ -3635,11 +3638,11 @@ impl Connection {
             return Ok(None);
         };
 
-        if result.outgoing_key_update_acked {
-            if let Some(prev) = self.prev_crypto.as_mut() {
-                prev.end_packet = Some((result.number, now));
-                self.set_key_discard_timer(now, packet.header.space());
-            }
+        if result.outgoing_key_update_acked
+            && let Some(prev) = self.prev_crypto.as_mut()
+        {
+            prev.end_packet = Some((result.number, now));
+            self.set_key_discard_timer(now, packet.header.space());
         }
 
         if result.incoming_key_update {

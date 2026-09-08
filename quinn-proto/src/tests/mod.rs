@@ -1791,10 +1791,10 @@ fn idle_timeout() {
     while !pair.client_conn_mut(client_ch).is_closed()
         || !pair.server_conn_mut(server_ch).is_closed()
     {
-        if !pair.step() {
-            if let Some(t) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
-                pair.time = t;
-            }
+        if !pair.step()
+            && let Some(t) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup())
+        {
+            pair.time = t;
         }
         pair.client.inbound.clear(); // Simulate total S->C packet loss
     }
@@ -2180,10 +2180,10 @@ fn keep_alive() {
     // Run a good while longer than the idle timeout
     let end = pair.time + Duration::from_millis(20 * IDLE_TIMEOUT);
     while pair.time < end {
-        if !pair.step() {
-            if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
-                pair.time = time;
-            }
+        if !pair.step()
+            && let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup())
+        {
+            pair.time = time;
         }
         assert!(!pair.client_conn_mut(client_ch).is_closed());
         assert!(!pair.server_conn_mut(server_ch).is_closed());
@@ -2227,10 +2227,10 @@ fn cid_rotation() {
         stop += CID_TIMEOUT;
         // Run a while until PushNewCID timer fires
         while pair.time < stop {
-            if !pair.step() {
-                if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
-                    pair.time = time;
-                }
+            if !pair.step()
+                && let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup())
+            {
+                pair.time = time;
             }
         }
         info!(

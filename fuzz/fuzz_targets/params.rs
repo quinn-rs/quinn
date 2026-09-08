@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use proto::{Side, transport_parameters::TransportParameters};
+use proto::{transport_parameters::TransportParameters, Side};
 
 fuzz_target!(|data: &[u8]| {
     let mut data = data;

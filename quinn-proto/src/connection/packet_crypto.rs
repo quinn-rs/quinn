@@ -115,10 +115,11 @@ pub(super) fn decrypt_packet_body(
     }
 
     let mut outgoing_key_update_acked = false;
-    if let Some(prev) = prev_crypto {
-        if prev.end_packet.is_none() && packet_key_phase == conn_key_phase {
-            outgoing_key_update_acked = true;
-        }
+    if let Some(prev) = prev_crypto
+        && prev.end_packet.is_none()
+        && packet_key_phase == conn_key_phase
+    {
+        outgoing_key_update_acked = true;
     }
 
     if crypto_update {

@@ -136,7 +136,7 @@ impl Future for IncomingFuture {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match &mut self.0 {
-            Ok(ref mut connecting) => Pin::new(connecting).poll(cx),
+            Ok(connecting) => Pin::new(connecting).poll(cx),
             Err(e) => Poll::Ready(Err(e.clone())),
         }
     }
