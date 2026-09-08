@@ -133,6 +133,16 @@ impl Send {
         was_blocked
     }
 
+    /// Limit to send in a `STREAM_DATA_BLOCKED` frame, if one could be sent
+    ///
+    /// `None` if the stream is no longer writable, was stopped by the peer, or the peer has raised
+    /// the limit since the frame was queued.
+    pub(super) fn blocked_limit(&self) -> Option<u64> {
+        self.data_blocked_limit.filter(|&limit| {
+            self.is_writable() && self.stop_reason.is_none() && limit == self.max_data
+        })
+    }
+
     pub(super) fn offset(&self) -> u64 {
         self.pending.offset()
     }
