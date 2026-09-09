@@ -93,6 +93,8 @@ impl Send {
         use SendState::*;
         if let DataSent { .. } | Ready = self.state {
             self.state = ResetSent;
+            self.pending.discard();
+            self.fin_pending = false;
         }
     }
 
