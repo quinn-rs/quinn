@@ -37,6 +37,59 @@
 //! authority. If this is infeasible--for example, if servers are short-lived or not associated
 //! with a domain name--then as with TLS, self-signed certificates can be used to provide
 //! encryption alone.
+//!
+//! # Feature flags
+//!
+//! ### TLS provider features
+//!
+//! These features control which TLS providers quinn will use. Currently rustls is the only one baked into this crate.
+//! See [quinn-boring](https://github.com/quinn-rs/quinn-boring/) for an example of integrating another crypto provider.
+//!
+//! - `rustls`: Enable rustls as the TLS provider for quinn.
+//!
+//! ### Cryptographic provider features
+//!
+//! These features control which libraries quinn will use for cryptographic functions.
+//!
+//! - `ring`: Use the ring library for cryptographic functions. Should not be combined with the `aws-lc-rs` feature as only one library or the other will be used.
+//! - `aws-lc-rs`: Use the aws-lc-rs library for crytographic functions. Should not be combined with the `ring` feature as only one library or another can be used.
+//! - `aws-lc-rs-fips`: Enable the fips feature for the aws-lc-rs library.
+//!
+//! ### rustls features
+//!
+//! These features control which library and features rustls will use for cryptographic functions.
+//!
+//! - `rustls-ring`: Tell rustls to use the `ring` library for cryptograhic functions.
+//! - `rustls-aws-lc-rs`: Tell rustls to use the `aws-lc-rs` library for cryptographic functions.
+//! - `rustls-aws-lc-rs-fips`: Tell rustls to use the `aws-lc-rs` library for cryptographic functions, and enable the fips feature of that library.
+//!
+//! ### Miscellaneous features
+//!
+//! - `bloom`: Enabled by default. Enables `BloomTokenLog`, and uses it by default.
+//! - `platform-verifier`: Enabled by default. Provides `ClientConfig::with_platform_verifier()` convenience method.
+//! - `futures-io`: Enables `futures::io::{AsyncRead, AsyncWrite}` support for streams.
+//!
+//! ### Logging features
+//!
+//! This will cause a dependency on the `log` crate and will cause logs to be emitted at
+//! various log levels, for code in quinn or its dependencies.
+//!
+//! - `qlog`: Enabled QUIC logs in the [qlog format](https://quicwg.org/qlog/draft-ietf-quic-qlog-main-schema.html).
+//! - `rustls-log`: Enables logging in the rustls create.
+//! - `lock_tracking`: Records how long locks are held, and warns if they are held >= 1ms.
+//! - `tracing-log`: Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
+//!
+//! ### Runtime features
+//!
+//! These features will integrate quinn with different async runtimes.
+//! The convenience functions `Endpoint::server` and `Endpoint::client` will only work with the tokio or
+//! smol runtime features enabled. If you're using a different or custom runtime you'll need to use `Endpoint::new` and
+//! pass in a `Arc<dyn Runtime>` directly.
+//!
+//! - `runtime-tokio`: Enable integration with the tokio async runtime.
+//! - `runtime-smol`: Enable integration with the smol runtime.
+//! - `smol`: Also enable integration with the smol runtime.
+//! - `async-io`: Also required to enable integration with the smol runtime.
 #![warn(missing_docs)]
 
 use std::pin::Pin;
