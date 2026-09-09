@@ -129,7 +129,11 @@ impl DatagramState {
             self.recv();
         }
 
-        self.incoming.push_back(datagram);
+        // A small payload can otherwise retain an entire receive batch, which is not
+        // included in the queue's memory budget.
+        self.incoming.push_back(Datagram {
+            data: Bytes::copy_from_slice(&datagram.data),
+        });
         Ok(was_empty)
     }
 
@@ -241,6 +245,43 @@ impl DatagramBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn received_datagram_releases_packet_storage() {
+        let storage: Arc<[u8]> = vec![42; 64 * 1024].into();
+        let data = Bytes::from_owner(storage.clone()).slice(100..101);
+        let mut state = DatagramState::default();
+
+        assert!(state.received(Datagram { data }, &Some(100)).unwrap());
+        assert_eq!(Arc::strong_count(&storage), 1);
+        assert_eq!(state.recv().unwrap().as_ref(), &[42]);
+        assert!(state.recv().is_none());
+    }
+
+    #[test]
+    fn received_datagrams_release_shared_storage_after_eviction() {
+        let storage: Arc<[u8]> = (0..=255).collect::<Vec<u8>>().into();
+        let packet = Bytes::from_owner(storage.clone());
+        let mut state = DatagramState::default();
+        let window = Some(2 * (size_of::<Datagram>() + 1));
+        for index in 0..3 {
+            state
+                .received(
+                    Datagram {
+                        data: packet.slice(index..index + 1),
+                    },
+                    &window,
+                )
+                .unwrap();
+        }
+        drop(packet);
+
+        assert_eq!(Arc::strong_count(&storage), 1);
+        assert_eq!(state.recv().unwrap().as_ref(), &[1]);
+        assert_eq!(state.recv().unwrap().as_ref(), &[2]);
+        assert!(state.recv().is_none());
+    }
 
     #[test]
     fn make_space_for_accounts_for_new_datagram() {
