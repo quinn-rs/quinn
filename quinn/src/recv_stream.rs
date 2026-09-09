@@ -260,10 +260,7 @@ impl RecvStream {
     pub async fn read_to_end(&mut self, size_limit: usize) -> Result<Vec<u8>, ReadToEndError> {
         ReadToEnd {
             stream: self,
-            size_limit,
-            read: Vec::new(),
-            start: u64::MAX,
-            end: 0,
+            buffer: ReadToEndBuffer::new(size_limit),
         }
         .await
     }
@@ -452,10 +449,7 @@ impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
 /// [`RecvStream::read_to_end()`]: crate::RecvStream::read_to_end
 struct ReadToEnd<'a> {
     stream: &'a mut RecvStream,
-    read: Vec<(Bytes, u64)>,
-    start: u64,
-    end: u64,
-    size_limit: usize,
+    buffer: ReadToEndBuffer,
 }
 
 impl Future for ReadToEnd<'_> {
@@ -463,30 +457,51 @@ impl Future for ReadToEnd<'_> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             match ready!(self.stream.poll_read_chunk(cx, usize::MAX, false))? {
-                Some(chunk) => {
-                    self.start = self.start.min(chunk.offset);
-                    let end = chunk.bytes.len() as u64 + chunk.offset;
-                    if (end - self.start) > self.size_limit as u64 {
-                        return Poll::Ready(Err(ReadToEndError::TooLong));
-                    }
-                    self.end = self.end.max(end);
-                    self.read.push((chunk.bytes, chunk.offset));
-                }
-                None => {
-                    if self.end == 0 {
-                        // Never received anything
-                        return Poll::Ready(Ok(Vec::new()));
-                    }
-                    let start = self.start;
-                    let mut buffer = vec![0; (self.end - start) as usize];
-                    for (data, offset) in self.read.drain(..) {
-                        let offset = (offset - start) as usize;
-                        buffer[offset..offset + data.len()].copy_from_slice(&data);
-                    }
-                    return Poll::Ready(Ok(buffer));
-                }
+                Some(chunk) => self.buffer.push(chunk)?,
+                None => return Poll::Ready(Ok(self.buffer.finish())),
             }
         }
+    }
+}
+
+struct ReadToEndBuffer {
+    read: Vec<(Bytes, u64)>,
+    start: u64,
+    end: u64,
+    size_limit: usize,
+}
+
+impl ReadToEndBuffer {
+    fn new(size_limit: usize) -> Self {
+        Self {
+            read: Vec::new(),
+            start: u64::MAX,
+            end: 0,
+            size_limit,
+        }
+    }
+
+    fn push(&mut self, chunk: Chunk) -> Result<(), ReadToEndError> {
+        self.start = self.start.min(chunk.offset);
+        let end = chunk.bytes.len() as u64 + chunk.offset;
+        if (end - self.start) > self.size_limit as u64 {
+            return Err(ReadToEndError::TooLong);
+        }
+        self.end = self.end.max(end);
+        self.read.push((chunk.bytes, chunk.offset));
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Vec<u8> {
+        if self.end == 0 {
+            return Vec::new();
+        }
+        let mut buffer = vec![0; (self.end - self.start) as usize];
+        for (data, offset) in self.read.drain(..) {
+            let offset = (offset - self.start) as usize;
+            buffer[offset..offset + data.len()].copy_from_slice(&data);
+        }
+        buffer
     }
 }
 
