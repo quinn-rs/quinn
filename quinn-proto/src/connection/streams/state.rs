@@ -738,6 +738,9 @@ impl StreamsState {
             // Loss of data on a closed stream is a noop
             return;
         };
+        if stream.is_reset() {
+            return;
+        }
         if !stream.is_pending() {
             self.pending.push_pending(frame.id, stream.priority);
         }
@@ -1049,6 +1052,73 @@ mod tests {
             (1024 * 1024u32).into(),
             (1024 * 1024u32).into(),
         )
+    }
+
+    #[test]
+    fn reset_releases_retained_send_storage() {
+        let mut server = make(Side::Server);
+        server.send_window = 24;
+        server.set_params(&TransportParameters {
+            initial_max_streams_uni: 1u32.into(),
+            initial_max_data: 1000u32.into(),
+            initial_max_stream_data_uni: 1000u32.into(),
+            ..TransportParameters::default()
+        });
+        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+        let id = Streams {
+            state: &mut server,
+            conn_state: &state,
+        }
+        .open(Dir::Uni)
+        .unwrap();
+        SendStream {
+            id,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        }
+        .write(&[42; 24])
+        .unwrap();
+        let send = server.send.get_mut(&id).unwrap().as_mut().unwrap();
+        send.pending.poll_transmit(16);
+        send.pending.poll_transmit(16);
+        server.received_ack_of(frame::StreamMeta {
+            id,
+            offsets: 16..23,
+            fin: false,
+        });
+        SendStream {
+            id,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        }
+        .reset(0u32.into())
+        .unwrap();
+
+        let send = server.send.get_mut(&id).unwrap().as_mut().unwrap();
+        assert!(
+            send.pending.is_fully_acked(),
+            "reset must release the abandoned allocation"
+        );
+        assert_eq!(
+            send.offset(),
+            24,
+            "RESET_STREAM must retain its final offset"
+        );
+        assert_eq!(server.write_limit(), 24);
+        server.retransmit(frame::StreamMeta {
+            id,
+            offsets: 0..16,
+            fin: false,
+        });
+        server.received_ack_of(frame::StreamMeta {
+            id,
+            offsets: 0..16,
+            fin: false,
+        });
+        assert!(!server.send[&id].as_ref().unwrap().is_pending());
+        assert_eq!(server.write_limit(), 24);
     }
 
     #[test]
