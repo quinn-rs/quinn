@@ -819,6 +819,9 @@ impl Connection {
                 // especially important with ack delay, since the peer might not
                 // have gotten any other ACK for the data earlier on.
                 if !self.spaces[space_id].pending_acks.ranges().is_empty() {
+                    // Reserve room for CONNECTION_CLOSE even when an Initial token leaves
+                    // little space after the header. The extra byte satisfies the strict
+                    // `< builder.max_size` check below; try_populate_acks permits an exact fit.
                     Self::try_populate_acks(
                         now,
                         self.receiving_ecn,
@@ -826,13 +829,10 @@ impl Connection {
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
-                        buf_capacity,
+                        builder.max_size - frame::ConnectionClose::SIZE_BOUND - 1,
                     );
                 }
 
-                // Since there only 64 ACK frames there will always be enough space
-                // to encode the ConnectionClose frame too. However we still have the
-                // check here to prevent crashes if something changes.
                 debug_assert!(
                     buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size,
                     "ACKs should leave space for ConnectionClose"
@@ -4208,6 +4208,34 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "rustls-ring")]
+    #[test]
+    fn large_initial_token_leaves_room_for_close() {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert.cert.der().clone()).unwrap();
+        let config = crate::ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
+        config.token_store.insert("localhost", vec![0; 1100].into());
+        let mut endpoint = crate::Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+        let now = Instant::now();
+        let (_, mut conn) = endpoint
+            .connect(now, config, "[::1]:4433".parse().unwrap(), "localhost")
+            .unwrap();
+        let space = &mut conn.spaces[SpaceId::Initial];
+        for pn in (0..32).step_by(2) {
+            space.pending_acks.insert_one(pn, now);
+            space.dedup.insert(pn);
+            space
+                .pending_acks
+                .packet_received(now, pn, true, &space.dedup);
+        }
+        conn.close(now, 0u32.into(), Bytes::new());
+        let mut buf = Vec::new();
+        assert!(conn.poll_transmit(now, 1, &mut buf).is_some());
+        assert!(buf.len() <= 1200);
+        assert!(!conn.close);
+    }
 
     #[test]
     fn negotiate_max_idle_timeout_commutative() {
