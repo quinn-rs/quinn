@@ -11,6 +11,11 @@ fn oversized_cached_initial_token() {
     for (token_len, mtu, fits) in [
         (0, 1200, true),
         (1080, 1200, true),
+        // The 40-byte header overhead and 16-byte tag leave exactly 25 bytes
+        // for frames with a 1119-byte token, enough for CONNECTION_CLOSE.
+        (1118, 1200, true),
+        (1119, 1200, true),
+        (1120, 1200, false),
         (1140, 1200, false),
         (1200, 1200, false),
         (1200, 1500, true),
@@ -51,7 +56,14 @@ fn oversized_cached_initial_token() {
 #[test]
 fn oversized_retry_token() {
     let _guard = subscribe();
-    for (token_len, fits) in [(64, true), (1140, false), (1200, false)] {
+    for (token_len, fits) in [
+        (64, true),
+        (1118, true),
+        (1119, true),
+        (1120, false),
+        (1140, false),
+        (1200, false),
+    ] {
         let address = "[::1]:4433".parse().unwrap();
         let mut endpoint = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
         let now = Instant::now();

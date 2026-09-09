@@ -153,10 +153,11 @@ impl PacketBuilder {
             partial_encode.start + dst_cid.len() + 6,
         );
         let max_size = buffer_capacity.saturating_sub(tag_len);
+        // Allow an exact fit for CONNECTION_CLOSE, but require CRYPTO to carry data.
         if space_id == SpaceId::Initial
             && (max_size < min_size
                 || max_size.saturating_sub(buffer.len())
-                    <= frame::Crypto::SIZE_BOUND.max(frame::ConnectionClose::SIZE_BOUND))
+                    < (frame::Crypto::SIZE_BOUND + 1).max(frame::ConnectionClose::SIZE_BOUND))
         {
             buffer.truncate(partial_encode.start);
             // Both Retry and cached address validation tokens originate from the peer.
