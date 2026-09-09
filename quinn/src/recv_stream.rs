@@ -470,11 +470,10 @@ impl ReadToEndBuffer {
 
     fn push(&mut self, chunk: Chunk) -> Result<(), ReadToEndError> {
         self.start = self.start.min(chunk.offset);
-        let end = chunk.bytes.len() as u64 + chunk.offset;
-        if (end - self.start) > self.size_limit as u64 {
+        self.end = self.end.max(chunk.bytes.len() as u64 + chunk.offset);
+        if (self.end - self.start) > self.size_limit as u64 {
             return Err(ReadToEndError::TooLong);
         }
-        self.end = self.end.max(end);
         self.read.push((chunk.bytes, chunk.offset));
         Ok(())
     }
@@ -731,5 +730,81 @@ impl Future for ReadChunks<'_> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         this.stream.poll_read_chunks(cx, this.bufs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_to_end_reordered_limit() {
+        let mut buffer = ReadToEndBuffer::new(4);
+        buffer
+            .push(Chunk {
+                offset: 4,
+                bytes: Bytes::from_static(b"efgh"),
+            })
+            .unwrap();
+        assert_eq!(
+            buffer.push(Chunk {
+                offset: 0,
+                bytes: Bytes::from_static(b"abcd")
+            }),
+            Err(ReadToEndError::TooLong)
+        );
+        assert_eq!(buffer.read.len(), 1);
+    }
+
+    #[test]
+    fn read_to_end_reordered_exact_limit_after_prefix() {
+        let mut buffer = ReadToEndBuffer::new(8);
+        // A previously consumed prefix must not count against the remaining-data limit.
+        buffer
+            .push(Chunk {
+                offset: 104,
+                bytes: Bytes::from_static(b"efgh"),
+            })
+            .unwrap();
+        buffer
+            .push(Chunk {
+                offset: 100,
+                bytes: Bytes::from_static(b"abcd"),
+            })
+            .unwrap();
+        assert_eq!(buffer.finish(), b"abcdefgh");
+    }
+
+    #[test]
+    fn read_to_end_gaps_and_empty() {
+        assert!(ReadToEndBuffer::new(0).finish().is_empty());
+        let mut buffer = ReadToEndBuffer::new(5);
+        buffer
+            .push(Chunk {
+                offset: 14,
+                bytes: Bytes::from_static(b"e"),
+            })
+            .unwrap();
+        buffer
+            .push(Chunk {
+                offset: 10,
+                bytes: Bytes::from_static(b"a"),
+            })
+            .unwrap();
+        assert_eq!(buffer.finish(), b"a\0\0\0e");
+        let mut buffer = ReadToEndBuffer::new(4);
+        buffer
+            .push(Chunk {
+                offset: 10,
+                bytes: Bytes::from_static(b"a"),
+            })
+            .unwrap();
+        assert_eq!(
+            buffer.push(Chunk {
+                offset: 14,
+                bytes: Bytes::from_static(b"e")
+            }),
+            Err(ReadToEndError::TooLong)
+        );
     }
 }
