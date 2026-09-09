@@ -155,6 +155,15 @@ impl SendBuffer {
         &[]
     }
 
+    /// Release abandoned data while preserving the final offset for RESET_STREAM
+    pub(super) fn discard(&mut self) {
+        *self = Self {
+            offset: self.offset,
+            unsent: self.offset,
+            ..Self::default()
+        };
+    }
+
     /// Queue a range of sent but unacknowledged data to be retransmitted
     pub(super) fn retransmit(&mut self, range: Range<u64>) {
         debug_assert!(range.end <= self.unsent, "unsent data can't be lost");
