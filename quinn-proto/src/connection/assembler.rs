@@ -50,7 +50,7 @@ impl Assembler {
             let mut recvd = RangeSet::new();
             recvd.insert(0..self.bytes_read);
             for chunk in &self.data {
-                recvd.insert(chunk.offset..chunk.offset + chunk.bytes.len() as u64);
+                recvd.insert(chunk.offset..chunk.end());
             }
             self.state = State::Unordered { recvd };
         }
@@ -59,56 +59,43 @@ impl Assembler {
 
     /// Get the the next chunk
     pub(super) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
-        loop {
-            let chunk = self.data.front_mut()?;
-
-            if ordered {
-                if chunk.offset > self.bytes_read {
-                    // Next chunk is after current read index
-                    return None;
-                } else if (chunk.offset + chunk.bytes.len() as u64) <= self.bytes_read {
-                    // Next chunk is useless as the read index is beyond its end
-                    self.buffered -= chunk.bytes.len();
-                    self.allocated -= chunk.allocation_size;
-                    self.data.pop_front();
-                    continue;
-                }
-
-                // Determine `start` and `len` of the slice of useful data in chunk
-                let start = (self.bytes_read - chunk.offset) as usize;
-                // Advancing the offset can push the front past data[1]; both exits below fix that
-                if start > 0 {
-                    chunk.bytes.advance(start);
-                    chunk.offset += start as u64;
-                    self.buffered -= start;
-                }
-            }
-
-            if max_length < chunk.bytes.len() {
-                self.bytes_read += max_length as u64;
-                let offset = chunk.offset;
-                chunk.offset += max_length as u64;
-                self.buffered -= max_length;
-                let bytes = chunk.bytes.split_to(max_length);
-                self.restore_front_order();
-                return Some(Chunk::new(offset, bytes));
-            }
-
-            self.bytes_read += chunk.bytes.len() as u64;
-            self.buffered -= chunk.bytes.len();
-            self.allocated -= chunk.allocation_size;
-            let offset = chunk.offset;
-            let bytes = mem::take(&mut chunk.bytes);
-            self.data.pop_front();
-            return Some(Chunk::new(offset, bytes));
+        while ordered && self.data.front()?.end() <= self.bytes_read {
+            // Next buffer ends before the current read index
+            let front = self.data.pop_front().unwrap();
+            self.buffered -= front.bytes.len();
+            self.allocated -= front.allocation_size;
         }
-    }
 
-    /// Restore ordering after `read` advanced the front's offset
-    fn restore_front_order(&mut self) {
-        let chunk = self.data.pop_front().unwrap();
-        let idx = self.data.iter().take_while(|other| **other < chunk).count();
-        self.data.insert(idx, chunk);
+        if ordered && self.data.front()?.offset > self.bytes_read {
+            // Next buffer starts after the current read index
+            return None;
+        }
+
+        let mut front = self.data.pop_front()?;
+        if ordered && self.bytes_read > front.offset {
+            // Advance front to the slice of useful data
+            let skip = (self.bytes_read - front.offset) as usize;
+            front.bytes.advance(skip);
+            front.offset = self.bytes_read;
+            self.buffered -= skip;
+        }
+
+        let chunk = if max_length < front.bytes.len() {
+            // Take a prefix of the front buffer and reinsert the remainder
+            let chunk = Chunk::new(front.offset, front.bytes.split_to(max_length));
+            front.offset += max_length as u64;
+            let idx = self.data.iter().take_while(|other| **other < front).count();
+            self.data.insert(idx, front);
+            chunk
+        } else {
+            // Take the entirety of the front buffer
+            self.allocated -= front.allocation_size;
+            Chunk::new(front.offset, front.bytes)
+        };
+
+        self.bytes_read += chunk.bytes.len() as u64;
+        self.buffered -= chunk.bytes.len();
+        Some(chunk)
     }
 
     /// Copy fragmented chunk data to new chunks backed by a single buffer
@@ -146,7 +133,7 @@ impl Assembler {
                     self.data
                         .push_back(Buffer::new_defragmented(offset, buffer.split().freeze()));
                 }
-                offset = chunk.offset + chunk.bytes.len() as u64;
+                offset = chunk.end();
                 self.data.push_back(chunk);
                 continue;
             }
@@ -300,6 +287,11 @@ impl Buffer {
             allocation_size,
             defragmented: true,
         }
+    }
+
+    /// Exclusive upper bound of the covered index range
+    fn end(&self) -> u64 {
+        self.offset + self.bytes.len() as u64
     }
 
     /// Discards data before `offset` and flags `self` as defragmented if it has good utilization
