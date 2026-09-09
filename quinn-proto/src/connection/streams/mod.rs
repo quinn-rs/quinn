@@ -279,7 +279,7 @@ impl<'a> SendStream<'a> {
             Err(e) => return Err(e),
         };
         self.state.data_sent += written.bytes as u64;
-        self.state.unacked_data += written.bytes as u64;
+        self.state.buffered_data += written.bytes as u64;
         trace!(stream = %self.id, "wrote {} bytes", written.bytes);
         if !was_pending {
             self.state.pending.push_pending(self.id, stream.priority);
@@ -340,7 +340,7 @@ impl<'a> SendStream<'a> {
         // Restore the portion of the send window consumed by the data that we aren't about to
         // send. We leave flow control alone because the peer's responsible for issuing additional
         // credit based on the final offset communicated in the RESET_STREAM frame we send.
-        self.state.unacked_data -= stream.pending.unacked();
+        self.state.buffered_data -= stream.pending.buffered();
         stream.reset();
         self.pending.reset_stream.push((self.id, error_code));
 

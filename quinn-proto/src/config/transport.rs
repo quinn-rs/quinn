@@ -128,12 +128,18 @@ impl TransportConfig {
         self
     }
 
-    /// Maximum number of bytes to transmit to a peer without acknowledgment
+    /// Maximum number of bytes retained from application writes across all streams of a connection
     ///
-    /// Provides an upper bound on memory when communicating with peers that issue large amounts of
-    /// flow control credit. Endpoints that wish to handle large numbers of connections robustly
-    /// should take care to set this low enough to guarantee memory exhaustion does not occur if
-    /// every connection uses the entire window.
+    /// Acknowledged data continues to count against this limit until its storage is released. This
+    /// can keep writes blocked while earlier data is awaiting acknowledgment or only part of a buffer
+    /// has been acknowledged.
+    ///
+    /// Limits memory use when communicating with peers that issue large amounts of flow control
+    /// credit. Endpoints that wish to handle large numbers of connections robustly should take care
+    /// to set this low enough to avoid memory exhaustion if every connection uses the entire window.
+    ///
+    /// The limit counts bytes accepted from application buffers. Slices of larger allocations can
+    /// retain more memory than this limit accounts for.
     pub fn send_window(&mut self, value: u64) -> &mut Self {
         self.send_window = value;
         self
