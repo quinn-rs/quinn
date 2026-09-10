@@ -13,7 +13,7 @@ use std::{
     pin::pin,
     str,
     sync::{
-        Arc,
+        Arc, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -22,7 +22,12 @@ use std::{
 use crate::runtime::TokioRuntime;
 use crate::{Duration, Instant};
 use bytes::Bytes;
-use proto::{RandomConnectionIdGenerator, crypto::rustls::QuicClientConfig};
+use proto::{
+    ConnectionId, RandomConnectionIdGenerator,
+    crypto::rustls::{QuicClientConfig, QuicServerConfig},
+    crypto::{Keys, ServerConfig as ProtoServerConfig, Session, UnsupportedVersion},
+    transport_parameters::TransportParameters,
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustls::{
     RootCertStore,
@@ -312,6 +317,205 @@ impl EndpointFactory {
 
         endpoint
     }
+}
+
+#[derive(Default)]
+struct HandshakeBlocker {
+    state: Mutex<HandshakeBlockerState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct HandshakeBlockerState {
+    started: bool,
+    released: bool,
+}
+
+impl HandshakeBlocker {
+    fn block(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.started = true;
+        self.changed.notify_all();
+        while !state.released {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    fn wait_until_started(&self) {
+        let state = self.state.lock().unwrap();
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| !state.started)
+            .unwrap();
+        assert!(state.started, "timed out waiting for handshake to start");
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.released = true;
+        self.changed.notify_all();
+    }
+}
+
+struct HandshakeReleaseGuard(Arc<HandshakeBlocker>);
+
+impl Drop for HandshakeReleaseGuard {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+struct BlockingServerConfig {
+    inner: Arc<dyn ProtoServerConfig>,
+    blocker: Arc<HandshakeBlocker>,
+}
+
+impl ProtoServerConfig for BlockingServerConfig {
+    fn initial_keys(
+        &self,
+        version: u32,
+        dst_cid: ConnectionId,
+    ) -> Result<Keys, UnsupportedVersion> {
+        self.inner.initial_keys(version, dst_cid)
+    }
+
+    fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
+        self.inner.retry_tag(version, orig_dst_cid, packet)
+    }
+
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+    ) -> Box<dyn Session> {
+        self.blocker.block();
+        self.inner.clone().start_session(version, params)
+    }
+}
+
+fn blocking_server_pair(
+    server_alpn: &[u8],
+    client_alpn: &[u8],
+) -> (Endpoint, Endpoint, Arc<HandshakeBlocker>) {
+    let factory = EndpointFactory::new();
+    let key = PrivateKeyDer::Pkcs8(factory.cert.signing_key.serialize_der().into());
+    let mut server_crypto = rustls::ServerConfig::builder_with_provider(default_provider().into())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![factory.cert.cert.der().clone()], key)
+        .unwrap();
+    server_crypto.alpn_protocols = vec![server_alpn.to_vec()];
+    let mut server_config = crate::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(server_crypto).unwrap(),
+    ));
+    let blocker = Arc::new(HandshakeBlocker::default());
+    server_config.crypto = Arc::new(BlockingServerConfig {
+        inner: server_config.crypto.clone(),
+        blocker: blocker.clone(),
+    });
+
+    let server = Endpoint::new(
+        factory.endpoint_config.clone(),
+        Some(server_config),
+        UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+
+    let mut roots = RootCertStore::empty();
+    roots.add(factory.cert.cert.der().clone()).unwrap();
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    let mut client_crypto = rustls::ClientConfig::builder_with_provider(default_provider().into())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    client_crypto.alpn_protocols = vec![client_alpn.to_vec()];
+    client.set_default_client_config(ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_crypto).unwrap(),
+    )));
+
+    (client, server, blocker)
+}
+
+async fn wait_for_blocked_handshake(blocker: Arc<HandshakeBlocker>) {
+    tokio::task::spawn_blocking(move || blocker.wait_until_started())
+        .await
+        .unwrap();
+}
+
+async fn accept_with_blocked_start_session(
+    server: Endpoint,
+) -> Result<crate::Connection, crate::ConnectionError> {
+    let incoming = server.accept().await.unwrap();
+    // The test crypto provider intentionally blocks in `start_session`, so run
+    // accept on the blocking pool rather than parking a Tokio worker thread.
+    let connecting = tokio::task::spawn_blocking(move || incoming.accept())
+        .await
+        .unwrap()?;
+    connecting.await
+}
+
+struct BlockedHandshake {
+    client: Endpoint,
+    server: Endpoint,
+    blocker: Arc<HandshakeBlocker>,
+    release_guard: HandshakeReleaseGuard,
+    accept: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+    connect: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+}
+
+fn blocked_handshake(server_alpn: &[u8], client_alpn: &[u8]) -> BlockedHandshake {
+    let (client, server, blocker) = blocking_server_pair(server_alpn, client_alpn);
+    let server_addr = server.local_addr().unwrap();
+
+    let accept = tokio::spawn({
+        let server = server.clone();
+        async move { accept_with_blocked_start_session(server).await }
+    });
+    let connect = tokio::spawn({
+        let client = client.clone();
+        async move { client.connect(server_addr, "localhost").unwrap().await }
+    });
+
+    BlockedHandshake {
+        client,
+        server,
+        blocker: blocker.clone(),
+        release_guard: HandshakeReleaseGuard(blocker),
+        accept,
+        connect,
+    }
+}
+
+async fn await_connection(
+    task: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+) -> Result<crate::Connection, crate::ConnectionError> {
+    timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn assert_wait_idle_pending(endpoint: &Endpoint) {
+    assert!(
+        timeout(Duration::from_millis(50), endpoint.wait_idle())
+            .await
+            .is_err()
+    );
+}
+
+async fn wait_idle(endpoint: &Endpoint) {
+    timeout(Duration::from_secs(5), endpoint.wait_idle())
+        .await
+        .unwrap();
+}
+
+async fn wait_closed(conn: &crate::Connection) -> crate::ConnectionError {
+    timeout(Duration::from_secs(5), conn.closed())
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -786,6 +990,124 @@ async fn rebind_recv() {
     let mut stream = connection.accept_uni().await.unwrap();
     assert_eq!(stream.read_to_end(MSG.len()).await.unwrap(), MSG);
     server.await.unwrap();
+}
+
+/// Verify endpoint behavior while a connection is between `start_accept` and `finish_accept`:
+/// `open_connections` must be 0, and `wait_idle` must not complete while `pending_accepts > 0`.
+/// After the accept completes and the connection is closed, `wait_idle` must resolve.
+#[tokio::test]
+async fn split_accept_wait_idle_and_open_connections() {
+    let _guard = subscribe();
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake(b"test", b"test");
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    assert_eq!(server.open_connections(), 0);
+    assert_wait_idle_pending(&server).await;
+
+    blocker.release();
+
+    let client_conn = await_connection(connect).await.unwrap();
+    let server_conn = await_connection(accept).await.unwrap();
+    assert_eq!(server.open_connections(), 1);
+
+    client_conn.close(0u32.into(), b"done");
+    let _ = wait_closed(&client_conn).await;
+    let _ = wait_closed(&server_conn).await;
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+}
+
+/// A failed accept never becomes a connection, so no Drained event will wake idle waiters.
+#[tokio::test]
+async fn split_accept_failure_wakes_idle_waiter() {
+    let _guard = subscribe();
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake(b"server", b"client");
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    assert_eq!(server.open_connections(), 0);
+
+    let mut idle = pin!(server.wait_idle());
+    let (waker, wake_counter) = new_count_waker();
+    assert!(
+        idle.as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert_eq!(wake_counter.wakes(), 0);
+
+    blocker.release();
+    let error = await_connection(accept).await.unwrap_err();
+    assert!(matches!(
+        error,
+        crate::ConnectionError::TransportError(error)
+            if error.code == proto::TransportErrorCode::crypto(0x78)
+    ));
+    // Repolling wait_idle alone would hide a missing notification now that the endpoint is
+    // idle. Verify that the waiter registered before the failure was actually woken.
+    assert!(wake_counter.wakes() > 0);
+    timeout(Duration::from_secs(5), idle).await.unwrap();
+    assert_eq!(server.open_connections(), 0);
+
+    assert!(await_connection(connect).await.is_err());
+    wait_idle(&client).await;
+}
+
+/// Verify that calling `Endpoint::close` while a connection is in the `Accepting` state
+/// (between `start_accept` and `finish_accept`) produces `LocallyClosed` on the server side
+/// and `ConnectionClosed` on the client side, and that `wait_idle` resolves afterward.
+#[tokio::test]
+async fn split_accept_close_during_pending_accept() {
+    let _guard = subscribe();
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake(b"test", b"test");
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    server.close(0u32.into(), b"closing");
+    assert_wait_idle_pending(&server).await;
+
+    blocker.release();
+
+    match await_connection(accept).await {
+        Ok(conn) => {
+            let err = wait_closed(&conn).await;
+            assert!(matches!(err, crate::ConnectionError::LocallyClosed));
+        }
+        Err(err) => assert!(matches!(err, crate::ConnectionError::LocallyClosed)),
+    }
+
+    match await_connection(connect).await {
+        Ok(conn) => {
+            let err = wait_closed(&conn).await;
+            assert!(matches!(err, crate::ConnectionError::ConnectionClosed(_)));
+        }
+        Err(err) => {
+            assert!(matches!(err, crate::ConnectionError::ConnectionClosed(_)));
+        }
+    }
+
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+    assert_eq!(server.open_connections(), 0);
 }
 
 #[tokio::test]
