@@ -559,7 +559,8 @@ impl Endpoint {
     ///
     /// The returned state must be completed without endpoint access and then passed back to
     /// this endpoint through `finish_accept` or `finish_accept_error`.
-    fn start_accept(
+    #[doc(hidden)]
+    pub fn start_accept(
         &mut self,
         mut incoming: Incoming,
         now: Instant,
@@ -691,11 +692,14 @@ impl Endpoint {
         })
     }
 
-    fn finish_accept(&mut self, accepted: Accepted) -> (ConnectionHandle, Connection) {
+    #[doc(hidden)]
+    pub fn finish_accept(&mut self, accepted: Accepted) -> (ConnectionHandle, Connection) {
         let Accepted {
             reservation,
             mut conn,
+            guard,
         } = accepted;
+        guard.dismiss();
         let accepting_buffer = self.remove_accept_reservation(&reservation);
         let ch = ConnectionHandle(self.connections.vacant_key());
         self.register_connection(
@@ -717,7 +721,8 @@ impl Endpoint {
 
     /// Clean up after a failed [`Accepting::finish_without_endpoint`] and optionally generate a
     /// close response.
-    fn finish_accept_error(
+    #[doc(hidden)]
+    pub fn finish_accept_error(
         &mut self,
         error: Box<AcceptingError>,
         buf: &mut Vec<u8>,
@@ -728,7 +733,9 @@ impl Endpoint {
             version,
             src_cid,
             crypto,
+            guard,
         } = *error;
+        guard.dismiss();
         debug!("handshake failed: {}", cause);
         let response = match &cause {
             ConnectionError::TransportError(e) => Some(self.initial_close(
@@ -1334,6 +1341,28 @@ impl Drop for IncomingImproperDropWarner {
     }
 }
 
+/// Warns if a finalized split-accept state (`Accepted`/`AcceptingError`) is dropped without being
+/// passed back to `Endpoint::finish_accept`/`finish_accept_error`. Doing so leaks the reserved
+/// CIDs and the buffered Initial/0-RTT slot, since that cleanup needs
+/// the endpoint and cannot run from `Drop`. The earlier `Accepting` state is instead covered by
+/// the `Incoming` it still holds, whose own warner stays armed until `finish_without_endpoint`.
+struct AcceptDropGuard;
+
+impl AcceptDropGuard {
+    fn dismiss(self) {
+        mem::forget(self);
+    }
+}
+
+impl Drop for AcceptDropGuard {
+    fn drop(&mut self) {
+        warn!(
+            "quinn_proto split-accept state dropped without passing to \
+             Endpoint::finish_accept/finish_accept_error (leaks reserved CIDs and buffered packets)"
+        );
+    }
+}
+
 /// Errors in the parameters being used to create a new connection
 ///
 /// These arise before any I/O has been performed.
@@ -1385,12 +1414,19 @@ struct AcceptReservation {
     pref_addr_cid: Option<ConnectionId>,
 }
 
-struct Accepted {
+/// Internal split-accept success state used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; callers use type inference
+pub struct Accepted {
     reservation: AcceptReservation,
     conn: Connection,
+    guard: AcceptDropGuard,
 }
 
-struct Accepting {
+/// Internal split-accept handle used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; callers use type inference
+pub struct Accepting {
     reservation: AcceptReservation,
     version: u32,
     src_cid: ConnectionId,
@@ -1415,7 +1451,8 @@ impl Accepting {
     ///
     /// On success, returns the connection plus the reservation that still needs to be activated
     /// under the endpoint lock.
-    fn finish_without_endpoint(self) -> Result<Accepted, Box<AcceptingError>> {
+    #[doc(hidden)]
+    pub fn finish_without_endpoint(self) -> Result<Accepted, Box<AcceptingError>> {
         self.incoming.improper_drop_warner.dismiss();
 
         let transport_config = self.server_config.transport.clone();
@@ -1457,6 +1494,7 @@ impl Accepting {
             Ok(()) => Ok(Accepted {
                 reservation: self.reservation,
                 conn,
+                guard: AcceptDropGuard,
             }),
             Err(e) => Err(Box::new(AcceptingError {
                 cause: e,
@@ -1464,17 +1502,22 @@ impl Accepting {
                 version: self.version,
                 src_cid: self.src_cid,
                 crypto: self.incoming.crypto,
+                guard: AcceptDropGuard,
             })),
         }
     }
 }
 
-struct AcceptingError {
+/// Internal split-accept failure state used by `quinn`.
+#[doc(hidden)]
+#[allow(unnameable_types)] // internal split-accept API; callers use type inference
+pub struct AcceptingError {
     cause: ConnectionError,
     reservation: AcceptReservation,
     version: u32,
     src_cid: ConnectionId,
     crypto: Keys,
+    guard: AcceptDropGuard,
 }
 
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
