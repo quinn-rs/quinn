@@ -435,6 +435,8 @@ impl TransportParameters {
                 continue;
             };
 
+            let remaining_before = r.remaining();
+
             match id {
                 TransportParameterId::OriginalDestinationConnectionId => {
                     decode_cid(len, &mut params.original_dst_cid, r)?
@@ -492,6 +494,10 @@ impl TransportParameters {
                     }
                     apply_params!(parse);
                 }
+            }
+
+            if remaining_before - r.remaining() != len {
+                return Err(Error::Malformed);
             }
         }
 
@@ -863,6 +869,62 @@ mod test {
                 Err(Error::IllegalValue)
             );
         }
+    }
+
+    #[test]
+    fn read_length_mismatch() {
+        // `max_datagram_frame_size` claims three bytes of value but encodes a one-byte `VarInt`,
+        // so a whole `disable_active_migration` parameter fits inside its declared length.
+        let mut buf = Vec::new();
+        buf.write_var(TransportParameterId::MaxDatagramFrameSize as u64);
+        buf.write_var(3);
+        buf.write(VarInt::from_u32(0));
+        buf.write_var(TransportParameterId::DisableActiveMigration as u64);
+        buf.write_var(0);
+        assert_eq!(
+            TransportParameters::read(Side::Server, &mut buf.as_slice()),
+            Err(Error::Malformed)
+        );
+    }
+
+    #[test]
+    fn read_min_ack_delay_length_mismatch() {
+        // `min_ack_delay` claims no value at all, so its `VarInt` starts on the parameter that
+        // follows it.
+        let mut buf = Vec::new();
+        buf.write_var(TransportParameterId::MinAckDelayDraft07 as u64);
+        buf.write_var(0);
+        buf.write_var(TransportParameterId::InitialMaxData as u64);
+        buf.write_var(1);
+        buf.write(VarInt::from_u32(7));
+        assert_eq!(
+            TransportParameters::read(Side::Server, &mut buf.as_slice()),
+            Err(Error::Malformed)
+        );
+    }
+
+    #[test]
+    fn read_preferred_address_length_mismatch() {
+        // `preferred_address` has a fixed size for a given connection ID length, so bytes past
+        // that size are read as a parameter of their own.
+        let address = PreferredAddress {
+            address_v4: Some(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42)),
+            address_v6: None,
+            connection_id: ConnectionId::new(&[0x42]),
+            stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
+        };
+        let mut value = Vec::new();
+        address.write(&mut value);
+        value.write_var(TransportParameterId::DisableActiveMigration as u64);
+        value.write_var(0);
+        let mut buf = Vec::new();
+        buf.write_var(TransportParameterId::PreferredAddress as u64);
+        buf.write_var(value.len() as u64);
+        buf.extend_from_slice(&value);
+        assert_eq!(
+            TransportParameters::read(Side::Client, &mut buf.as_slice()),
+            Err(Error::Malformed)
+        );
     }
 
     #[test]
