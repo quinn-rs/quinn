@@ -4,21 +4,16 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     os::windows::io::AsRawSocket,
     ptr,
-    sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Instant,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use libc::{c_int, c_uint};
 use windows_sys::Win32::Networking::WinSock;
 
 use crate::{
-    EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef,
+    EcnCodepoint, RecvMeta, SendCount, Transmit, UdpSockRef,
     cmsg::{self, CMsgHdr},
     log::debug,
-    log_sendmsg_error,
 };
 
 /// QUIC-friendly UDP socket for Windows
@@ -26,7 +21,6 @@ use crate::{
 /// Unlike a standard Windows UDP socket, this allows ECN bits to be read and written.
 #[derive(Debug)]
 pub struct UdpSocketState {
-    last_send_error: Mutex<Instant>,
     max_gso_segments: AtomicUsize,
 
     /// Whether the underlying Winsock provider supports IPv4 ECN socket options/control messages.
@@ -152,9 +146,7 @@ impl UdpSocketState {
             }
         }
 
-        let now = Instant::now();
         Ok(Self {
-            last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
             max_gso_segments: AtomicUsize::new(max_gso_segments(&*socket.0)),
             ecn_v4_supported,
             ecn_v6_supported,
@@ -184,43 +176,21 @@ impl UdpSocketState {
         )
     }
 
-    /// Sends a [`Transmit`] on the given socket.
-    ///
-    /// This function will only ever return errors of kind [`io::ErrorKind::WouldBlock`].
-    /// All other errors will be logged and converted to `Ok`.
-    ///
-    /// UDP transmission errors are considered non-fatal because higher-level protocols must
-    /// employ retransmits and timeouts anyway in order to deal with UDP's unreliable nature.
-    /// Thus, logging is most likely the only thing you can do with these errors.
-    ///
-    /// If you would like to handle these errors yourself, use [`UdpSocketState::try_send`]
-    /// instead.
-    #[deprecated(note = "silences I/O errors; use `UdpSocketState::try_send() instead")]
-    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        match send(
+    /// Sends a prefix of a [`Transmit`] without any additional error handling.
+    pub fn try_send(
+        &self,
+        socket: UdpSockRef<'_>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<SendCount> {
+        let transmit = transmit.limit(self.max_gso_segments());
+        let sent = send(
             socket,
-            transmit,
+            &transmit,
             self.ecn_v4_supported,
             self.ecn_v6_supported,
-        ) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
-            Err(e) => {
-                log_sendmsg_error(&self.last_send_error, e, transmit);
+        )?;
 
-                Ok(())
-            }
-        }
-    }
-
-    /// Sends a [`Transmit`] on the given socket without any additional error handling.
-    pub fn try_send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        send(
-            socket,
-            transmit,
-            self.ecn_v4_supported,
-            self.ecn_v6_supported,
-        )
+        Ok(SendCount::from_datagram_count(sent))
     }
 
     pub fn recv(
@@ -384,7 +354,7 @@ fn send(
     transmit: &Transmit<'_>,
     ecn_v4_supported: bool,
     ecn_v6_supported: bool,
-) -> io::Result<()> {
+) -> io::Result<usize> {
     // we cannot use [`socket2::sendmsg()`] and [`socket2::MsgHdr`] as we do not have access
     // to the inner field which holds the WSAMSG
     let mut ctrl_buf = cmsg::Aligned([0; CMSG_LEN]);
@@ -453,7 +423,7 @@ fn send(
     }
 
     // Segment size is a u32 https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsasetudpsendmessagesize
-    if let Some(segment_size) = transmit.effective_segment_size() {
+    if let Some(segment_size) = transmit.segment_size {
         encoder.push(
             WinSock::IPPROTO_UDP,
             WinSock::UDP_SEND_MSG_SIZE,
@@ -476,7 +446,7 @@ fn send(
     };
 
     match rc {
-        0 => Ok(()),
+        0 => Ok(transmit.datagram_count()),
         _ => Err(io::Error::last_os_error()),
     }
 }
