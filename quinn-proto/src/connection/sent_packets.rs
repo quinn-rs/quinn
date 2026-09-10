@@ -1,18 +1,15 @@
-use std::collections::VecDeque;
-use std::ops::{Bound, RangeBounds};
+use std::collections::BTreeMap;
+use std::ops::RangeBounds;
 
 use super::spaces::SentPacket;
 
-/// A sparse map from packet number to [`SentPacket`], backed by a ring buffer.
+/// A sparse map from packet number to [`SentPacket`].
 ///
-/// Indexed by `packet number - offset`, giving O(1) insert and lookup without
-/// the per-entry allocation of the `BTreeMap` it replaces (#2720).
+/// Storage must depend on the number of tracked packets, not the distance between
+/// packet numbers: an old unacknowledged packet can outlive many removed entries.
 #[derive(Default)]
 pub(super) struct SentPackets {
-    /// Packet number of `slots.front()` when non-empty.
-    offset: u64,
-    /// `slots[i]` holds packet number `offset + i`, or `None` if removed or skipped.
-    slots: VecDeque<Option<SentPacket>>,
+    packets: BTreeMap<u64, SentPacket>,
     /// Count of present entries with `size != 0`, for O(1) `has_in_flight`.
     in_flight: usize,
 }
@@ -20,42 +17,29 @@ pub(super) struct SentPackets {
 impl SentPackets {
     /// Insert `value` at `pn`, which must exceed every previously inserted packet number.
     pub(super) fn insert(&mut self, pn: u64, value: SentPacket) {
-        if self.slots.is_empty() {
-            self.offset = pn;
-        } else {
-            debug_assert!(
-                pn >= self.offset + self.slots.len() as u64,
-                "packet numbers must be inserted in increasing order"
-            );
-        }
-        let index = (pn - self.offset) as usize;
-        // Pad skipped packet numbers.
-        self.slots.resize(index, None);
+        debug_assert!(
+            self.packets
+                .last_key_value()
+                .is_none_or(|(&last, _)| pn > last)
+        );
         if value.size != 0 {
             self.in_flight += 1;
         }
-        self.slots.push_back(Some(value));
+        self.packets.insert(pn, value);
     }
 
     /// Remove and return the entry for `pn`.
     pub(super) fn remove(&mut self, pn: u64) -> Option<SentPacket> {
-        let index = usize::try_from(pn.checked_sub(self.offset)?).ok()?;
-        let value = self.slots.get_mut(index)?.take()?;
+        let value = self.packets.remove(&pn)?;
         if value.size != 0 {
             self.in_flight -= 1;
-        }
-        // Reclaim leading vacant slots so the buffer tracks the live window.
-        while let Some(None) = self.slots.front() {
-            self.slots.pop_front();
-            self.offset += 1;
         }
         Some(value)
     }
 
     /// Return the entry for `pn`.
     pub(super) fn get(&self, pn: u64) -> Option<&SentPacket> {
-        let index = usize::try_from(pn.checked_sub(self.offset)?).ok()?;
-        self.slots.get(index)?.as_ref()
+        self.packets.get(&pn)
     }
 
     /// Whether any present entry has `size != 0`.
@@ -68,37 +52,17 @@ impl SentPackets {
         &self,
         range: impl RangeBounds<u64>,
     ) -> impl Iterator<Item = (u64, &SentPacket)> + '_ {
-        let end = self.offset + self.slots.len() as u64;
-        let lo = Ord::max(
-            match range.start_bound() {
-                Bound::Included(&n) => n,
-                Bound::Excluded(&n) => n.saturating_add(1),
-                Bound::Unbounded => self.offset,
-            },
-            self.offset,
-        );
-        let hi = Ord::min(
-            match range.end_bound() {
-                Bound::Included(&n) => n.saturating_add(1),
-                Bound::Excluded(&n) => n,
-                Bound::Unbounded => end,
-            },
-            end,
-        );
-        let start = (lo - self.offset) as usize;
-        let stop = Ord::max(hi.saturating_sub(self.offset) as usize, start);
-        (start..stop)
-            .filter_map(move |i| self.slots[i].as_ref().map(|v| (self.offset + i as u64, v)))
+        self.packets.range(range).map(|(&pn, packet)| (pn, packet))
     }
 
     /// Mutably iterate present entries in increasing packet-number order.
     pub(super) fn values_mut(&mut self) -> impl Iterator<Item = &mut SentPacket> + '_ {
-        self.slots.iter_mut().filter_map(Option::as_mut)
+        self.packets.values_mut()
     }
 
     /// Consume the map, yielding present entries in increasing packet-number order.
     pub(super) fn into_values(self) -> impl Iterator<Item = SentPacket> {
-        self.slots.into_iter().flatten()
+        self.packets.into_values()
     }
 }
 
@@ -106,6 +70,21 @@ impl SentPackets {
 mod tests {
     use super::*;
     use crate::Instant;
+    use std::ops::Bound;
+
+    #[test]
+    fn storage_is_bounded_by_live_packets() {
+        let mut packets = SentPackets::default();
+        packets.insert(0, packet(1200));
+        for pn in 1..4096 {
+            packets.insert(pn, packet(0));
+            packets.remove(pn);
+        }
+        assert_eq!(packets.range(..).count(), 1);
+        assert!(packets.packets.len() == 1);
+        assert!(packets.has_in_flight());
+        assert_eq!(packets.get(0).unwrap().size, 1200);
+    }
 
     #[test]
     fn insert_get_and_order() {
