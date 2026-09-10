@@ -94,7 +94,7 @@ impl Datagrams<'_> {
 
     /// Receive an unreliable, unordered datagram
     pub fn recv(&mut self) -> Option<Bytes> {
-        self.conn.datagrams.recv()
+        self.conn.datagrams.recv().map(Bytes::from)
     }
 
     /// Bytes available in the outgoing datagram buffer
@@ -112,7 +112,9 @@ impl Datagrams<'_> {
 
 #[derive(Default)]
 pub(super) struct DatagramState {
-    pub(super) incoming: DatagramBuffer,
+    incoming: VecDeque<Box<[u8]>>,
+    /// Payload and entry bytes held in `incoming`
+    incoming_total: usize,
     pub(super) outgoing: DatagramBuffer,
     pub(super) send_blocked: bool,
 }
@@ -132,19 +134,22 @@ impl DatagramState {
             Some(x) => *x,
         };
 
-        let size_with_overhead = datagram.data.len() + size_of::<Datagram>();
+        let size_with_overhead = datagram.data.len() + size_of::<Box<[u8]>>();
 
         if size_with_overhead > window {
             return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
         }
 
         let was_empty = self.incoming.is_empty();
-        while self.incoming.memory_used() + size_with_overhead > window {
+        while self.incoming_total > window - size_with_overhead {
             debug!("dropping stale datagram");
             self.recv();
         }
 
-        self.incoming.push_back(datagram);
+        // A small payload can otherwise retain an entire receive batch, which is not
+        // included in the queue's memory budget.
+        self.incoming.push_back(Box::from(datagram.data.as_ref()));
+        self.incoming_total += size_with_overhead;
         Ok(was_empty)
     }
 
@@ -210,8 +215,9 @@ impl DatagramState {
         true
     }
 
-    pub(super) fn recv(&mut self) -> Option<Bytes> {
-        let x = self.incoming.pop_front()?.data;
+    fn recv(&mut self) -> Option<Box<[u8]>> {
+        let x = self.incoming.pop_front()?;
+        self.incoming_total -= x.len() + size_of::<Box<[u8]>>();
         Some(x)
     }
 }
@@ -256,6 +262,80 @@ impl DatagramBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn received_datagram_releases_packet_storage() {
+        let storage: Arc<[u8]> = vec![42; 64 * 1024].into();
+        let data = Bytes::from_owner(storage.clone()).slice(100..101);
+        let mut state = DatagramState::default();
+
+        assert!(state.received(Datagram { data }, &Some(100)).unwrap());
+        assert_eq!(Arc::strong_count(&storage), 1);
+        assert_eq!(state.recv().unwrap().as_ref(), &[42]);
+        assert!(state.recv().is_none());
+    }
+
+    #[test]
+    fn received_datagrams_release_shared_storage_after_eviction() {
+        let storage: Arc<[u8]> = (0..=255).collect::<Vec<u8>>().into();
+        let packet = Bytes::from_owner(storage.clone());
+        let mut state = DatagramState::default();
+        let window = Some(2 * (size_of::<Box<[u8]>>() + 1));
+        for index in 0..3 {
+            state
+                .received(
+                    Datagram {
+                        data: packet.slice(index..index + 1),
+                    },
+                    &window,
+                )
+                .unwrap();
+        }
+        drop(packet);
+
+        assert_eq!(Arc::strong_count(&storage), 1);
+        assert_eq!(state.recv().unwrap().as_ref(), &[1]);
+        assert_eq!(state.recv().unwrap().as_ref(), &[2]);
+        assert!(state.recv().is_none());
+    }
+
+    #[test]
+    fn received_datagrams_account_for_payload_and_metadata() {
+        let mut state = DatagramState::default();
+        let overhead = size_of::<Box<[u8]>>();
+        let window = 2 * overhead + 3;
+        for data in [Bytes::from_static(b"a"), Bytes::from_static(b"bc")] {
+            state.received(Datagram { data }, &Some(window)).unwrap();
+        }
+        assert_eq!(state.incoming_total, window);
+
+        // Rejecting a datagram must leave the queue and its accounting untouched.
+        assert!(
+            state
+                .received(
+                    Datagram {
+                        data: vec![0; window].into()
+                    },
+                    &Some(window)
+                )
+                .is_err()
+        );
+        assert_eq!(state.incoming_total, window);
+
+        // Making room for this datagram evicts only the oldest entry.
+        assert!(
+            !state
+                .received(Datagram { data: Bytes::new() }, &Some(window))
+                .unwrap()
+        );
+        assert_eq!(state.incoming_total, 2 * overhead + 2);
+        assert_eq!(state.recv().unwrap().as_ref(), b"bc");
+        assert_eq!(state.incoming_total, overhead);
+        assert!(state.recv().unwrap().is_empty());
+        assert_eq!(state.incoming_total, 0);
+        assert!(state.recv().is_none());
+    }
 
     #[test]
     fn make_space_for_accounts_for_new_datagram() {
@@ -294,10 +374,14 @@ mod tests {
         let datagram = Datagram { data: Bytes::new() };
         let window = 100;
         loop {
-            let initial_count = state.incoming.queue.len();
+            let initial_count = state.incoming.len();
             state.received(datagram.clone(), &Some(window)).unwrap();
-            assert!(state.incoming.queue.len() * size_of::<Datagram>() <= window);
-            if state.incoming.queue.len() == initial_count {
+            assert!(state.incoming.len() * size_of::<Box<[u8]>>() <= window);
+            assert_eq!(
+                state.incoming_total,
+                state.incoming.len() * size_of::<Box<[u8]>>()
+            );
+            if state.incoming.len() == initial_count {
                 // Datagrams are getting dropped
                 break;
             }
