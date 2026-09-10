@@ -264,7 +264,17 @@ impl Future for ConnectionDriver {
             conn.terminate(e, &self.conn.shared);
             return Poll::Ready(Ok(()));
         }
-        let mut keep_going = conn.drive_transmit(cx)?;
+        let mut keep_going = match conn.drive_transmit(cx) {
+            Ok(keep_going) => keep_going,
+            Err(e) => {
+                // Transmit failed, so close the connection and clean state before returning
+                // the error.
+                if !conn.inner.is_closed() {
+                    conn.implicit_close(&self.conn.shared);
+                }
+                return Poll::Ready(Err(e));
+            }
+        };
         // If a timer expires, there might be more to transmit. When we transmit something, we
         // might need to reset a timer. Hence, we must loop until neither happens.
         keep_going |= conn.drive_timer(cx);
