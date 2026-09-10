@@ -46,6 +46,7 @@ pub struct Endpoint {
     rng: StdRng,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
+    pending_accepts: usize,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
@@ -79,6 +80,7 @@ impl Endpoint {
             },
             index: ConnectionIndex::default(),
             connections: Slab::new(),
+            pending_accepts: 0,
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
             config,
             server_config,
@@ -673,6 +675,7 @@ impl Endpoint {
             loc_cid,
             pref_addr_cid,
         };
+        self.pending_accepts += 1;
 
         Ok(Accepting {
             reservation,
@@ -866,6 +869,8 @@ impl Endpoint {
         if let Some(cid) = reservation.pref_addr_cid {
             self.index.retire(cid);
         }
+        debug_assert!(self.pending_accepts > 0);
+        self.pending_accepts -= 1;
         self.remove_incoming_buffer(reservation.incoming_idx)
     }
 
@@ -1020,6 +1025,13 @@ impl Endpoint {
         self.connections.len()
     }
 
+    /// Number of incoming accepts that have reserved endpoint state but have not yet been
+    /// finalized into active connections.
+    #[doc(hidden)]
+    pub fn pending_accepts(&self) -> usize {
+        self.pending_accepts
+    }
+
     /// Counter for the number of bytes currently used
     /// in the buffers for Initial and 0-RTT messages for pending incoming connections
     /// and accepts that are still being finalized
@@ -1070,6 +1082,7 @@ impl fmt::Debug for Endpoint {
             .field("rng", &self.rng)
             .field("index", &self.index)
             .field("connections", &self.connections)
+            .field("pending_accepts", &self.pending_accepts)
             .field("config", &self.config)
             .field("server_config", &self.server_config)
             // incoming_buffers too large
@@ -1343,7 +1356,7 @@ impl Drop for IncomingImproperDropWarner {
 
 /// Warns if a finalized split-accept state (`Accepted`/`AcceptingError`) is dropped without being
 /// passed back to `Endpoint::finish_accept`/`finish_accept_error`. Doing so leaks the reserved
-/// CIDs and the buffered Initial/0-RTT slot, since that cleanup needs
+/// CIDs, the buffered Initial/0-RTT slot, and the pending-accept count, since that cleanup needs
 /// the endpoint and cannot run from `Drop`. The earlier `Accepting` state is instead covered by
 /// the `Incoming` it still holds, whose own warner stays armed until `finish_without_endpoint`.
 struct AcceptDropGuard;
@@ -1358,7 +1371,8 @@ impl Drop for AcceptDropGuard {
     fn drop(&mut self) {
         warn!(
             "quinn_proto split-accept state dropped without passing to \
-             Endpoint::finish_accept/finish_accept_error (leaks reserved CIDs and buffered packets)"
+             Endpoint::finish_accept/finish_accept_error (leaks reserved CIDs, buffered packets, \
+             and the pending-accept slot)"
         );
     }
 }

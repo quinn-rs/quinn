@@ -1009,6 +1009,7 @@ fn accepting_state_buffers_retransmitted_initials() {
     let accepting = pair.server.start_split_accept(incoming, pair.time);
     assert_eq!(pair.server.incoming_buffer_bytes(), 0);
     assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
 
     // With no server response, the client's next wakeup is its loss timer. Advancing to it and
     // driving the client emits a retransmitted Initial for the same connection attempt.
@@ -1024,6 +1025,7 @@ fn accepting_state_buffers_retransmitted_initials() {
     let server_ch = pair.server.finish_split_accept(accepting);
     assert_eq!(pair.server.incoming_buffer_bytes(), 0);
     assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.pending_accepts(), 0);
     // Check delivery before driving either endpoint again: completing the handshake alone
     // would also succeed if finish_accept silently discarded the retransmissions.
     assert_eq!(
@@ -1046,9 +1048,42 @@ fn accepting_state_buffers_retransmitted_initials() {
     assert_eq!(pair.server.known_cids(), 0);
 }
 
+/// Verify that attempts in the `Accepting` state count toward `max_incoming`, so a second
+/// connection attempt is refused while the first attempt is still between `start_accept`
+/// and `finish_accept`.
+#[test]
+fn max_incoming_counts_accepts_in_progress() {
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    server_config.max_incoming(1);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+
+    let _client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+
+    let incoming = pair.server.pop_waiting_incoming();
+
+    let accepting = pair.server.start_split_accept(incoming, pair.time);
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    let _refused_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+    assert!(pair.server.waiting_incoming.is_empty());
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.pending_accepts(), 1);
+
+    pair.server.finish_split_accept(accepting);
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.pending_accepts(), 0);
+}
+
 /// Verify that when the off-lock handshake fails (here via ALPN mismatch) after `start_accept`
-/// has reserved endpoint state, `finish_accept_error` releases the reserved CIDs and buffered
-/// packets, leaving no endpoint state behind.
+/// has reserved endpoint state, `finish_accept_error` releases the pending-accept slot and the
+/// reserved CIDs/buffer, leaving no endpoint state behind.
 #[test]
 fn accepting_state_cleaned_up_on_handshake_failure() {
     let _guard = subscribe();
@@ -1067,6 +1102,7 @@ fn accepting_state_cleaned_up_on_handshake_failure() {
 
     let incoming = pair.server.pop_waiting_incoming();
     let accepting = pair.server.start_split_accept(incoming, pair.time);
+    assert_eq!(pair.server.pending_accepts(), 1);
 
     pair.time = pair.client.next_wakeup().unwrap();
     pair.drive_client();
@@ -1081,6 +1117,7 @@ fn accepting_state_cleaned_up_on_handshake_failure() {
     );
 
     // The failed accept must leave no reserved endpoint state behind.
+    assert_eq!(pair.server.pending_accepts(), 0);
     assert_eq!(pair.server.open_connections(), 0);
     assert_eq!(pair.server.incoming_buffer_bytes(), 0);
     assert_eq!(pair.server.known_connections(), 0);
