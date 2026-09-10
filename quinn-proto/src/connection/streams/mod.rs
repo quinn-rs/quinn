@@ -273,6 +273,7 @@ impl<'a> SendStream<'a> {
                 if stream.data_blocked_limit != Some(stream.max_data) {
                     stream.data_blocked_limit = Some(stream.max_data);
                     self.pending.stream_data_blocked.insert(self.id);
+                    self.state.blocked_streams.insert(self.id);
                 }
                 return Err(WriteError::Blocked);
             }

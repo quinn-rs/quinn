@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::BufMut;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
 
 use super::{
@@ -143,6 +143,8 @@ pub struct StreamsState {
     ///
     /// A new frame is only queued once the peer has raised the limit.
     pub(super) data_blocked_limit: Option<u64>,
+    /// Streams for which a `STREAM_DATA_BLOCKED` frame was queued at their current limit
+    pub(super) blocked_streams: FxHashSet<StreamId>,
 }
 
 impl StreamsState {
@@ -189,6 +191,7 @@ impl StreamsState {
             receive_window_shrink_debt: 0,
             streams_blocked: [false, false],
             data_blocked_limit: None,
+            blocked_streams: FxHashSet::default(),
         };
 
         for dir in Dir::iter() {
@@ -255,6 +258,7 @@ impl StreamsState {
         self.buffered_data = 0;
         self.connection_blocked.clear();
         self.data_blocked_limit = None;
+        self.blocked_streams.clear();
     }
 
     /// Process incoming stream frame
@@ -421,10 +425,24 @@ impl StreamsState {
     /// `None` if the stream is no longer writable, was stopped by the peer, or the peer has raised
     /// the limit since the frame was queued.
     pub(crate) fn stream_data_blocked_limit(&self, id: StreamId) -> Option<u64> {
-        let stream = self.send.get(&id)?.as_ref()?;
-        stream.data_blocked_limit.filter(|&limit| {
-            stream.is_writable() && stream.stop_reason.is_none() && limit == stream.max_data
-        })
+        self.send.get(&id)?.as_ref()?.blocked_limit()
+    }
+
+    /// Whether the peer's flow control limits are holding back a write
+    pub(crate) fn blocked(&self) -> bool {
+        self.can_send_data_blocked() || !self.blocked_streams.is_empty()
+    }
+
+    /// Queue a blocked frame again for every limit that is still holding back a write
+    pub(crate) fn queue_blocked(&mut self, pending: &mut Retransmits) {
+        pending.data_blocked |= self.can_send_data_blocked();
+        let send = &self.send;
+        self.blocked_streams.retain(|id| {
+            send.get(id)
+                .and_then(|s| s.as_ref())
+                .is_some_and(|s| s.blocked_limit().is_some())
+        });
+        pending.stream_data_blocked.extend(&self.blocked_streams);
     }
 
     pub(in crate::connection) fn write_control_frames(
@@ -813,6 +831,7 @@ impl StreamsState {
         if let Some(ss_opt) = self.send.get_mut(&id) {
             let ss = ss_opt.get_or_insert_with(|| Send::new(max_send_data));
             if ss.increase_max_data(offset) {
+                self.blocked_streams.remove(&id);
                 if write_limit > 0 {
                     self.events.push_back(StreamEvent::Writable { id });
                 } else if !ss.connection_blocked {
@@ -1005,6 +1024,7 @@ impl StreamsState {
         }
         if half == StreamHalf::Send {
             self.send_streams -= 1;
+            self.blocked_streams.remove(&id);
         }
     }
 

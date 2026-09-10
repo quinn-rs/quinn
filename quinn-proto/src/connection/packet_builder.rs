@@ -224,6 +224,7 @@ impl PacketBuilder {
                 conn.permit_idle_reset = false;
             }
             conn.set_loss_detection_timer(now);
+            conn.set_blocked_timer(now);
             conn.path.pacing.on_transmit(size);
         }
     }
