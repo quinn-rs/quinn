@@ -2614,7 +2614,7 @@ fn datagram_send_recv() {
 fn datagram_recv_buffer_overflow() {
     let _guard = subscribe();
     const PAYLOAD_WINDOW: usize = 100;
-    const METADATA_WINDOW: usize = 2 * size_of::<Datagram>();
+    const METADATA_WINDOW: usize = 2 * size_of::<Box<[u8]>>();
     const WINDOW: usize = PAYLOAD_WINDOW + METADATA_WINDOW;
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
