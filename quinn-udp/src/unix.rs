@@ -540,18 +540,32 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", solarish, apple_slow))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+    recv_single(io, bufs, meta)
+}
+
+#[cfg(any(
+    all(test, not(apple_fast)),
+    target_os = "openbsd",
+    target_os = "netbsd",
+    solarish,
+    apple_slow
+))]
+fn recv_single(
+    io: SockRef<'_>,
+    bufs: &mut [IoSliceMut<'_>],
+    meta: &mut [RecvMeta],
+) -> io::Result<usize> {
     let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
     let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
     let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
-    prepare_recv(&mut bufs[0], &mut name, &mut ctrl, &mut hdr);
     let n = loop {
+        prepare_recv(&mut bufs[0], &mut name, &mut ctrl, &mut hdr);
         let n = unsafe { libc::recvmsg(io.as_raw_fd(), &mut hdr, 0) };
 
-        if hdr.msg_flags & libc::MSG_TRUNC != 0 {
-            continue;
-        }
-
         if n >= 0 {
+            if hdr.msg_flags & libc::MSG_TRUNC != 0 {
+                continue;
+            }
             break n;
         }
 
@@ -1061,5 +1075,67 @@ const OPTION_ON: libc::c_int = 1;
 mod gro {
     pub(super) fn gro_segments() -> usize {
         1
+    }
+}
+
+#[cfg(all(test, not(apple_fast)))]
+mod tests {
+    use std::{net::UdpSocket, sync::mpsc, thread, time::Duration};
+
+    use super::*;
+
+    #[test]
+    fn recv_single_after_truncation_returns_would_block_instead_of_spin() {
+        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        receiver.set_nonblocking(true).unwrap();
+        let address = receiver.local_addr().unwrap();
+        let sender = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        sender.send_to(&[0; 16], address).unwrap();
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut buffer = [0; 8];
+            let result = recv_single(
+                SockRef::from(&receiver),
+                &mut [IoSliceMut::new(&mut buffer)],
+                &mut [RecvMeta::default()],
+            );
+            done_tx.send(result).unwrap();
+        });
+        let result = done_rx.recv_timeout(Duration::from_secs(1));
+        if result.is_err() {
+            // Release a regressed receive loop before failing the test.
+            sender.send_to(b"ok", address).unwrap();
+            done_rx
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .unwrap();
+        }
+        worker.join().unwrap();
+        assert!(matches!(result, Ok(Err(error)) if error.kind() == io::ErrorKind::WouldBlock));
+    }
+
+    #[test]
+    fn recv_single_skips_truncated_datagrams() {
+        let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        receiver.set_nonblocking(true).unwrap();
+        let sender = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = receiver.local_addr().unwrap();
+        sender.send_to(&[0; 16], address).unwrap();
+        sender.send_to(b"ok", address).unwrap();
+
+        let mut buffer = [0; 8];
+        let mut meta = [RecvMeta::default()];
+        assert_eq!(
+            recv_single(
+                SockRef::from(&receiver),
+                &mut [IoSliceMut::new(&mut buffer)],
+                &mut meta,
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(&buffer[..meta[0].len], b"ok");
+        assert_eq!(meta[0].addr, sender.local_addr().unwrap());
     }
 }
