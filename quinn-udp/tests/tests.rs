@@ -24,6 +24,27 @@ use quinn_udp::{RecvMeta, Transmit, UdpSockRef, UdpSocketState};
 use socket2::MsgHdr;
 use socket2::Socket;
 
+/// Detect if running under Wine (test helper).
+#[cfg(windows)]
+fn is_wine() -> bool {
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+
+    unsafe {
+        let ntdll = GetModuleHandleA(b"ntdll.dll\0".as_ptr());
+        // `HMODULE` is `isize` in windows-sys <0.58 and `*mut c_void` in newer versions;
+        // compare through `usize` so this works across the supported range.
+        if (ntdll as usize) == 0 {
+            return false;
+        }
+        GetProcAddress(ntdll, b"wine_get_version\0".as_ptr()).is_some()
+    }
+}
+
+#[cfg(not(windows))]
+fn is_wine() -> bool {
+    false
+}
+
 #[test]
 fn basic() {
     let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
@@ -83,6 +104,10 @@ fn basic_src_ip() {
 #[test]
 #[cfg(not(target_os = "wasi"))]
 fn ecn_v6() {
+    if is_wine() {
+        eprintln!("Skipping ECN test on Wine (ECN not supported)");
+        return;
+    }
     let send = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
     let recv = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
@@ -108,6 +133,10 @@ fn ecn_v6() {
     solarish
 )))]
 fn ecn_v4() {
+    if is_wine() {
+        eprintln!("Skipping ECN test on Wine (ECN not supported)");
+        return;
+    }
     let send = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
     let recv = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
@@ -133,6 +162,10 @@ fn ecn_v4() {
     solarish
 )))]
 fn ecn_v6_dualstack() {
+    if is_wine() {
+        eprintln!("Skipping ECN test on Wine (ECN not supported)");
+        return;
+    }
     let recv = Socket::new(
         socket2::Domain::IPV6,
         socket2::Type::DGRAM,
@@ -184,6 +217,10 @@ fn ecn_v6_dualstack() {
     solarish
 )))]
 fn ecn_v4_mapped_v6() {
+    if is_wine() {
+        eprintln!("Skipping ECN test on Wine (ECN not supported)");
+        return;
+    }
     let send = Socket::new(
         socket2::Domain::IPV6,
         socket2::Type::DGRAM,

@@ -36,6 +36,9 @@ windows-sys = { workspace = true }
 criterion = { version = "0.8", default-features = false, features = ["async_tokio"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
 
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true }
+
 [build-dependencies]
 cfg_aliases = { workspace = true }
 
