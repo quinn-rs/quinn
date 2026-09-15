@@ -39,6 +39,13 @@ use tracing_subscriber::EnvFilter;
 
 use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
 
+/// Detect if running under Wine (test helper).
+///
+/// Uses environment variables to avoid pulling in `windows-sys` as a dev-dependency.
+fn is_wine() -> bool {
+    std::env::var_os("WINELOADER").is_some() || std::env::var_os("WINEPREFIX").is_some()
+}
+
 #[test]
 fn handshake_timeout() {
     let _guard = subscribe();
@@ -559,7 +566,7 @@ fn run_echo(args: EchoArgs) {
                 || cfg!(target_os = "openbsd")
                 || cfg!(target_os = "netbsd")
                 || cfg!(target_os = "macos")
-                || cfg!(target_os = "windows")
+                || (cfg!(target_os = "windows") && !is_wine())
             {
                 let local_ip = incoming.local_ip().expect("Local IP must be available");
                 assert!(local_ip.is_loopback());

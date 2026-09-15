@@ -127,8 +127,8 @@ pub struct RecvMeta {
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     ///
-    /// Populated on platforms: Windows, Linux, Android (API level > 25),
-    /// FreeBSD, OpenBSD, NetBSD, macOS, and iOS.
+    /// Populated on platforms: Windows (except under Wine), Linux, Android
+    /// (API level > 25), FreeBSD, OpenBSD, NetBSD, macOS, and iOS.
     pub dst_ip: Option<IpAddr>,
     /// The interface index of the interface on which the datagram was received
     pub interface_index: Option<u32>,
