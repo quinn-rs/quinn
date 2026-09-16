@@ -93,7 +93,7 @@ fn prepare_msg_x(
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = cmsg::LEN as _;
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
-    let tos = state.tos_base() as libc::c_int | transmit.ecn.map_or(0, |x| x as libc::c_int);
+    let tos = state.tos_base().encode(transmit.ecn);
     let is_ipv4 = transmit.destination.is_ipv4()
         || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
     if is_ipv4 {

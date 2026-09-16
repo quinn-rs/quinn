@@ -54,6 +54,9 @@ mod apple_fast;
 mod cmsg;
 
 #[cfg(unix)]
+mod tos;
+
+#[cfg(unix)]
 #[path = "unix.rs"]
 mod imp;
 

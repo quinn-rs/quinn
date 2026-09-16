@@ -16,7 +16,7 @@ use socket2::SockRef;
 
 use super::{
     EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, TransportError, UdpSockRef, cmsg,
-    log_sendmsg_error,
+    log_sendmsg_error, tos::Tos,
 };
 
 #[cfg(apple_fast)]
@@ -48,7 +48,7 @@ pub struct UdpSocketState {
     /// option, so a cmsg valued solely from the ECN codepoint would zero any
     /// DSCP marking the application configured via `setsockopt` before handing
     /// the socket over. ORing this base into the cmsg preserves it.
-    tos_base: u8,
+    tos_base: Tos,
 
     /// Whether to use Apple's fast `sendmsg_x`/`recvmsg_x` APIs.
     ///
@@ -443,7 +443,7 @@ impl UdpSocketState {
     }
 
     /// Returns the socket-level TOS / traffic-class byte captured at creation.
-    pub(crate) fn tos_base(&self) -> u8 {
+    pub(crate) fn tos_base(&self) -> Tos {
         self.tos_base
     }
 
@@ -746,7 +746,7 @@ fn prepare_msg(
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = cmsg::LEN as _;
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
-    let tos = state.tos_base() as libc::c_int | transmit.ecn.map_or(0, |x| x as libc::c_int);
+    let tos = state.tos_base().encode(transmit.ecn);
     // True for IPv4 or IPv4-Mapped IPv6
     let is_ipv4 = transmit.destination.is_ipv4()
         || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
@@ -1023,14 +1023,14 @@ fn set_socket_option_supported(
 /// `IP_TOS` / `IPV6_TCLASS` cmsg, so DSCP markings the application configured
 /// on the socket survive the ECN cmsg (which would otherwise override them).
 /// Best-effort: a failed `getsockopt` reads as an unmarked socket.
-fn socket_tos_base(socket: &impl AsRawFd, is_ipv4: bool) -> u8 {
+fn socket_tos_base(socket: &impl AsRawFd, is_ipv4: bool) -> Tos {
     let (level, opt) = match is_ipv4 {
         true => (libc::IPPROTO_IP, libc::IP_TOS),
         #[cfg(not(target_os = "redox"))]
         false => (libc::IPPROTO_IPV6, libc::IPV6_TCLASS),
         // Redox lacks `IPV6_TCLASS` (and no TCLASS cmsg is sent there)
         #[cfg(target_os = "redox")]
-        false => return 0,
+        false => return Tos::new(0),
     };
     let mut val = [0u8; size_of::<libc::c_int>()];
     let mut len = val.len() as libc::socklen_t;
@@ -1044,14 +1044,14 @@ fn socket_tos_base(socket: &impl AsRawFd, is_ipv4: bool) -> u8 {
         )
     };
     if rc != 0 {
-        return 0;
+        return Tos::new(0);
     }
     // Some BSD-derived systems yield a single byte, others a full `c_int`
     let tos = match len {
         1 => val[0],
         _ => libc::c_int::from_ne_bytes(val) as u8,
     };
-    tos & !0b11
+    Tos::new(tos)
 }
 
 pub(crate) fn set_socket_option(
