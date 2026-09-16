@@ -998,10 +998,14 @@ fn test_dscp_preserved(loopback: IpAddr) {
     };
     // `UdpSocketState::new` sets the socket nonblocking; loopback won't
     // backpressure a 4-byte datagram, but retry `WouldBlock` to be safe
-    for _ in 0..10 {
+    for attempt in 1..=10 {
         match send_state.try_send((&send).into(), &transmit) {
             Ok(()) => break,
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                assert!(
+                    attempt < 10,
+                    "try_send failed after {attempt} attempts: {e}"
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => panic!("try_send failed: {e}"),
