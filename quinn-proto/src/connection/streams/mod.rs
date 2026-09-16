@@ -196,6 +196,20 @@ pub struct SendStream<'a> {
     pub(super) conn_state: &'a super::State,
 }
 
+/// Acts like a method on `SendStream`, but is a macro for borrowing reasons. Gets
+/// `self.state.send[self.id]` as an `Option<&mut Send>`, initializing the lazy-initializable
+/// `Option<Box<Send>>` value if present in the `HashMap` but set to `None`.
+macro_rules! get_or_init_stream {
+    ($sendstream:ident) => {{
+        let max_send_data = $sendstream.state.max_send_data($sendstream.id);
+        $sendstream
+            .state
+            .send
+            .get_mut(&$sendstream.id)
+            .map(|opt| &mut **opt.get_or_insert_with(|| Send::new(max_send_data)))
+    }};
+}
+
 #[allow(clippy::needless_lifetimes)] // Needed for cfg(fuzzing)
 impl<'a> SendStream<'a> {
     #[cfg(fuzzing)]
@@ -238,14 +252,7 @@ impl<'a> SendStream<'a> {
 
         let limit = self.state.write_limit();
 
-        let max_send_data = self.state.max_send_data(self.id);
-
-        let stream = self
-            .state
-            .send
-            .get_mut(&self.id)
-            .ok_or(WriteError::ClosedStream)?
-            .get_or_insert_with(|| Send::new(max_send_data));
+        let stream = get_or_init_stream!(self).ok_or(WriteError::ClosedStream)?;
 
         if limit == 0 {
             trace!(
@@ -302,13 +309,7 @@ impl<'a> SendStream<'a> {
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     pub fn finish(&mut self) -> Result<(), FinishError> {
-        let max_send_data = self.state.max_send_data(self.id);
-        let stream = self
-            .state
-            .send
-            .get_mut(&self.id)
-            .ok_or(FinishError::ClosedStream)?
-            .get_or_insert_with(|| Send::new(max_send_data));
+        let stream = get_or_init_stream!(self).ok_or(FinishError::ClosedStream)?;
 
         let was_pending = stream.is_pending();
         stream.finish()?;
@@ -324,13 +325,7 @@ impl<'a> SendStream<'a> {
     /// # Panics
     /// - when applied to a receive stream
     pub fn reset(&mut self, error_code: VarInt) -> Result<(), ClosedStream> {
-        let max_send_data = self.state.max_send_data(self.id);
-        let stream = self
-            .state
-            .send
-            .get_mut(&self.id)
-            .ok_or(ClosedStream { _private: () })?
-            .get_or_insert_with(|| Send::new(max_send_data));
+        let stream = get_or_init_stream!(self).ok_or(ClosedStream { _private: () })?;
 
         if matches!(stream.state, SendState::ResetSent) {
             // Redundant reset call
@@ -353,13 +348,7 @@ impl<'a> SendStream<'a> {
     /// # Panics
     /// - when applied to a receive stream
     pub fn set_priority(&mut self, priority: i32) -> Result<(), ClosedStream> {
-        let max_send_data = self.state.max_send_data(self.id);
-        let stream = self
-            .state
-            .send
-            .get_mut(&self.id)
-            .ok_or(ClosedStream { _private: () })?
-            .get_or_insert_with(|| Send::new(max_send_data));
+        let stream = get_or_init_stream!(self).ok_or(ClosedStream { _private: () })?;
 
         stream.priority = priority;
         Ok(())
