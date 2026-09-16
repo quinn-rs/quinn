@@ -1089,10 +1089,8 @@ fn recv_tos(sock: &UdpSocket) -> u8 {
         let is_tos =
             is_v4_tos || (c.cmsg_level == libc::IPPROTO_IPV6 && c.cmsg_type == libc::IPV6_TCLASS);
         if is_tos {
-            // Delivered as a single byte on BSD/macOS and a host-order int on
-            // Linux; either way the value is in the first byte on
-            // little-endian, and Linux (the only big-endian target in
-            // practice) writes a full int we can read unaligned
+            // The payload can be a single byte (including IPv4 on Linux) or a native-endian
+            // c_int. Use its length to distinguish the representations on either endianness.
             let data = unsafe { libc::CMSG_DATA(cmsg) };
             let len = c.cmsg_len as usize - unsafe { libc::CMSG_LEN(0) } as usize;
             return match len {
