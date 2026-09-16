@@ -1034,6 +1034,7 @@ fn socket_tos_base(socket: &impl AsRawFd, is_ipv4: bool) -> Tos {
     };
     let mut val = [0u8; size_of::<libc::c_int>()];
     let mut len = val.len() as libc::socklen_t;
+
     let rc = unsafe {
         libc::getsockopt(
             socket.as_raw_fd(),
@@ -1043,14 +1044,17 @@ fn socket_tos_base(socket: &impl AsRawFd, is_ipv4: bool) -> Tos {
             &mut len,
         )
     };
+
     if rc != 0 {
         return Tos::new(0);
     }
+
     // Some BSD-derived systems yield a single byte, others a full `c_int`
     let tos = match len {
         1 => val[0],
         _ => libc::c_int::from_ne_bytes(val) as u8,
     };
+
     Tos::new(tos)
 }
 

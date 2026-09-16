@@ -856,20 +856,16 @@ fn draining_error_queue_before_send_prevents_absorption() {
     assert_eq!(&buf[..n], b"connection close");
 }
 
-/// The DSCP marking under test: AF41 (RFC 2597)
-#[cfg(unix)]
-const DSCP: u8 = 34;
-
 #[test]
 #[cfg(unix)]
 fn dscp_preserved_v6() {
-    test_dscp_preserved(false);
+    test_dscp_preserved(Ipv6Addr::LOCALHOST.into());
 }
 
 #[test]
 #[cfg(all(unix, not(any(target_os = "openbsd", target_os = "netbsd", solarish))))]
 fn dscp_preserved_v4() {
-    test_dscp_preserved(true);
+    test_dscp_preserved(Ipv4Addr::LOCALHOST.into());
 }
 
 /// DSCP set on the socket via `setsockopt` must survive the per-packet ECN
@@ -884,16 +880,15 @@ fn dscp_preserved_v4() {
 /// Sends one datagram over loopback through `UdpSocketState` on a DSCP-tagged
 /// socket and receives it with a raw `recvmsg` requesting the TOS byte.
 #[cfg(unix)]
-fn test_dscp_preserved(ipv4: bool) {
+fn test_dscp_preserved(loopback: IpAddr) {
     use std::{io::ErrorKind, time::Duration};
+
+    // The DSCP marking under test: AF41 (RFC 2597)
+    const DSCP: u8 = 34;
 
     let tos = DSCP << 2;
     let ecn = EcnCodepoint::Ect0;
-
-    let loopback: IpAddr = match ipv4 {
-        true => Ipv4Addr::LOCALHOST.into(),
-        false => Ipv6Addr::LOCALHOST.into(),
-    };
+    let ipv4 = loopback.is_ipv4();
 
     let recv = UdpSocket::bind((loopback, 0)).unwrap();
     recv.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
