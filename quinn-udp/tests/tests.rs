@@ -868,6 +868,81 @@ fn dscp_preserved_v4() {
     test_dscp_preserved(Ipv4Addr::LOCALHOST.into());
 }
 
+#[test]
+#[cfg(target_os = "linux")]
+fn dscp_preserved_dualstack() {
+    // Linux keeps IP_TOS and IPV6_TCLASS independent on a dual-stack socket.
+    const DSCP_V4: u8 = 34;
+    const DSCP_V6: u8 = 10;
+
+    let send = Socket::new(socket2::Domain::IPV6, socket2::Type::DGRAM, None).unwrap();
+    send.set_only_v6(false).unwrap();
+    send.bind(&socket2::SockAddr::from(SocketAddrV6::new(
+        Ipv6Addr::UNSPECIFIED,
+        0,
+        0,
+        0,
+    )))
+    .unwrap();
+    set_socket_int_option(&send, libc::IPPROTO_IP, libc::IP_TOS, (DSCP_V4 << 2).into());
+    set_socket_int_option(
+        &send,
+        libc::IPPROTO_IPV6,
+        libc::IPV6_TCLASS,
+        (DSCP_V6 << 2).into(),
+    );
+    let send_state = UdpSocketState::new((&send).into()).unwrap();
+    send.set_nonblocking(false).unwrap();
+
+    for (loopback, level, option, dscp) in [
+        (
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            libc::IPPROTO_IP,
+            libc::IP_RECVTOS,
+            DSCP_V4,
+        ),
+        (
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            libc::IPPROTO_IPV6,
+            libc::IPV6_RECVTCLASS,
+            DSCP_V6,
+        ),
+    ] {
+        let recv = UdpSocket::bind((loopback, 0)).unwrap();
+        recv.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        set_socket_int_option(&recv, level, option, 1);
+        let destination = match recv.local_addr().unwrap() {
+            SocketAddr::V4(addr) => {
+                SocketAddrV6::new(addr.ip().to_ipv6_mapped(), addr.port(), 0, 0).into()
+            }
+            addr => addr,
+        };
+        for ecn in [
+            None,
+            Some(EcnCodepoint::Ect0),
+            Some(EcnCodepoint::Ect1),
+            Some(EcnCodepoint::Ce),
+        ] {
+            send_state
+                .try_send(
+                    (&send).into(),
+                    &Transmit {
+                        destination,
+                        ecn,
+                        contents: b"dscp",
+                        segment_size: None,
+                        src_ip: None,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                recv_tos(&recv),
+                (dscp << 2) | ecn.map_or(0, |ecn| ecn as u8)
+            );
+        }
+    }
+}
+
 /// DSCP set on the socket via `setsockopt` must survive the per-packet ECN
 /// cmsg
 ///
