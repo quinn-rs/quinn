@@ -66,6 +66,15 @@ pub struct UdpSocketState {
 }
 
 impl UdpSocketState {
+    /// Configure a UDP socket and capture its state
+    ///
+    /// Configure any DSCP markings on the socket before calling this constructor. The socket's
+    /// `IP_TOS` and `IPV6_TCLASS` values are read once, on a best-effort basis, and their DSCP bits
+    /// are preserved when encoding per-packet ECN values. Later changes to these socket options
+    /// are not reflected in the cached markings.
+    ///
+    /// On platforms with independent IPv4 and IPv6 markings for dual-stack sockets, configure
+    /// both options to mark traffic to both address families.
     pub fn new(sock: UdpSockRef<'_>) -> io::Result<Self> {
         let io = sock.0;
         let mut cmsg_platform_space = 0;
