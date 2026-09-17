@@ -16,7 +16,7 @@ use socket2::SockRef;
 
 use super::{
     EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, TransportError, UdpSockRef, cmsg,
-    log_sendmsg_error,
+    log_sendmsg_error, tos::Tos,
 };
 
 #[cfg(apple_fast)]
@@ -42,6 +42,17 @@ pub struct UdpSocketState {
     /// which is not supported on Linux <3.13 and results in not sending the UDP packet at all.
     sendmsg_einval: AtomicBool,
 
+    /// The socket-level IPv4 TOS byte at creation, ECN bits masked off.
+    ///
+    /// The per-packet `IP_TOS` / `IPV6_TCLASS` cmsg overrides the socket-level
+    /// option, so a cmsg valued solely from the ECN codepoint would zero any
+    /// DSCP marking the application configured via `setsockopt` before handing
+    /// the socket over. ORing this base into the cmsg preserves it.
+    tos_v4: Tos,
+
+    /// The socket-level IPv6 traffic-class byte at creation, ECN bits masked off.
+    tos_v6: Tos,
+
     /// Whether to use Apple's fast `sendmsg_x`/`recvmsg_x` APIs.
     ///
     /// These private APIs provide better performance but may not be available on all
@@ -55,6 +66,15 @@ pub struct UdpSocketState {
 }
 
 impl UdpSocketState {
+    /// Configure a UDP socket and capture its state
+    ///
+    /// Configure any DSCP markings on the socket before calling this constructor. The socket's
+    /// `IP_TOS` and `IPV6_TCLASS` values are read once, on a best-effort basis, and their DSCP bits
+    /// are preserved when encoding per-packet ECN values. Later changes to these socket options
+    /// are not reflected in the cached markings.
+    ///
+    /// On platforms with independent IPv4 and IPv6 markings for dual-stack sockets, configure
+    /// both options to mark traffic to both address families.
     pub fn new(sock: UdpSockRef<'_>) -> io::Result<Self> {
         let io = sock.0;
         let mut cmsg_platform_space = 0;
@@ -83,6 +103,15 @@ impl UdpSocketState {
 
         let addr = io.local_addr()?;
         let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
+
+        let tos_v6 = if is_ipv4 {
+            Tos::new(0)
+        } else {
+            socket_tos_base(&*io, false).unwrap_or_else(|| Tos::new(0))
+        };
+        // Linux supports independent IPv4 and IPv6 markings on dual-stack sockets. If the
+        // platform does not support IP_TOS on an IPv6 socket, retain its traffic class instead.
+        let tos_v4 = socket_tos_base(&*io, true).unwrap_or(tos_v6);
 
         // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
         // older macos versions also don't have the flag and will error out if we don't ignore it
@@ -202,6 +231,8 @@ impl UdpSocketState {
             gro_segments,
             may_fragment,
             sendmsg_einval: AtomicBool::new(false),
+            tos_v4,
+            tos_v6,
             #[cfg(apple_fast)]
             apple_fast_path: AtomicBool::new(false),
             #[cfg(apple)]
@@ -431,6 +462,14 @@ impl UdpSocketState {
         self.sendmsg_einval.load(Ordering::Relaxed)
     }
 
+    /// Returns the socket-level TOS / traffic-class byte for the destination's address family.
+    pub(crate) fn tos_base(&self, is_ipv4: bool) -> Tos {
+        match is_ipv4 {
+            true => self.tos_v4,
+            false => self.tos_v6,
+        }
+    }
+
     /// Sets the flag indicating we got EINVAL error from `sendmsg` syscall.
     #[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd")))]
     fn set_sendmsg_einval(&self) {
@@ -532,7 +571,7 @@ fn send(
         &mut iovec,
         &mut cmsgs,
         encode_src_ip,
-        state.sendmsg_einval(),
+        state,
     );
 
     loop {
@@ -576,7 +615,7 @@ fn send(
                         &mut iovec,
                         &mut cmsgs,
                         encode_src_ip,
-                        state.sendmsg_einval(),
+                        state,
                     );
                     continue;
                 }
@@ -610,7 +649,7 @@ pub(crate) fn send_single(
         &mut iov,
         &mut ctrl,
         cfg!(apple) || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd"),
-        state.sendmsg_einval(),
+        state,
     );
     #[cfg(apple)]
     state.check_send_buffer_limit(transmit.contents.len(), &hdr)?;
@@ -710,7 +749,7 @@ fn prepare_msg(
     ctrl: &mut cmsg::Aligned<[u8; cmsg::LEN]>,
     #[allow(unused_variables)] // only used on FreeBSD & macOS
     encode_src_ip: bool,
-    sendmsg_einval: bool,
+    state: &UdpSocketState,
 ) {
     iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
     iov.iov_len = transmit.contents.len();
@@ -730,20 +769,20 @@ fn prepare_msg(
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = cmsg::LEN as _;
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
-    let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
     // True for IPv4 or IPv4-Mapped IPv6
     let is_ipv4 = transmit.destination.is_ipv4()
         || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
+    let tos = state.tos_base(is_ipv4).encode(transmit.ecn);
     if is_ipv4 {
-        if !sendmsg_einval {
+        if !state.sendmsg_einval() {
             #[cfg(not(target_os = "netbsd"))]
             {
-                encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
+                encoder.push(libc::IPPROTO_IP, libc::IP_TOS, tos as IpTosTy);
             }
         }
     } else {
         #[cfg(not(target_os = "redox"))]
-        encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
+        encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, tos);
     }
 
     // On apple_fast, prepare_msg is only compiled for send_single (fallback path), while the main
@@ -999,6 +1038,47 @@ fn set_socket_option_supported(
         Err(err) if err.raw_os_error() == Some(libc::EOPNOTSUPP) => Ok(false),
         Err(err) => Err(err),
     }
+}
+
+/// Returns the socket-level TOS / traffic-class byte with the ECN bits masked off
+///
+/// Captured once at [`UdpSocketState`] creation and ORed into every per-packet
+/// `IP_TOS` / `IPV6_TCLASS` cmsg, so DSCP markings the application configured
+/// on the socket survive the ECN cmsg (which would otherwise override them).
+/// Returns `None` if the socket option cannot be read.
+fn socket_tos_base(socket: &impl AsRawFd, is_ipv4: bool) -> Option<Tos> {
+    let (level, opt) = match is_ipv4 {
+        true => (libc::IPPROTO_IP, libc::IP_TOS),
+        #[cfg(not(target_os = "redox"))]
+        false => (libc::IPPROTO_IPV6, libc::IPV6_TCLASS),
+        // Redox lacks `IPV6_TCLASS` (and no TCLASS cmsg is sent there)
+        #[cfg(target_os = "redox")]
+        false => return None,
+    };
+    let mut val = [0u8; size_of::<libc::c_int>()];
+    let mut len = val.len() as libc::socklen_t;
+
+    let rc = unsafe {
+        libc::getsockopt(
+            socket.as_raw_fd(),
+            level,
+            opt,
+            val.as_mut_ptr() as *mut _,
+            &mut len,
+        )
+    };
+
+    if rc != 0 {
+        return None;
+    }
+
+    // Some BSD-derived systems yield a single byte, others a full `c_int`
+    let tos = match len {
+        1 => val[0],
+        _ => libc::c_int::from_ne_bytes(val) as u8,
+    };
+
+    Some(Tos::new(tos))
 }
 
 pub(crate) fn set_socket_option(
