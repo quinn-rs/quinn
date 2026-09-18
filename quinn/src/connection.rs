@@ -1141,40 +1141,57 @@ impl State {
             .min(MAX_TRANSMIT_SEGMENTS);
 
         loop {
-            // Retry the last transmit, or get a new one.
-            let t = match self.buffered_transmit.take() {
-                Some(t) => t,
+            match &self.buffered_transmit {
+                // Retry last transmit
+                Some(t) => {
+                    let len = t.size;
+
+                    match self
+                        .sender
+                        .as_mut()
+                        .poll_send(&udp_transmit(t, &self.send_buffer[..len]), cx)
+                    {
+                        Poll::Pending => break,
+                        Poll::Ready(res) => {
+                            // retry attempt was successful, so remove buffered attempt.
+                            self.buffered_transmit = None;
+                            res?;
+                        }
+                    }
+                }
+                // No previous transmit attempt, try to get more data
                 None => {
                     self.send_buffer.clear();
                     self.send_buffer.reserve(self.inner.current_mtu() as usize);
+
                     match self
                         .inner
                         .poll_transmit(now, max_datagrams, &mut self.send_buffer)
                     {
                         Some(t) => {
-                            transmits += match t.segment_size {
-                                None => 1,
-                                Some(s) => t.size.div_ceil(s), // round up
-                            };
-                            t
+                            transmits += t.segment_size.map_or(
+                                1,
+                                |s| t.size.div_ceil(s), //round up
+                            );
+
+                            let len = t.size;
+
+                            match self
+                                .sender
+                                .as_mut()
+                                .poll_send(&udp_transmit(&t, &self.send_buffer[..len]), cx)
+                            {
+                                Poll::Pending => {
+                                    // transmit is not yet possible, so buffer it
+                                    self.buffered_transmit = Some(t);
+                                    break;
+                                }
+                                Poll::Ready(res) => res?,
+                            }
                         }
                         None => break,
                     }
                 }
-            };
-
-            let len = t.size;
-            match self
-                .sender
-                .as_mut()
-                .poll_send(&udp_transmit(&t, &self.send_buffer[..len]), cx)
-            {
-                Poll::Pending => {
-                    self.buffered_transmit = Some(t);
-                    return Ok(false);
-                }
-                Poll::Ready(Err(e)) => return Err(e),
-                Poll::Ready(Ok(())) => {}
             }
 
             if transmits >= MAX_TRANSMIT_DATAGRAMS {
