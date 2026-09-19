@@ -23,7 +23,7 @@ use crate::{
     cid_generator::ConnectionIdGenerator,
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
-    connection::{Connection, ConnectionError, SideArgs},
+    connection::{Connection, ConnectionArgs, ConnectionError, SideArgs},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{
@@ -645,28 +645,29 @@ impl Endpoint {
         incoming.improper_drop_warner.dismiss();
 
         let tls = server_config.crypto.clone().start_session(version, &params);
-        let transport_config = server_config.transport.clone();
         let mut rng_seed = [0; 32];
         self.rng.fill_bytes(&mut rng_seed);
         let mut conn = Connection::new(
-            self.config.clone(),
-            transport_config,
-            dst_cid,
-            loc_cid,
-            src_cid,
-            incoming.addresses.remote,
-            incoming.addresses.local_ip,
             tls,
-            self.local_cid_generator.cid_len(),
-            self.local_cid_generator.cid_lifetime(),
-            incoming.received_at,
-            version,
-            self.allow_mtud,
-            rng_seed,
-            SideArgs::Server {
-                server_config,
-                pref_addr_cid,
-                path_validated: remote_address_validated,
+            ConnectionArgs {
+                endpoint_config: self.config.clone(),
+                transport_config: server_config.transport.clone(),
+                init_cid: dst_cid,
+                loc_cid,
+                rem_cid: src_cid,
+                remote: incoming.addresses.remote,
+                local_ip: incoming.addresses.local_ip,
+                local_cid_len: self.local_cid_generator.cid_len(),
+                local_cid_lifetime: self.local_cid_generator.cid_lifetime(),
+                now: incoming.received_at,
+                version,
+                allow_mtud: self.allow_mtud,
+                rng_seed,
+                side_args: SideArgs::Server {
+                    server_config,
+                    pref_addr_cid,
+                    path_validated: remote_address_validated,
+                },
             },
         );
 
@@ -853,21 +854,23 @@ impl Endpoint {
         let side = side_args.side();
         let pref_addr_cid = side_args.pref_addr_cid();
         let conn = Connection::new(
-            self.config.clone(),
-            transport_config,
-            init_cid,
-            loc_cid,
-            rem_cid,
-            addresses.remote,
-            addresses.local_ip,
             tls,
-            self.local_cid_generator.cid_len(),
-            self.local_cid_generator.cid_lifetime(),
-            now,
-            version,
-            self.allow_mtud,
-            rng_seed,
-            side_args,
+            ConnectionArgs {
+                endpoint_config: self.config.clone(),
+                transport_config,
+                init_cid,
+                loc_cid,
+                rem_cid,
+                remote: addresses.remote,
+                local_ip: addresses.local_ip,
+                local_cid_len: self.local_cid_generator.cid_len(),
+                local_cid_lifetime: self.local_cid_generator.cid_lifetime(),
+                now,
+                version,
+                allow_mtud: self.allow_mtud,
+                rng_seed,
+                side_args,
+            },
         );
 
         self.register_connection(ch, init_cid, loc_cid, pref_addr_cid, addresses, side);
