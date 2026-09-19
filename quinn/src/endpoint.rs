@@ -447,21 +447,53 @@ impl EndpointInner {
         incoming: proto::Incoming,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
-        let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
-        let now = state.runtime.now();
-        match state
-            .inner
-            .accept(incoming, now, &mut response_buffer, server_config)
-        {
+
+        // Phase 1: reserve endpoint state for the connection under the lock.
+        let accepting = {
+            let mut state = self.state.lock().unwrap();
+            let now = state.runtime.now();
+            match state
+                .inner
+                .start_accept(incoming, now, &mut response_buffer, server_config)
+            {
+                Ok(accepting) => {
+                    state.pending_accepts += 1;
+                    accepting
+                }
+                Err(error) => {
+                    if let Some(transmit) = error.response {
+                        respond(transmit, &response_buffer, &mut state.sender);
+                    }
+                    return Err(error.cause);
+                }
+            }
+        };
+
+        // Phase 2: TLS session setup, connection construction, and first-packet handling,
+        // without holding the lock.
+        let accepted = accepting.accept();
+
+        // Phase 3: register the connection, or release the reservation, under the lock.
+        let mut state = self.state.lock().unwrap();
+        state.pending_accepts -= 1;
+        let result = match state.inner.finish_accept(accepted, &mut response_buffer) {
             Ok((handle, conn)) => {
                 state.stats.accepted_handshakes += 1;
                 let sender = state.socket.create_sender();
                 let runtime = state.runtime.clone();
-                Ok(state
+                let connecting = state
                     .recv_state
                     .connections
-                    .insert(handle, conn, sender, runtime))
+                    .insert(handle, conn, sender, runtime);
+                if state.driver_lost {
+                    // The endpoint driver exited while the lock was released. Its destructor
+                    // closed the event channels of the connections that existed at the time,
+                    // which terminates them; do the same for this one so it fails promptly
+                    // rather than waiting for a timeout.
+                    state.recv_state.connections.senders.remove(&handle);
+                }
+                Ok(connecting)
             }
             Err(error) => {
                 if let Some(transmit) = error.response {
@@ -469,7 +501,13 @@ impl EndpointInner {
                 }
                 Err(error.cause)
             }
+        };
+        // Failed accepts and accepts completed after driver loss cannot rely on a Drained event
+        // being processed to wake idle waiters.
+        if state.is_idle() {
+            self.shared.idle.notify_waiters();
         }
+        result
     }
 
     pub(crate) fn refuse(&self, incoming: proto::Incoming) {
@@ -511,6 +549,8 @@ pub(crate) struct State {
     runtime: Arc<dyn Runtime>,
     stats: EndpointStats,
     default_client_config: Option<ClientConfig>,
+    /// Connections in the process of being accepted
+    pending_accepts: usize,
 }
 
 #[derive(Debug)]
@@ -590,7 +630,7 @@ impl State {
     }
 
     fn is_idle(&self) -> bool {
-        self.recv_state.connections.is_empty()
+        self.recv_state.connections.is_empty() && self.pending_accepts == 0
     }
 }
 
@@ -774,6 +814,7 @@ impl EndpointRef {
                 runtime,
                 stats: EndpointStats::default(),
                 default_client_config: None,
+                pending_accepts: 0,
             }),
         }))
     }
