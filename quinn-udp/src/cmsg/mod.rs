@@ -158,3 +158,44 @@ pub(crate) trait CMsgHdr {
 
 #[cfg(unix)]
 pub(crate) const LEN: usize = 96;
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::mem;
+
+    use super::*;
+
+    /// Encode a few control messages and decode them again through the same buffer
+    ///
+    /// This exercises the pointer handling in `Encoder`, `Iter` and `decode` without needing a
+    /// socket, so it can be run under Miri to check for aliasing violations.
+    #[test]
+    fn roundtrip() {
+        let mut buf = Aligned([0u8; LEN]);
+        let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
+        hdr.msg_control = buf.0.as_mut_ptr() as _;
+        hdr.msg_controllen = LEN as _;
+
+        let mut encoder = unsafe { Encoder::new(&mut hdr) };
+        encoder.push(1, 2, 0x1234_5678u32);
+        encoder.push(3, 4, [0xabu8; 5]);
+        encoder.push(5, 6, 0x0102u16);
+        encoder.finish();
+        assert!(hdr.msg_controllen > 0);
+
+        let mut iter = unsafe { Iter::new(&hdr) };
+        let cmsg = iter.next().unwrap();
+        assert_eq!((cmsg.cmsg_level, cmsg.cmsg_type), (1, 2));
+        assert_eq!(unsafe { decode::<u32, libc::cmsghdr>(cmsg) }, 0x1234_5678);
+
+        let cmsg = iter.next().unwrap();
+        assert_eq!((cmsg.cmsg_level, cmsg.cmsg_type), (3, 4));
+        assert_eq!(unsafe { decode::<[u8; 5], libc::cmsghdr>(cmsg) }, [0xab; 5]);
+
+        let cmsg = iter.next().unwrap();
+        assert_eq!((cmsg.cmsg_level, cmsg.cmsg_type), (5, 6));
+        assert_eq!(unsafe { decode::<u16, libc::cmsghdr>(cmsg) }, 0x0102);
+
+        assert!(iter.next().is_none());
+    }
+}
