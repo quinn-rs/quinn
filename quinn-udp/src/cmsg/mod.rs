@@ -55,7 +55,7 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
         let cmsg = self.cmsg.take().expect("no control buffer space remaining");
         cmsg.set(level, ty, M::ControlMessage::cmsg_len(size_of_val(&value)));
         unsafe {
-            ptr::write(cmsg.cmsg_data() as *const T as *mut T, value);
+            ptr::write(M::ControlMessage::cmsg_data(cmsg).cast::<T>(), value);
         }
         self.len += space;
         self.cmsg = unsafe { self.hdr.cmsg_nxt_hdr(cmsg).as_mut() };
@@ -78,12 +78,12 @@ impl<M: MsgHdr> Drop for Encoder<'_, M> {
 /// # Safety
 ///
 /// `cmsg` must refer to a native cmsg containing a payload of type `T`
-pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &impl CMsgHdr) -> T {
+pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &C) -> T {
     debug_assert_eq!(cmsg.len(), C::cmsg_len(size_of::<T>()));
     // The payload is only aligned for `C`, which on musl is less strict than payloads such as
     // `libc::timespec`, so it cannot be read through an aligned `ptr::read`.
     // SAFETY: caller guarantees that `cmsg_data()` points to a readable, initialized value of type `T`
-    unsafe { ptr::read_unaligned(cmsg.cmsg_data() as *const T) }
+    unsafe { ptr::read_unaligned(C::cmsg_data(cmsg).cast::<T>()) }
 }
 
 pub(crate) struct Iter<'a, M: MsgHdr> {
@@ -131,9 +131,20 @@ impl<'a, M: MsgHdr> Iterator for Iter<'a, M> {
 pub(crate) trait MsgHdr {
     type ControlMessage: CMsgHdr;
 
+    /// Returns a pointer to the first control message header, or null if there is no room for one
+    ///
+    /// The returned pointer is a copy of the control buffer pointer stored in this message
+    /// header, so it has provenance over the whole control buffer rather than being derived from
+    /// `&self`.
     fn cmsg_first_hdr(&self) -> *mut Self::ControlMessage;
 
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage;
+    /// Returns a pointer to the control message following `cmsg`, or null if there is none
+    ///
+    /// # Safety
+    ///
+    /// `cmsg` must point to an initialized control message header inside this message's
+    /// control buffer.
+    unsafe fn cmsg_nxt_hdr(&self, cmsg: *const Self::ControlMessage) -> *mut Self::ControlMessage;
 
     /// Sets the number of control messages added to this `struct msghdr`.
     ///
@@ -149,7 +160,14 @@ pub(crate) trait CMsgHdr {
 
     fn cmsg_space(length: usize) -> usize;
 
-    fn cmsg_data(&self) -> *mut c_uchar;
+    /// Returns a pointer to the payload following the header `this` points to
+    ///
+    /// # Safety
+    ///
+    /// `this` must point to a control message header inside a control buffer. The returned
+    /// pointer inherits the provenance of `this`, so `this` must be derived from a pointer to
+    /// the whole control buffer, not from a reference to the header.
+    unsafe fn cmsg_data(this: *const Self) -> *mut c_uchar;
 
     fn set(&mut self, level: c_int, ty: c_int, len: usize);
 

@@ -25,11 +25,12 @@ impl MsgHdr for WinSock::WSAMSG {
         }
     }
 
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
-        let next =
-            (cmsg as *const _ as usize + cmsghdr_align(cmsg.cmsg_len)) as *mut WinSock::CMSGHDR;
-        let max = self.Control.buf as usize + self.Control.len as usize;
-        if unsafe { next.offset(1) } as usize > max {
+    unsafe fn cmsg_nxt_hdr(&self, cmsg: *const Self::ControlMessage) -> *mut Self::ControlMessage {
+        // SAFETY: caller guarantees `cmsg` points to an initialized header
+        let len = unsafe { (*cmsg).cmsg_len };
+        let next = cmsg.wrapping_byte_add(cmsghdr_align(len)).cast_mut();
+        let max = self.Control.buf.wrapping_add(self.Control.len as usize);
+        if next.wrapping_add(1).addr() > max.addr() {
             ptr::null_mut()
         } else {
             next
@@ -57,8 +58,10 @@ impl CMsgHdr for WinSock::CMSGHDR {
         cmsgdata_align(size_of::<Self>() + cmsghdr_align(length))
     }
 
-    fn cmsg_data(&self) -> *mut c_uchar {
-        (self as *const _ as usize + cmsgdata_align(size_of::<Self>())) as *mut c_uchar
+    unsafe fn cmsg_data(this: *const Self) -> *mut c_uchar {
+        this.wrapping_byte_add(cmsgdata_align(size_of::<Self>()))
+            .cast::<c_uchar>()
+            .cast_mut()
     }
 
     fn set(&mut self, level: c_int, ty: c_int, len: usize) {
