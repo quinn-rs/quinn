@@ -1,6 +1,6 @@
 use std::{
     ffi::{c_int, c_uchar},
-    ptr,
+    ptr::{self, NonNull},
 };
 
 #[cfg(unix)]
@@ -20,7 +20,7 @@ pub(crate) use imp::Aligned;
 /// explicitly or by dropping the `Encoder`.
 pub(crate) struct Encoder<'a, M: MsgHdr> {
     hdr: &'a mut M,
-    cmsg: Option<&'a mut M::ControlMessage>,
+    cmsg: Option<NonNull<M::ControlMessage>>,
     len: usize,
 }
 
@@ -31,8 +31,10 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
     /// - The `Encoder` must be dropped before `hdr` is passed to a system call, and must not be leaked.
     pub(crate) unsafe fn new(hdr: &'a mut M) -> Self {
         Self {
-            // SAFETY: pointer is convertible to a reference (aligned, non-null, a valid value)
-            cmsg: unsafe { hdr.cmsg_first_hdr().as_mut() },
+            // `hdr` is a reference to the message header, not to a control message header, and
+            // `cmsg_first_hdr` yields the control buffer pointer it stores, so the resulting
+            // pointer has provenance over the whole control buffer.
+            cmsg: NonNull::new(hdr.cmsg_first_hdr()),
             hdr,
             len: 0,
         }
@@ -42,9 +44,7 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
     ///
     /// # Panics
     /// - If insufficient buffer space remains.
-    /// - If `T` has stricter alignment requirements than `M::ControlMessage`
     pub(crate) fn push<T: Copy>(&mut self, level: c_int, ty: c_int, value: T) {
-        assert!(align_of::<T>() <= align_of::<M::ControlMessage>());
         let space = M::ControlMessage::cmsg_space(size_of_val(&value));
         assert!(
             self.hdr.control_len() >= self.len + space,
@@ -52,13 +52,21 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
             self.len + space,
             self.hdr.control_len()
         );
-        let cmsg = self.cmsg.take().expect("no control buffer space remaining");
-        cmsg.set(level, ty, M::ControlMessage::cmsg_len(size_of_val(&value)));
+        let cmsg = self
+            .cmsg
+            .take()
+            .expect("no control buffer space remaining")
+            .as_ptr();
+        // SAFETY: `cmsg` points into the control buffer, which the caller of `new` guaranteed to be
+        // writable, and the assertion above ensures that both the header and the payload fit.
         unsafe {
-            ptr::write(M::ControlMessage::cmsg_data(cmsg).cast::<T>(), value);
+            (*cmsg).set(level, ty, M::ControlMessage::cmsg_len(size_of_val(&value)));
+            // The payload is only guaranteed to be aligned for `M::ControlMessage`, so write it
+            // without relying on the alignment of `T`, mirroring `CMsg::decode`.
+            ptr::write_unaligned(M::ControlMessage::cmsg_data(cmsg).cast::<T>(), value);
+            self.cmsg = NonNull::new(self.hdr.cmsg_nxt_hdr(cmsg));
         }
         self.len += space;
-        self.cmsg = unsafe { self.hdr.cmsg_nxt_hdr(cmsg).as_mut() };
     }
 
     /// Finishes appending control messages to the buffer
