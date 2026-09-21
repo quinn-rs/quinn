@@ -274,6 +274,35 @@ fn large_single_datagram_is_not_segmented() {
 }
 
 #[test]
+fn send_reports_platform_limited_prefix() {
+    let send = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let recv = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+
+    let state = UdpSocketState::new((&send).into()).unwrap();
+    let max_segments = state.max_gso_segments();
+    const SEGMENT_SIZE: usize = 128;
+    let contents = vec![0xAB; SEGMENT_SIZE * (max_segments + 1)];
+    let transmit = Transmit {
+        destination: recv.local_addr().unwrap(),
+        ecn: None,
+        contents: &contents,
+        segment_size: Some(SEGMENT_SIZE),
+        src_ip: None,
+    };
+
+    let sent = state.try_send((&send).into(), &transmit).unwrap();
+    assert_eq!(sent.get(), state.max_gso_segments());
+    assert!(sent.get() <= max_segments);
+
+    let mut buf = [0; SEGMENT_SIZE];
+    for _ in 0..sent.get() {
+        let received = recv.recv(&mut buf).unwrap();
+        assert_eq!(received, SEGMENT_SIZE);
+        assert_eq!(buf, [0xAB; SEGMENT_SIZE]);
+    }
+}
+
+#[test]
 fn socket_buffers() {
     const BUFFER_SIZE: usize = 123456;
     const FACTOR: usize = if cfg!(any(target_os = "linux", target_os = "android")) {
@@ -354,12 +383,13 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit<'_>) {
     UdpSockRef::from(send).set_nonblocking(false).unwrap();
     UdpSockRef::from(recv).set_nonblocking(false).unwrap();
 
-    send_state.try_send(send.into(), &transmit).unwrap();
+    let sent = send_state.try_send(send.into(), &transmit).unwrap();
 
     let mut buf = [0; u16::MAX as usize];
     let mut meta = RecvMeta::default();
     let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
-    let expected_datagrams = transmit.contents.len() / segment_size;
+    let expected_datagrams = transmit.datagram_count();
+    assert_eq!(sent.get(), expected_datagrams);
     let mut datagrams = 0;
     while datagrams < expected_datagrams {
         let n = recv_state
@@ -507,7 +537,7 @@ fn apple_fast_datapath() {
     let segments = send_state.max_gso_segments();
     let msg = vec![0xAB; SEGMENT_SIZE * segments];
 
-    send_state
+    let sent = send_state
         .try_send(
             (&send).into(),
             &Transmit {
@@ -519,6 +549,7 @@ fn apple_fast_datapath() {
             },
         )
         .unwrap();
+    assert_eq!(sent.get(), segments);
 
     // Receive all segments
     let mut buf = [0u8; u16::MAX as usize];
@@ -603,7 +634,7 @@ fn assert_min_sndbuf_enforced(state: &UdpSocketState, send: &Socket, dst: Socket
         src_ip: None,
     };
     match state.try_send(send.into(), &transmit) {
-        Ok(()) => {}
+        Ok(_) => {}
         Err(e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {}
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
             panic!("regressed: permanently stuck EWOULDBLOCK sending a large datagram")
@@ -679,7 +710,7 @@ fn recv_transport_error() {
 
     let dst = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, unused_port));
 
-    state
+    let sent = state
         .try_send(
             (&sock).into(),
             &Transmit {
@@ -691,6 +722,7 @@ fn recv_transport_error() {
             },
         )
         .unwrap();
+    assert_eq!(sent.get(), 1);
 
     let mut received = None;
     for _ in 0..100 {
@@ -743,7 +775,7 @@ fn recv_transport_error_ipv6() {
 
     let dst = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, unused_port, 0, 0));
 
-    state
+    let sent = state
         .try_send(
             (&sock).into(),
             &Transmit {
@@ -755,6 +787,7 @@ fn recv_transport_error_ipv6() {
             },
         )
         .unwrap();
+    assert_eq!(sent.get(), 1);
 
     let mut received = None;
 
@@ -803,7 +836,7 @@ fn draining_error_queue_before_send_prevents_absorption() {
 
     // Enqueue an ICMP port-unreachable error
     let dst = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, unused_port));
-    state
+    let sent = state
         .try_send(
             (&sock).into(),
             &Transmit {
@@ -815,6 +848,7 @@ fn draining_error_queue_before_send_prevents_absorption() {
             },
         )
         .unwrap();
+    assert_eq!(sent.get(), 1);
 
     std::thread::sleep(Duration::from_millis(20));
 
@@ -834,7 +868,7 @@ fn draining_error_queue_before_send_prevents_absorption() {
     let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     receiver.set_nonblocking(true).unwrap();
 
-    state
+    let sent = state
         .try_send(
             (&sock).into(),
             &Transmit {
@@ -846,6 +880,7 @@ fn draining_error_queue_before_send_prevents_absorption() {
             },
         )
         .expect("send failed after draining the error queue");
+    assert_eq!(sent.get(), 1);
 
     std::thread::sleep(Duration::from_millis(20));
 

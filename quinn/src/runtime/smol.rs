@@ -60,10 +60,8 @@ impl UdpSenderHelperSocket for UdpSocket {
         self.inner.max_gso_segments()
     }
 
-    fn try_send(&self, transmit: &udp::Transmit<'_>) -> io::Result<()> {
-        self.inner.try_send((&self.io).into(), transmit)?;
-
-        Ok(())
+    fn try_send(&self, transmit: &udp::Transmit<'_>) -> io::Result<udp::SendCount> {
+        self.inner.try_send((&self.io).into(), transmit)
     }
 }
 
