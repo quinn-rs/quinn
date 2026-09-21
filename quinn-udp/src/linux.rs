@@ -66,7 +66,7 @@ impl LinuxError {
         let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
 
         for cmsg in cmsg_iter {
-            if let Some(raw) = Self::decode(&cmsg) {
+            if let Some(raw) = Self::decode(cmsg) {
                 return Ok(Some(raw));
             }
         }
@@ -75,7 +75,7 @@ impl LinuxError {
     }
 
     /// Attempts to decode a Linux `sock_extended_err` from a MSG_ERRQUEUE control message
-    pub(crate) fn decode(cmsg: &libc::cmsghdr) -> Option<Self> {
+    pub(crate) fn decode(cmsg: cmsg::CMsg<'_, libc::cmsghdr>) -> Option<Self> {
         if cmsg.cmsg_level != libc::IPPROTO_IP && cmsg.cmsg_level != libc::IPPROTO_IPV6 {
             return None;
         }
@@ -92,7 +92,7 @@ impl LinuxError {
             return None;
         }
 
-        let ee_ptr = unsafe { libc::CMSG_DATA(cmsg) as *const libc::sock_extended_err };
+        let ee_ptr = cmsg.data() as *const libc::sock_extended_err;
         let (ee, offender_ptr, mut storage) = unsafe {
             (
                 ptr::read_unaligned(ee_ptr),
@@ -355,24 +355,29 @@ mod tests {
 
         let payload_len = size_of::<libc::sock_extended_err>() + size_of::<libc::sockaddr_in>();
         let cmsg_len = unsafe { libc::CMSG_LEN(payload_len as _) as usize };
-        let mut buffer = vec![0u8; cmsg_len];
+        let mut buffer = cmsg::Aligned([0u8; LinuxError::ERR_CMSG_LEN]);
+        let control = buffer.0.as_mut_ptr();
+        let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+        hdr.msg_control = control as _;
+        hdr.msg_controllen = cmsg_len as _;
 
-        let decoded = unsafe {
-            let cmsg = buffer.as_mut_ptr() as *mut libc::cmsghdr;
-
+        unsafe {
+            let cmsg = control as *mut libc::cmsghdr;
             (*cmsg).cmsg_len = cmsg_len as _;
             (*cmsg).cmsg_level = libc::IPPROTO_IP;
             (*cmsg).cmsg_type = libc::IP_RECVERR;
 
             let data = libc::CMSG_DATA(cmsg);
-            ptr::write(data as *mut libc::sock_extended_err, mock_ee);
+            ptr::write_unaligned(data as *mut libc::sock_extended_err, mock_ee);
 
             let offender_ptr = data.add(size_of::<libc::sock_extended_err>());
-            ptr::write(offender_ptr as *mut libc::sockaddr_in, mock_addr);
-
-            LinuxError::decode(&*cmsg)
+            ptr::write_unaligned(offender_ptr as *mut libc::sockaddr_in, mock_addr);
         }
-        .expect("decode failed");
+
+        let cmsg = unsafe { cmsg::Iter::new(&hdr) }
+            .next()
+            .expect("no control message");
+        let decoded = LinuxError::decode(cmsg).expect("decode failed");
 
         assert_eq!(decoded.ee.ee_errno, libc::EMSGSIZE as u32);
         assert_eq!(decoded.ee.ee_info, 1420);
