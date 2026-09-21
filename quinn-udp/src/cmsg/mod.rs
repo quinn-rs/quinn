@@ -1,5 +1,7 @@
 use std::{
     ffi::{c_int, c_uchar},
+    marker::PhantomData,
+    ops::Deref,
     ptr::{self, NonNull},
 };
 
@@ -83,20 +85,9 @@ impl<M: MsgHdr> Drop for Encoder<'_, M> {
     }
 }
 
-/// # Safety
-///
-/// `cmsg` must refer to a native cmsg containing a payload of type `T`
-pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &C) -> T {
-    debug_assert_eq!(cmsg.len(), C::cmsg_len(size_of::<T>()));
-    // The payload is only aligned for `C`, which on musl is less strict than payloads such as
-    // `libc::timespec`, so it cannot be read through an aligned `ptr::read`.
-    // SAFETY: caller guarantees that `cmsg_data()` points to a readable, initialized value of type `T`
-    unsafe { ptr::read_unaligned(C::cmsg_data(cmsg).cast::<T>()) }
-}
-
 pub(crate) struct Iter<'a, M: MsgHdr> {
     hdr: &'a M,
-    cmsg: Option<&'a M::ControlMessage>,
+    cmsg: Option<NonNull<M::ControlMessage>>,
 }
 
 impl<'a, M: MsgHdr> Iter<'a, M> {
@@ -108,18 +99,25 @@ impl<'a, M: MsgHdr> Iter<'a, M> {
     pub(crate) unsafe fn new(hdr: &'a M) -> Self {
         Self {
             hdr,
-            // SAFETY: pointer is convertible to a reference (aligned, non-null, a valid value)
-            cmsg: unsafe { hdr.cmsg_first_hdr().as_ref() },
+            // `hdr` is a reference to the message header, not to a control message header, and
+            // `cmsg_first_hdr` yields the control buffer pointer it stores, so the resulting
+            // pointer has provenance over the whole control buffer.
+            cmsg: NonNull::new(hdr.cmsg_first_hdr()),
         }
     }
 }
 
 impl<'a, M: MsgHdr> Iterator for Iter<'a, M> {
-    type Item = &'a M::ControlMessage;
+    type Item = CMsg<'a, M::ControlMessage>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let current = self.cmsg.take()?;
-        self.cmsg = unsafe { self.hdr.cmsg_nxt_hdr(current).as_ref() };
+        // SAFETY: `new` guarantees that the buffer contains valid, correctly linked cmsgs
+        self.cmsg = NonNull::new(unsafe { self.hdr.cmsg_nxt_hdr(current.as_ptr()) });
+        let current = CMsg {
+            ptr: current,
+            _lifetime: PhantomData,
+        };
 
         #[cfg(apple_fast)]
         {
@@ -132,6 +130,50 @@ impl<'a, M: MsgHdr> Iterator for Iter<'a, M> {
         }
 
         Some(current)
+    }
+}
+
+/// A native control message, consisting of a header and the payload trailing it
+///
+/// Wraps a raw pointer with provenance over the whole control buffer rather than a reference to
+/// the header, since a reference would only be valid for the header itself and not for the
+/// payload.
+#[derive(Clone, Copy)]
+pub(crate) struct CMsg<'a, C: CMsgHdr> {
+    ptr: NonNull<C>,
+    _lifetime: PhantomData<&'a C>,
+}
+
+impl<C: CMsgHdr> CMsg<'_, C> {
+    /// Reads the payload of this control message
+    ///
+    /// # Safety
+    ///
+    /// The control message must contain a payload of type `T`
+    pub(crate) unsafe fn decode<T: Copy>(&self) -> T {
+        debug_assert_eq!(self.len(), C::cmsg_len(size_of::<T>()));
+        // The payload is only aligned for `C`, which on musl is less strict than payloads such as
+        // `libc::timespec`, so it cannot be read through an aligned `ptr::read`.
+        // SAFETY: caller guarantees that the payload is a readable, initialized value of type `T`
+        unsafe { ptr::read_unaligned(self.data().cast::<T>()) }
+    }
+
+    /// Returns a pointer to the payload of this control message
+    ///
+    /// The payload is readable for `self.len()` bytes minus the header, for the lifetime of
+    /// `self`.
+    pub(crate) fn data(&self) -> *const c_uchar {
+        // SAFETY: `ptr` points to a header inside the control buffer, per `Iter::new`
+        unsafe { C::cmsg_data(self.ptr.as_ptr()) }
+    }
+}
+
+impl<C: CMsgHdr> Deref for CMsg<'_, C> {
+    type Target = C;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: `Iter::new` guarantees that the header is initialized and readable for `'a`
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -212,15 +254,15 @@ mod tests {
         let mut iter = unsafe { Iter::new(&hdr) };
         let cmsg = iter.next().unwrap();
         assert_eq!((cmsg.cmsg_level, cmsg.cmsg_type), (1, 2));
-        assert_eq!(unsafe { decode::<u32, libc::cmsghdr>(cmsg) }, 0x1234_5678);
+        assert_eq!(unsafe { cmsg.decode::<u32>() }, 0x1234_5678);
 
         let cmsg = iter.next().unwrap();
         assert_eq!((cmsg.cmsg_level, cmsg.cmsg_type), (3, 4));
-        assert_eq!(unsafe { decode::<[u8; 5], libc::cmsghdr>(cmsg) }, [0xab; 5]);
+        assert_eq!(unsafe { cmsg.decode::<[u8; 5]>() }, [0xab; 5]);
 
         let cmsg = iter.next().unwrap();
         assert_eq!((cmsg.cmsg_level, cmsg.cmsg_type), (5, 6));
-        assert_eq!(unsafe { decode::<u16, libc::cmsghdr>(cmsg) }, 0x0102);
+        assert_eq!(unsafe { cmsg.decode::<u16>() }, 0x0102);
 
         assert!(iter.next().is_none());
     }

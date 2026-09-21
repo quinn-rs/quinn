@@ -66,7 +66,7 @@ impl LinuxError {
         let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
 
         for cmsg in cmsg_iter {
-            if let Some(raw) = Self::decode(cmsg) {
+            if let Some(raw) = Self::decode(&cmsg) {
                 return Ok(Some(raw));
             }
         }
