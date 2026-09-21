@@ -853,10 +853,10 @@ struct ControlMetadata {
 
 impl ControlMetadata {
     /// Decodes a control message and updates the metadata state
-    fn decode(&mut self, cmsg: &libc::cmsghdr) {
+    fn decode(&mut self, cmsg: cmsg::CMsg<'_, libc::cmsghdr>) {
         match (cmsg.cmsg_level, cmsg.cmsg_type) {
             (libc::IPPROTO_IP, libc::IP_TOS) => unsafe {
-                self.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
+                self.ecn_bits = cmsg.decode::<u8>();
             },
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
             #[cfg(not(any(
@@ -867,7 +867,7 @@ impl ControlMetadata {
                 solarish
             )))]
             (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
-                self.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
+                self.ecn_bits = cmsg.decode::<u8>();
             },
             #[cfg(not(target_os = "redox",))]
             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
@@ -877,14 +877,14 @@ impl ControlMetadata {
                 if cfg!(apple)
                     && cmsg.cmsg_len as usize == libc::CMSG_LEN(size_of::<u8>() as _) as usize
                 {
-                    self.ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
+                    self.ecn_bits = cmsg.decode::<u8>();
                 } else {
-                    self.ecn_bits = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as u8;
+                    self.ecn_bits = cmsg.decode::<libc::c_int>() as u8;
                 }
             },
             #[cfg(any(target_os = "linux", target_os = "android"))]
             (libc::IPPROTO_IP, libc::IP_PKTINFO) => {
-                let pktinfo = unsafe { cmsg::decode::<libc::in_pktinfo, libc::cmsghdr>(cmsg) };
+                let pktinfo = unsafe { cmsg.decode::<libc::in_pktinfo>() };
                 self.dst_ip = Some(IpAddr::V4(Ipv4Addr::from(
                     pktinfo.ipi_addr.s_addr.to_ne_bytes(),
                 )));
@@ -892,12 +892,12 @@ impl ControlMetadata {
             }
             #[cfg(any(bsd, apple))]
             (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
-                let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
+                let in_addr = unsafe { cmsg.decode::<libc::in_addr>() };
                 self.dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
             }
             #[cfg(not(any(target_os = "redox", target_os = "hurd")))]
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
-                let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
+                let pktinfo = unsafe { cmsg.decode::<libc::in6_pktinfo>() };
                 self.dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
                 #[cfg_attr(not(target_os = "android"), expect(clippy::unnecessary_cast))]
                 {
@@ -906,11 +906,11 @@ impl ControlMetadata {
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
-                self.stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
+                self.stride = cmsg.decode::<libc::c_int>() as usize;
             },
             #[cfg(any(target_os = "linux", target_os = "android"))]
             (libc::SOL_SOCKET, libc::SCM_TIMESTAMPNS) => {
-                let ts = unsafe { cmsg::decode::<libc::timespec, libc::cmsghdr>(cmsg) };
+                let ts = unsafe { cmsg.decode::<libc::timespec>() };
                 let secs = u64::try_from(ts.tv_sec).unwrap_or(0);
                 let nsecs = u32::try_from(ts.tv_nsec).unwrap_or(0);
                 self.timestamp = Some(Duration::new(secs, nsecs));
