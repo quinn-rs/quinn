@@ -293,3 +293,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
+
+  miri:
+    name: test cmsg under Miri
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            flags: -Zmiri-strict-provenance
+          - os: macos-latest
+            flags: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2
+      # Only socket-free tests can run under Miri; these exercise the pointer handling in the
+      # cmsg helpers, which the socket-based tests never reach in an interpreter.
+      - run: cargo miri test --locked -p quinn-udp --lib -- cmsg::tests linux::tests
+        env:
+          MIRIFLAGS: ${{ matrix.flags }}
+      - run: cargo miri test --locked -p quinn-udp --lib -- cmsg::tests linux::tests
+        env:
+          MIRIFLAGS: ${{ matrix.flags }} -Zmiri-tree-borrows
