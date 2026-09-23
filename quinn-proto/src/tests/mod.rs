@@ -2484,13 +2484,26 @@ fn handshake_1rtt_handling() {
     pair.client_send(client_ch, s).write(MSG).unwrap();
     pair.client_send(client_ch, s).finish().unwrap();
     pair.client.drive(pair.time, pair.server.addr);
+    let early = pair.client.outbound.len();
 
-    // Add the handshake flight back on.
+    // Add the handshake flight back on, and deliver only the 1-RTT data first.
     pair.client.finish_delay();
+    pair.drive_client();
+    let rest = pair.server.inbound.split_off(early);
+    let received = pair.server_conn_mut(server_ch).stats().udp_rx.datagrams;
+    pair.drive_server();
+    // The 1-RTT data arrived ahead of the client's Finished, so the server has not processed it.
+    let server = pair.server_conn_mut(server_ch);
+    assert_eq!(server.stats().udp_rx.datagrams, received + early as u64);
+    assert!(server.is_handshaking());
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), None);
 
+    pair.server.inbound.extend(rest);
     pair.drive();
 
-    assert!(pair.client_conn_mut(client_ch).stats().path.lost_packets != 0);
+    // The server buffered the early 1-RTT packet and processed it once the handshake completed,
+    // so nothing had to be retransmitted.
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
     let mut recv = pair.server_recv(server_ch, s);
     let mut chunks = recv.read(false).unwrap();
     assert_matches!(
