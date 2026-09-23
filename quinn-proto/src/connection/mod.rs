@@ -201,6 +201,9 @@ pub struct Connection {
     timers: TimerTable,
     /// Number of packets received which could not be authenticated
     authentication_failures: u64,
+    /// Authenticated 1-RTT packets that arrived before the handshake completed, to be processed
+    /// once it has
+    early_1rtt: Vec<EarlyPacket>,
     /// Why the connection was lost, if it has been
     error: Option<ConnectionError>,
     /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
@@ -328,6 +331,7 @@ impl Connection {
             },
             timers: TimerTable::default(),
             authentication_failures: 0,
+            early_1rtt: Vec::new(),
             error: None,
             #[cfg(test)]
             packet_number_filter: match config.deterministic_packet_numbers {
@@ -2425,8 +2429,24 @@ impl Connection {
                     debug!("discarding possible duplicate packet");
                     return;
                 } else if self.state.is_handshake() && packet.header.is_short() {
-                    // TODO: SHOULD buffer these to improve reordering tolerance.
-                    trace!("dropping short packet during handshake");
+                    // A server has 1-RTT keys before the handshake completes, but must not
+                    // process 1-RTT packets until it does (RFC 9001 section 5.7). A client's
+                    // first 1-RTT packets, such as a request sent right after its Finished, can
+                    // overtake the Finished, so keep a few instead of making the client wait for
+                    // a retransmission.
+                    if let Some(number) = number
+                        && self.early_1rtt.len() < MAX_EARLY_1RTT_PACKETS
+                    {
+                        trace!("buffering short packet during handshake");
+                        self.early_1rtt.push(EarlyPacket {
+                            remote,
+                            ecn,
+                            number,
+                            packet,
+                        });
+                    } else {
+                        trace!("dropping short packet during handshake");
+                    }
                     return;
                 } else {
                     if let Header::Initial(InitialHeader { token, .. }) = &packet.header
@@ -2447,6 +2467,28 @@ impl Connection {
         };
 
         self.finish_packet(now, remote, result, was_closed, was_drained);
+
+        if !self.state.is_handshake() {
+            // The handshake is over. Process the 1-RTT packets that arrived during it, in order.
+            for early in mem::take(&mut self.early_1rtt) {
+                if self.state.is_closed() {
+                    break;
+                }
+                let _guard =
+                    trace_span!("recv", space = ?SpaceId::Data, pn = early.number).entered();
+                trace!("processing short packet buffered during handshake");
+                let was_closed = self.state.is_closed();
+                let was_drained = self.state.is_drained();
+                let result = self.process_authenticated_packet(
+                    now,
+                    early.remote,
+                    early.ecn,
+                    Some(early.number),
+                    early.packet,
+                );
+                self.finish_packet(now, early.remote, result, was_closed, was_drained);
+            }
+        }
     }
 
     /// Process a packet that has been decrypted and authenticated
@@ -4190,6 +4232,17 @@ fn get_max_ack_delay(params: &TransportParameters) -> Duration {
 
 // Prevents overflow and improves behavior in extreme circumstances
 const MAX_BACKOFF_EXPONENT: u32 = 16;
+
+/// Maximum number of 1-RTT packets buffered while the handshake completes
+const MAX_EARLY_1RTT_PACKETS: usize = 16;
+
+/// An authenticated 1-RTT packet received before the handshake completed
+struct EarlyPacket {
+    remote: SocketAddr,
+    ecn: Option<EcnCodepoint>,
+    number: u64,
+    packet: Packet,
+}
 
 /// Minimal remaining size to allow packet coalescing, excluding cryptographic tag
 ///
