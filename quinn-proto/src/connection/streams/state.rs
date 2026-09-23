@@ -20,6 +20,17 @@ use crate::{
     transport_parameters::TransportParameters,
 };
 
+/// Whether opening a locally-initiated stream is blocked by the peer's stream limit
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StreamsBlocked {
+    /// No open has been refused since the limit last rose
+    No,
+    /// An open was refused, and a STREAMS_BLOCKED frame is yet to be queued
+    Unreported,
+    /// An open was refused, and a STREAMS_BLOCKED frame has been queued
+    Reported,
+}
+
 /// Wrapper around `Recv` that facilitates reusing `Recv` instances
 #[derive(Debug)]
 pub(super) enum StreamRecv {
@@ -138,7 +149,7 @@ pub struct StreamsState {
     /// The shrink to be applied to local_max_data when receive_window is shrunk
     receive_window_shrink_debt: u64,
     /// Whether the locally-initiated stream limit has been hit, per direction
-    pub(super) streams_blocked: [bool; 2],
+    pub(super) streams_blocked: [StreamsBlocked; 2],
     /// Value of `max_data` for which a `DATA_BLOCKED` frame was most recently queued
     ///
     /// A new frame is only queued once the peer has raised the limit.
@@ -187,7 +198,7 @@ impl StreamsState {
             initial_max_stream_data_bidi_local: 0u32.into(),
             initial_max_stream_data_bidi_remote: 0u32.into(),
             receive_window_shrink_debt: 0,
-            streams_blocked: [false, false],
+            streams_blocked: [StreamsBlocked::No; 2],
             data_blocked_limit: None,
         };
 
@@ -206,6 +217,15 @@ impl StreamsState {
         self.initial_max_stream_data_bidi_remote = params.initial_max_stream_data_bidi_remote;
         self.max[Dir::Bi as usize] = params.initial_max_streams_bidi.into();
         self.max[Dir::Uni as usize] = params.initial_max_streams_uni.into();
+        // A server may try to open a stream, e.g. to send 0.5-RTT data, before the client's
+        // transport parameters arrive. Wake it as a MAX_STREAMS frame would.
+        for dir in Dir::iter() {
+            let blocked = &mut self.streams_blocked[dir as usize];
+            if *blocked != StreamsBlocked::No && self.next[dir as usize] < self.max[dir as usize] {
+                *blocked = StreamsBlocked::No;
+                self.events.push_back(StreamEvent::Available { dir });
+            }
+        }
         self.received_max_data(params.initial_max_data);
         for i in 0..self.max_remote[Dir::Bi as usize] {
             let id = StreamId::new(!self.side, Dir::Bi, i);
@@ -553,9 +573,9 @@ impl StreamsState {
 
         // STREAMS_BLOCKED
         for dir in Dir::iter() {
-            if self.streams_blocked[dir as usize] {
+            if self.streams_blocked[dir as usize] == StreamsBlocked::Unreported {
                 pending.streams_blocked[dir as usize] = true;
-                self.streams_blocked[dir as usize] = false;
+                self.streams_blocked[dir as usize] = StreamsBlocked::Reported;
             }
 
             if !pending.streams_blocked[dir as usize] || buf.len() + 9 >= max_size {
@@ -784,7 +804,7 @@ impl StreamsState {
         let current = &mut self.max[dir as usize];
         if count > *current {
             *current = count;
-            self.streams_blocked[dir as usize] = false;
+            self.streams_blocked[dir as usize] = StreamsBlocked::No;
             self.events.push_back(StreamEvent::Available { dir });
         }
 

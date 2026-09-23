@@ -4645,3 +4645,59 @@ fn application_close_in_initial_is_rejected() {
         })
     );
 }
+
+/// Pad a client's ALPN list so that its ClientHello spans two datagrams, as post-quantum key
+/// shares make browsers' ClientHellos do. The server must accept the final protocol, `"h3"`.
+fn client_config_with_split_client_hello() -> ClientConfig {
+    let alpn = (0..60)
+        .map(|i| format!("padding-protocol-{i:03}").into_bytes())
+        .chain([b"h3".to_vec()])
+        .collect();
+    ClientConfig::new(Arc::new(client_crypto_with_alpn(alpn)))
+}
+
+#[test]
+fn stream_budget_signalled_when_transport_parameters_arrive() {
+    let _guard = subscribe();
+    let server_config =
+        ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec!["h3".into()])));
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    let _client_ch = pair.begin_connect(client_config_with_split_client_hello());
+    // Pacing may hold back the second datagram; advance time until both have been sent.
+    for _ in 0..10 {
+        pair.drive_client();
+        if pair.server.inbound.len() >= 2 {
+            break;
+        }
+        if let Some(t) = pair.client.next_wakeup() {
+            pair.time = pair.time.max(t);
+        }
+    }
+    assert!(
+        pair.server.inbound.len() >= 2,
+        "ClientHello should span two datagrams"
+    );
+    // Deliver only the first half of the ClientHello.
+    let rest = pair.server.inbound.split_off(1);
+    pair.drive_server();
+    let server_ch = pair.server.assert_accept();
+    // The client's transport parameters are still unknown, so there is no stream budget yet. A
+    // server sending 0.5-RTT data (e.g. HTTP/3 SETTINGS) may already be waiting to open one.
+    assert_matches!(pair.server_streams(server_ch).open(Dir::Uni), None);
+
+    pair.server.inbound.extend(rest);
+    pair.drive_server();
+    let mut available = false;
+    while let Some(event) = pair.server_conn_mut(server_ch).poll() {
+        available |= matches!(
+            event,
+            Event::Stream(StreamEvent::Available { dir: Dir::Uni })
+        );
+    }
+    assert!(available, "the raised stream limit must be signalled");
+    assert!(pair.server_streams(server_ch).open(Dir::Uni).is_some());
+    // The refused open was never reported, and the limit has since risen, so no STREAMS_BLOCKED.
+    pair.drive();
+    let frames = pair.server_conn_mut(server_ch).stats().frame_tx;
+    assert_eq!(frames.streams_blocked_uni, 0);
+}
