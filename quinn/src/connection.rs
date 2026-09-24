@@ -179,6 +179,44 @@ impl Connecting {
             })
     }
 
+    /// Cryptographic identity of the peer
+    ///
+    /// Resolves when the peer's identity is first available during the handshake.
+    ///
+    /// Returns `Ok(None)` if the peer did not present an identity (e.g. for servers
+    /// without mutual TLS configured, or custom [`crypto::Session`](proto::crypto::Session)
+    /// implementations that do not use certificates).
+    ///
+    /// Returns `Err` if the connection failed before the identity became available.
+    ///
+    /// The dynamic type returned is determined by the configured
+    /// [`Session`](proto::crypto::Session). For the default `rustls` session, the return value
+    /// can be [`downcast`](Box::downcast) to a `Vec<rustls::pki_types::CertificateDer>`.
+    ///
+    /// Note: The returned `Box<dyn Any>` does not implement `Send`. If you need to hold the
+    /// result across an `.await` point, downcast it or extract the required information before
+    /// subsequent awaits.
+    ///
+    /// Will panic if called after `poll` has returned `Ready`.
+    ///
+    /// This operation is cancel-safe.
+    pub async fn peer_identity(&self) -> Result<Option<Box<dyn Any>>, ConnectionError> {
+        let conn = self.conn.as_ref().expect("used after yielding Ready");
+        loop {
+            let notified = {
+                let inner = conn.state.lock("peer_identity");
+                if inner.connected {
+                    return Ok(inner.inner.crypto_session().peer_identity());
+                }
+                if let Some(e) = inner.error.as_ref() {
+                    return Err(e.clone());
+                }
+                conn.shared.connected.notified()
+            };
+            notified.await;
+        }
+    }
+
     /// The local IP address which was used when the peer established
     /// the connection
     ///
