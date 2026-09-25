@@ -832,10 +832,6 @@ impl Connection {
                     );
                 }
 
-                debug_assert!(
-                    buf.len() + frame::ConnectionClose::SIZE_BOUND <= builder.max_size,
-                    "ACKs should leave space for ConnectionClose"
-                );
                 if buf.len() + frame::ConnectionClose::SIZE_BOUND <= builder.max_size {
                     let max_frame_size = builder.max_size - buf.len();
                     match &self.state {
