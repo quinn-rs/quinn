@@ -574,7 +574,11 @@ impl Connection {
                 ack_eliciting |= self.can_send_1rtt(frame_space_1rtt);
             }
 
-            pad_datagram_to_mtu |= space_id == SpaceId::Data && self.config.pad_to_mtu;
+            let pad_to_mtu = (space_id == SpaceId::Data && self.config.pad_to_mtu)
+                || (space_id == SpaceId::Initial
+                    && self.side.is_client()
+                    && self.config.pad_initial_to_mtu);
+            pad_datagram_to_mtu |= pad_to_mtu;
 
             // Can we append more data into the current buffer?
             // It is not safe to assume that `buf.len()` is the end of the data,
@@ -739,7 +743,16 @@ impl Connection {
                         // Clamp the datagram to at most the minimum MTU to ensure that loss probes
                         // can get through and enable recovery even if the path MTU has shrank
                         // unexpectedly.
-                        cmp::min(segment_size, usize::from(INITIAL_MTU))
+                        if space_id == SpaceId::Initial
+                            && self.side.is_client()
+                            && self.config.pad_initial_to_mtu
+                        {
+                            // An Initial retry must advertise the same receive budget even
+                            // when the first Initial was lost before reaching a MASQUE proxy.
+                            segment_size
+                        } else {
+                            cmp::min(segment_size, usize::from(INITIAL_MTU))
+                        }
                     }
                 };
                 buf_capacity += next_datagram_size_limit;
@@ -757,6 +770,7 @@ impl Connection {
                 num_datagrams += 1;
                 coalesce = true;
                 pad_datagram = false;
+                pad_datagram_to_mtu = pad_to_mtu;
                 datagram_start = buf.len();
 
                 debug_assert_eq!(

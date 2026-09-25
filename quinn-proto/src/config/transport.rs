@@ -40,6 +40,7 @@ pub struct TransportConfig {
     pub(crate) min_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) pad_to_mtu: bool,
+    pub(crate) pad_initial_to_mtu: bool,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
     pub(crate) max_outgoing_bytes_per_second: Option<u64>,
 
@@ -223,6 +224,16 @@ impl TransportConfig {
         self
     }
 
+    /// Pad client Initial datagrams to the path MTU. Disabled by default.
+    ///
+    /// Initial retries also use the path MTU; other loss probes keep their normal fallback.
+    /// Enable only when the path is known to support the configured initial MTU.
+    /// This does not pad application data.
+    pub fn pad_initial_to_mtu(&mut self, value: bool) -> &mut Self {
+        self.pad_initial_to_mtu = value;
+        self
+    }
+
     /// Pad UDP datagrams carrying application data to current maximum UDP payload size
     ///
     /// Disabled by default. UDP datagrams containing loss probes are exempt from padding.
@@ -394,6 +405,7 @@ impl Default for TransportConfig {
             min_mtu: INITIAL_MTU,
             mtu_discovery_config: Some(MtuDiscoveryConfig::default()),
             pad_to_mtu: false,
+            pad_initial_to_mtu: false,
             ack_frequency_config: None,
             max_outgoing_bytes_per_second: None,
 
@@ -432,6 +444,7 @@ impl fmt::Debug for TransportConfig {
             min_mtu,
             mtu_discovery_config,
             pad_to_mtu,
+            pad_initial_to_mtu,
             ack_frequency_config,
             max_outgoing_bytes_per_second,
             persistent_congestion_threshold,
@@ -462,6 +475,7 @@ impl fmt::Debug for TransportConfig {
             .field("min_mtu", min_mtu)
             .field("mtu_discovery_config", mtu_discovery_config)
             .field("pad_to_mtu", pad_to_mtu)
+            .field("pad_initial_to_mtu", pad_initial_to_mtu)
             .field("ack_frequency_config", ack_frequency_config)
             .field(
                 "max_outgoing_bytes_per_second",
