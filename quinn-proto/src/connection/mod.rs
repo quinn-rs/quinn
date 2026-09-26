@@ -15,7 +15,7 @@ use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
-    Dir, Duration, EndpointConfig, Frame, INITIAL_MTU, Instant, MAX_CID_SIZE, MAX_STREAM_COUNT,
+    Dir, Duration, EndpointConfig, Frame, Instant, MAX_CID_SIZE, MAX_STREAM_COUNT,
     MIN_INITIAL_SIZE, Side, StreamId, TIMER_GRANULARITY, TokenStore, Transmit, TransportError,
     TransportErrorCode, VarInt,
     cid_queue::CidQueue,
@@ -476,6 +476,8 @@ impl Connection {
         // packets, this can be earlier than the start of the current QUIC packet.
         let mut datagram_start = 0;
         let mut segment_size = usize::from(self.path.current_mtu());
+        // The peer's maximum UDP payload size can reduce the path MTU below our configured minimum.
+        let min_mtu = self.config.min_mtu.min(self.path.current_mtu());
 
         if let Some(challenge) = self.send_path_challenge(now, buf) {
             return Some(challenge);
@@ -488,13 +490,12 @@ impl Connection {
                 continue;
             }
 
-            let has_ack_eliciting_data = self.can_send_1rtt(
-                Ord::min(segment_size, usize::from(INITIAL_MTU)).saturating_sub(
+            let has_ack_eliciting_data =
+                self.can_send_1rtt(Ord::min(segment_size, usize::from(min_mtu)).saturating_sub(
                     self.predict_1rtt_overhead(Some(
                         self.packet_number_filter.peek(&self.spaces[SpaceId::Data]),
                     )),
-                ),
-            );
+                ));
             let request_immediate_ack = self.peer_supports_ack_frequency();
 
             self.spaces[space].maybe_queue_probe(
@@ -574,11 +575,7 @@ impl Connection {
                 ack_eliciting |= self.can_send_1rtt(frame_space_1rtt);
             }
 
-            let pad_to_mtu = (space_id == SpaceId::Data && self.config.pad_to_mtu)
-                || (space_id == SpaceId::Initial
-                    && self.side.is_client()
-                    && self.config.pad_initial_to_mtu);
-            pad_datagram_to_mtu |= pad_to_mtu;
+            pad_datagram_to_mtu |= space_id == SpaceId::Data && self.config.pad_to_mtu;
 
             // Can we append more data into the current buffer?
             // It is not safe to assume that `buf.len()` is the end of the data,
@@ -668,7 +665,7 @@ impl Connection {
                 // Finish current packet
                 if let Some(mut builder) = builder_storage.take() {
                     if pad_datagram {
-                        builder.pad_to(MIN_INITIAL_SIZE);
+                        builder.pad_to(min_mtu);
                     }
 
                     if num_datagrams > 1 || pad_datagram_to_mtu {
@@ -680,7 +677,7 @@ impl Connection {
                         // optimal value.
                         //
                         // Additionally, if this datagram is a loss probe and `segment_size` is
-                        // larger than `INITIAL_MTU`, then padding it to `segment_size` to continue
+                        // larger than `min_mtu`, then padding it to `segment_size` to continue
                         // the GSO batch would risk failure to recover from a reduction in path
                         // MTU. Loss probes are the only packets for which we might grow
                         // `buf_capacity` by less than `segment_size`.
@@ -724,7 +721,7 @@ impl Connection {
                         // end up trying to send an empty packet. We can't easily compute the right
                         // segment size before the original call to `space_can_send`, because at
                         // that time we haven't determined whether we're going to coalesce with the
-                        // first datagram or potentially pad it to `MIN_INITIAL_SIZE`.
+                        // first datagram or potentially pad it to `min_mtu`.
                         if space_id == SpaceId::Data {
                             let frame_space_1rtt =
                                 segment_size.saturating_sub(self.predict_1rtt_overhead(Some(pn)));
@@ -743,16 +740,7 @@ impl Connection {
                         // Clamp the datagram to at most the minimum MTU to ensure that loss probes
                         // can get through and enable recovery even if the path MTU has shrank
                         // unexpectedly.
-                        if space_id == SpaceId::Initial
-                            && self.side.is_client()
-                            && self.config.pad_initial_to_mtu
-                        {
-                            // An Initial retry must advertise the same receive budget even
-                            // when the first Initial was lost before reaching a MASQUE proxy.
-                            segment_size
-                        } else {
-                            cmp::min(segment_size, usize::from(INITIAL_MTU))
-                        }
+                        cmp::min(segment_size, usize::from(min_mtu))
                     }
                 };
                 buf_capacity += next_datagram_size_limit;
@@ -770,7 +758,6 @@ impl Connection {
                 num_datagrams += 1;
                 coalesce = true;
                 pad_datagram = false;
-                pad_datagram_to_mtu = pad_to_mtu;
                 datagram_start = buf.len();
 
                 debug_assert_eq!(
@@ -959,10 +946,10 @@ impl Connection {
         // Finish the last packet
         if let Some(mut builder) = builder_storage {
             if pad_datagram {
-                builder.pad_to(MIN_INITIAL_SIZE);
+                builder.pad_to(min_mtu);
             }
 
-            // If this datagram is a loss probe and `segment_size` is larger than `INITIAL_MTU`,
+            // If this datagram is a loss probe and `segment_size` is larger than `min_mtu`,
             // then padding it to `segment_size` would risk failure to recover from a reduction in
             // path MTU.
             // Loss probes are the only packets for which we might grow `buf_capacity`

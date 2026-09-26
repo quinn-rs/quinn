@@ -40,7 +40,6 @@ pub struct TransportConfig {
     pub(crate) min_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) pad_to_mtu: bool,
-    pub(crate) pad_initial_to_mtu: bool,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
     pub(crate) max_outgoing_bytes_per_second: Option<u64>,
 
@@ -203,11 +202,12 @@ impl TransportConfig {
     /// Must be at least 1200, which is the default, and lower than or equal to
     /// [`TransportConfig::initial_mtu`].
     ///
+    /// Client Initial datagrams and ack-eliciting server Initial datagrams are padded to at least
+    /// this size, subject to the peer's maximum UDP payload size.
+    ///
     /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
-    /// outside of either endpoint's control. Extreme care should be used when raising this value
-    /// outside of private networks where these factors are fully controlled. If the provided value
-    /// is higher than what the network path actually supports, the result will be unpredictable and
-    /// catastrophic packet loss, without a possibility of repair. Prefer
+    /// outside of either endpoint's control. If this value exceeds what the network path supports,
+    /// connections may fail to be established because Initial datagrams cannot be delivered. Prefer
     /// [`TransportConfig::initial_mtu`] together with
     /// [`TransportConfig::mtu_discovery_config`] to set a maximum UDP payload size that robustly
     /// adapts to the network.
@@ -221,16 +221,6 @@ impl TransportConfig {
     /// Enabled by default.
     pub fn mtu_discovery_config(&mut self, value: Option<MtuDiscoveryConfig>) -> &mut Self {
         self.mtu_discovery_config = value;
-        self
-    }
-
-    /// Pad client Initial datagrams to the path MTU. Disabled by default.
-    ///
-    /// Initial retries also use the path MTU; other loss probes keep their normal fallback.
-    /// Enable only when the path is known to support the configured initial MTU.
-    /// This does not pad application data.
-    pub fn pad_initial_to_mtu(&mut self, value: bool) -> &mut Self {
-        self.pad_initial_to_mtu = value;
         self
     }
 
@@ -405,7 +395,6 @@ impl Default for TransportConfig {
             min_mtu: INITIAL_MTU,
             mtu_discovery_config: Some(MtuDiscoveryConfig::default()),
             pad_to_mtu: false,
-            pad_initial_to_mtu: false,
             ack_frequency_config: None,
             max_outgoing_bytes_per_second: None,
 
@@ -444,7 +433,6 @@ impl fmt::Debug for TransportConfig {
             min_mtu,
             mtu_discovery_config,
             pad_to_mtu,
-            pad_initial_to_mtu,
             ack_frequency_config,
             max_outgoing_bytes_per_second,
             persistent_congestion_threshold,
@@ -475,7 +463,6 @@ impl fmt::Debug for TransportConfig {
             .field("min_mtu", min_mtu)
             .field("mtu_discovery_config", mtu_discovery_config)
             .field("pad_to_mtu", pad_to_mtu)
-            .field("pad_initial_to_mtu", pad_initial_to_mtu)
             .field("ack_frequency_config", ack_frequency_config)
             .field(
                 "max_outgoing_bytes_per_second",

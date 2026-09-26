@@ -4126,20 +4126,19 @@ fn gso_truncation() {
 }
 
 #[test]
-fn pad_initial_to_mtu() {
+fn pad_initial_to_min_mtu() {
     let _guard = subscribe();
-    const MTU: u16 = 1333;
-    for enabled in [false, true] {
+    for min_mtu in [INITIAL_MTU, 1280, 1333] {
         let mut transport = TransportConfig::default();
-        transport.initial_mtu(MTU).mtu_discovery_config(None);
-        if enabled {
-            transport.pad_initial_to_mtu(true);
-        }
+        transport
+            .initial_mtu(1452)
+            .min_mtu(min_mtu)
+            .mtu_discovery_config(None);
         let mut config = client_config();
         config.transport_config(Arc::new(transport));
         let mut pair = Pair::default();
         let client_ch = pair.begin_connect(config);
-        let expected_size = usize::from(if enabled { MTU } else { INITIAL_MTU });
+        let expected_size = usize::from(min_mtu);
 
         // Check the first Initial and two PTO retransmissions after dropping it.
         for attempt in 0..3 {
@@ -4162,14 +4161,11 @@ fn pad_initial_to_mtu() {
 }
 
 #[test]
-fn pad_initial_to_mtu_does_not_pad_application_data() {
+fn min_mtu_does_not_pad_application_data() {
     let _guard = subscribe();
     const MTU: u16 = 1333;
     let mut transport = TransportConfig::default();
-    transport
-        .initial_mtu(MTU)
-        .mtu_discovery_config(None)
-        .pad_initial_to_mtu(true);
+    transport.min_mtu(MTU).mtu_discovery_config(None);
     let mut config = client_config();
     config.transport_config(Arc::new(transport));
     let mut pair = Pair::default();
@@ -4188,7 +4184,7 @@ fn pad_initial_to_mtu_does_not_pad_application_data() {
 }
 
 #[test]
-fn pad_initial_to_mtu_does_not_pad_zero_rtt_batch_tail() {
+fn min_mtu_does_not_pad_zero_rtt_batch_tail() {
     let _guard = subscribe();
     const MTU: u16 = 1333;
     for pad_to_mtu in [false, true] {
@@ -4196,9 +4192,8 @@ fn pad_initial_to_mtu_does_not_pad_zero_rtt_batch_tail() {
         transport
             // Allow the Initial and 0-RTT data to be sent in one GSO batch without pacing delays.
             .initial_rtt(Duration::from_millis(10))
-            .initial_mtu(MTU)
+            .min_mtu(MTU)
             .mtu_discovery_config(None)
-            .pad_initial_to_mtu(true)
             .pad_to_mtu(pad_to_mtu);
         let mut config = client_config();
         config.transport_config(Arc::new(transport));
@@ -4252,14 +4247,15 @@ fn pad_initial_to_mtu_does_not_pad_zero_rtt_batch_tail() {
 }
 
 #[test]
-fn pad_initial_to_mtu_preserves_application_loss_probe_mtu() {
+fn min_mtu_limits_application_loss_probes() {
     let _guard = subscribe();
-    const MTU: u16 = 1333;
+    const MIN_MTU: u16 = 1280;
+    const MTU: u16 = 1452;
     let mut transport = TransportConfig::default();
     transport
         .initial_mtu(MTU)
+        .min_mtu(MIN_MTU)
         .mtu_discovery_config(None)
-        .pad_initial_to_mtu(true)
         .pad_to_mtu(true);
     let mut config = client_config();
     config.transport_config(Arc::new(transport));
@@ -4272,26 +4268,29 @@ fn pad_initial_to_mtu_preserves_application_loss_probe_mtu() {
     assert_eq!(pair.client.outbound[0].0.size, usize::from(MTU));
     pair.client.outbound.clear();
 
-    // Application loss probes must retain the smaller MTU even with both padding options enabled.
+    // Fill the loss probe with stream data to check the configured minimum MTU is the limit.
     pair.time = pair.client.next_wakeup().unwrap();
-    pair.client.drive(pair.time, pair.server.addr);
-    assert!(!pair.client.outbound.is_empty());
-    for (transmit, data) in &pair.client.outbound {
-        assert!(transmit.size <= usize::from(INITIAL_MTU));
-        assert!(data.len() <= usize::from(INITIAL_MTU));
-    }
+    let now = pair.time;
+    let client = pair.client_conn_mut(client_ch);
+    client.handle_timeout(now);
+    let stream = client.streams().open(Dir::Uni).unwrap();
+    client.send_stream(stream).write(&[42; 3000]).unwrap();
+    let mut buf = Vec::new();
+    let transmit = client.poll_transmit(now, 1, &mut buf).unwrap();
+    assert_eq!(transmit.size, usize::from(MIN_MTU));
+    assert_eq!(buf.len(), usize::from(MIN_MTU));
     pair.drive();
 }
 
 #[test]
-fn pad_initial_to_mtu_does_not_pad_server_initial() {
+fn pad_server_initial_to_min_mtu() {
     let _guard = subscribe();
-    const MTU: u16 = 1452;
+    const MIN_MTU: u16 = 1333;
     let mut transport = TransportConfig::default();
     transport
-        .initial_mtu(MTU)
-        .mtu_discovery_config(None)
-        .pad_initial_to_mtu(true);
+        .initial_mtu(1452)
+        .min_mtu(MIN_MTU)
+        .mtu_discovery_config(None);
     let mut config = server_config();
     config.transport_config(Arc::new(transport));
     let mut pair = Pair::new(Default::default(), config);
@@ -4299,8 +4298,33 @@ fn pad_initial_to_mtu_does_not_pad_server_initial() {
     pair.drive_client();
     pair.server.drive(pair.time, pair.client.addr);
     let (transmit, data) = pair.server.outbound.front().unwrap();
-    assert!(transmit.size < usize::from(MTU));
-    assert!(data.len() < usize::from(MTU));
+    assert_eq!(transmit.size, usize::from(MIN_MTU));
+    assert_eq!(data.len(), usize::from(MIN_MTU));
+
+    pair.drive();
+    let server_ch = pair.server.assert_accept();
+    pair.finish_connect(client_ch, server_ch);
+}
+
+#[test]
+fn min_mtu_respects_peer_max_udp_payload_size() {
+    let _guard = subscribe();
+    const PEER_MAX: u16 = 1280;
+    let mut transport = TransportConfig::default();
+    transport.min_mtu(1452).mtu_discovery_config(None);
+    let mut config = server_config();
+    config.transport_config(Arc::new(transport));
+    let server = Endpoint::new(Default::default(), Some(Arc::new(config)), true);
+    let mut endpoint_config = EndpointConfig::default();
+    endpoint_config.max_udp_payload_size(PEER_MAX).unwrap();
+    let client = Endpoint::new(Arc::new(endpoint_config), None, true);
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.server.drive(pair.time, pair.client.addr);
+    let (transmit, data) = pair.server.outbound.front().unwrap();
+    assert_eq!(transmit.size, usize::from(PEER_MAX));
+    assert_eq!(data.len(), usize::from(PEER_MAX));
 
     pair.drive();
     let server_ch = pair.server.assert_accept();
