@@ -2441,26 +2441,49 @@ impl Connection {
                         return;
                     }
 
-                    if !self.state.is_closed() {
-                        let spin = match packet.header {
-                            Header::Short { spin, .. } => spin,
-                            _ => false,
-                        };
-                        self.on_packet_authenticated(
-                            now,
-                            packet.header.space(),
-                            ecn,
-                            number,
-                            spin,
-                            packet.header.is_1rtt(),
-                        );
-                    }
-
-                    self.process_decrypted_packet(now, remote, number, packet)
+                    self.process_authenticated_packet(now, remote, ecn, number, packet)
                 }
             }
         };
 
+        self.finish_packet(now, remote, result, was_closed, was_drained);
+    }
+
+    /// Process a packet that has been decrypted and authenticated
+    fn process_authenticated_packet(
+        &mut self,
+        now: Instant,
+        remote: SocketAddr,
+        ecn: Option<EcnCodepoint>,
+        number: Option<u64>,
+        packet: Packet,
+    ) -> Result<(), ConnectionError> {
+        if !self.state.is_closed() {
+            let spin = match packet.header {
+                Header::Short { spin, .. } => spin,
+                _ => false,
+            };
+            self.on_packet_authenticated(
+                now,
+                packet.header.space(),
+                ecn,
+                number,
+                spin,
+                packet.header.is_1rtt(),
+            );
+        }
+        self.process_decrypted_packet(now, remote, number, packet)
+    }
+
+    /// Apply the state transitions that follow processing a packet
+    fn finish_packet(
+        &mut self,
+        now: Instant,
+        remote: SocketAddr,
+        result: Result<(), ConnectionError>,
+        was_closed: bool,
+        was_drained: bool,
+    ) {
         // State transitions for error cases
         if let Err(conn_err) = result {
             self.error = Some(conn_err.clone());
