@@ -202,11 +202,12 @@ impl TransportConfig {
     /// Must be at least 1200, which is the default, and lower than or equal to
     /// [`TransportConfig::initial_mtu`].
     ///
+    /// Client Initial datagrams and ack-eliciting server Initial datagrams are padded to at least
+    /// this size, subject to the peer's maximum UDP payload size.
+    ///
     /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
-    /// outside of either endpoint's control. Extreme care should be used when raising this value
-    /// outside of private networks where these factors are fully controlled. If the provided value
-    /// is higher than what the network path actually supports, the result will be unpredictable and
-    /// catastrophic packet loss, without a possibility of repair. Prefer
+    /// outside of either endpoint's control. If this value exceeds what the network path supports,
+    /// connections may fail to be established because Initial datagrams cannot be delivered. Prefer
     /// [`TransportConfig::initial_mtu`] together with
     /// [`TransportConfig::mtu_discovery_config`] to set a maximum UDP payload size that robustly
     /// adapts to the network.
