@@ -20,6 +20,7 @@ use send::{BytesSource, Send, SendState};
 pub use send::{FinishError, WriteError, Written};
 
 mod state;
+use state::StreamsBlocked;
 #[allow(unreachable_pub)] // fuzzing only
 pub use state::StreamsState;
 
@@ -45,7 +46,7 @@ impl<'a> Streams<'a> {
         }
 
         if self.state.next[dir as usize] >= self.state.max[dir as usize] {
-            self.state.streams_blocked[dir as usize] = true;
+            self.state.streams_blocked[dir as usize] = StreamsBlocked::Unreported;
             return None;
         }
 
