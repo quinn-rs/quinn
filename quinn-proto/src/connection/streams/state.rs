@@ -6,7 +6,7 @@ use std::{
 
 use bytes::BufMut;
 use rustc_hash::FxHashMap;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 use super::{
     PendingStreamsQueue, Recv, Retransmits, Send, SendState, ShouldTransmit, StreamEvent,
@@ -683,6 +683,10 @@ impl StreamsState {
         }
         let next = &mut self.next_remote[stream.dir() as usize];
         if stream.index() >= *next {
+            if stream.index() > self.max_remote[stream.dir() as usize] {
+                error!("tried to implicitly open more streams than permitted; this is a bug");
+                return;
+            }
             *next = stream.index() + 1;
             self.opened[stream.dir() as usize] = true;
         } else if notify_readable {
@@ -797,6 +801,12 @@ impl StreamsState {
             return Err(TransportError::STREAM_STATE_ERROR(
                 "MAX_STREAM_DATA on recv-only stream",
             ));
+        }
+        if id.dir() == Dir::Bi {
+            // Ensure we don't implicitly open more streams than permitted
+            self.validate_receive_id(id).inspect_err(|_| {
+                debug!("received illegal MAX_STREAM_DATA frame");
+            })?;
         }
 
         let write_limit = self.write_limit();
@@ -2300,5 +2310,19 @@ mod tests {
         // Assert that only `smaller_send_window` bytes are accepted
         assert_eq!(stream.write(&data), Ok(smaller_send_window as usize));
         assert_eq!(stream.write(&data), Err(WriteError::Blocked));
+    }
+
+    #[test]
+    fn max_stream_data_over_stream_limit() {
+        let mut server = make(Side::Server);
+        // The limit is 128 streams, so the client may open the streams 0 to 127.
+        let id = StreamId::new(Side::Client, Dir::Bi, 1 << 40);
+        let result = server.received_max_stream_data(id, 1);
+        assert_eq!(
+            result.map_err(|e| e.code),
+            Err(TransportErrorCode::STREAM_LIMIT_ERROR),
+            "next_remote is now {}",
+            server.next_remote[Dir::Bi as usize]
+        );
     }
 }
