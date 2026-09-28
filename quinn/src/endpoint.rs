@@ -259,7 +259,7 @@ impl Endpoint {
         Ok(endpoint
             .recv_state
             .connections
-            .insert(ch, conn, sender, self.runtime.clone()))
+            .insert(ch, conn, sender, false, self.runtime.clone()))
     }
 
     /// Switch to a new UDP socket
@@ -482,18 +482,11 @@ impl EndpointInner {
                 state.stats.accepted_handshakes += 1;
                 let sender = state.socket.create_sender();
                 let runtime = state.runtime.clone();
-                let connecting = state
+                let driver_lost = state.driver_lost;
+                Ok(state
                     .recv_state
                     .connections
-                    .insert(handle, conn, sender, runtime);
-                if state.driver_lost {
-                    // The endpoint driver exited while the lock was released. Its destructor
-                    // closed the event channels of the connections that existed at the time,
-                    // which terminates them; do the same for this one so it fails promptly
-                    // rather than waiting for a timeout.
-                    state.recv_state.connections.senders.remove(&handle);
-                }
-                Ok(connecting)
+                    .insert(handle, conn, sender, driver_lost, runtime))
             }
             Err(error) => {
                 if let Some(transmit) = error.response {
@@ -717,6 +710,7 @@ impl ConnectionSet {
         handle: ConnectionHandle,
         conn: proto::Connection,
         sender: Pin<Box<dyn UdpSender>>,
+        driver_lost: bool,
         runtime: Arc<dyn Runtime>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
@@ -727,7 +721,14 @@ impl ConnectionSet {
             })
             .unwrap();
         }
-        self.senders.insert(handle, send);
+        match driver_lost {
+            // Close the event channel before spawning the connection driver, so it cannot
+            // transmit a handshake after the endpoint driver has stopped.
+            true => drop(send),
+            false => {
+                self.senders.insert(handle, send);
+            }
+        }
         Connecting::new(handle, conn, self.sender.clone(), recv, sender, runtime)
     }
 
