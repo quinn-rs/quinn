@@ -597,6 +597,23 @@ impl Write for TestWriter {
     }
 }
 
+/// A writer whose output can be read back, e.g. to inspect a qlog trace
+#[cfg(feature = "qlog")]
+#[derive(Clone, Default)]
+pub(super) struct SharedBuffer(pub(super) Arc<Mutex<Vec<u8>>>);
+
+#[cfg(feature = "qlog")]
+impl Write for SharedBuffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 pub(super) fn server_config() -> ServerConfig {
     let mut config = ServerConfig::with_crypto(Arc::new(server_crypto()));
     if !cfg!(feature = "bloom") {

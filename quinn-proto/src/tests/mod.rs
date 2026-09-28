@@ -4851,3 +4851,65 @@ fn application_close_in_initial_is_rejected() {
         })
     );
 }
+
+#[cfg(feature = "qlog")]
+#[test]
+fn qlog_packet_lost_trigger() {
+    use qlog::events::{EventData, quic::PacketLostTrigger};
+    use qlog::reader::{Event as QlogEvent, QlogSeqReader};
+
+    let _guard = subscribe();
+    let qlog = SharedBuffer::default();
+    let mut qlog_config = QlogConfig::default();
+    qlog_config.writer(Box::new(qlog.clone()));
+    let mut transport = TransportConfig::default();
+    transport
+        .deterministic_packet_numbers(true)
+        .qlog_stream(qlog_config.into_stream());
+    let mut config = client_config();
+    config.transport_config(Arc::new(transport));
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect_with(config);
+    pair.drive();
+
+    // Drop a packet, then deliver fewer later packets than the packet threshold, so that only the
+    // time threshold can declare it lost
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    assert_eq!(pair.client.outbound.len(), 1);
+    pair.client.outbound.clear();
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive();
+
+    // Drop a packet, then deliver as many later packets as the packet threshold without advancing
+    // time, so that only the packet threshold can declare it lost
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    assert_eq!(pair.client.outbound.len(), 1);
+    pair.client.outbound.clear();
+    for _ in 0..3 {
+        pair.client_conn_mut(client_ch).ping();
+        pair.client.drive(pair.time, pair.server.addr);
+    }
+    assert_eq!(pair.client.outbound.len(), 3);
+    pair.drive();
+
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 2);
+    let triggers = QlogSeqReader::new(Box::new(&qlog.0.lock().unwrap()[..]))
+        .unwrap()
+        .filter_map(|event| match event {
+            QlogEvent::Qlog(event) => match event.data {
+                EventData::QuicPacketLost(lost) => lost.trigger,
+                _ => None,
+            },
+            QlogEvent::Json(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        triggers,
+        [
+            PacketLostTrigger::TimeThreshold,
+            PacketLostTrigger::ReorderingThreshold
+        ]
+    );
+}
