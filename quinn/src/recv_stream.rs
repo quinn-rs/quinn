@@ -355,6 +355,8 @@ impl RecvStream {
         T: FnMut(&mut Chunks) -> ReadStatus<U>,
     {
         use proto::ReadError::*;
+        use std::collections::hash_map::Entry;
+
         if self.all_data_read {
             return Poll::Ready(Ok(None));
         }
@@ -383,6 +385,8 @@ impl RecvStream {
             ReadStatus::Readable(read) => Poll::Ready(Ok(Some(read))),
             ReadStatus::Finished(read) => {
                 self.all_data_read = true;
+                // Stream is dead, cleanup stale waker
+                conn.blocked_readers.remove(&self.stream);
                 Poll::Ready(Ok(read))
             }
             ReadStatus::Failed(read, Blocked) => match read {
@@ -391,7 +395,14 @@ impl RecvStream {
                     if let Some(ref x) = conn.error {
                         return Poll::Ready(Err(ReadError::ConnectionLost(x.clone())));
                     }
-                    conn.blocked_readers.insert(self.stream, cx.waker().clone());
+                    match conn.blocked_readers.entry(self.stream) {
+                        Entry::Occupied(mut entry) => {
+                            entry.get_mut().clone_from(cx.waker());
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(cx.waker().clone());
+                        }
+                    }
                     Poll::Pending
                 }
             },
@@ -399,6 +410,8 @@ impl RecvStream {
                 None => {
                     self.all_data_read = true;
                     self.reset = Some(error_code);
+                    // Stream is dead, cleanup stale waker
+                    conn.blocked_readers.remove(&self.stream);
                     Poll::Ready(Err(ReadError::Reset(error_code)))
                 }
                 done => {
