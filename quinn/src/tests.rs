@@ -19,7 +19,7 @@ use std::{
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use crate::runtime::{AsyncUdpSocket, Runtime as _, TokioRuntime, UdpPoller};
+use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime as _, TokioRuntime, UdpPoller};
 use crate::{Duration, Instant};
 use bytes::Bytes;
 use proto::{
@@ -538,6 +538,38 @@ impl AsyncUdpSocket for FailingSocket {
     }
 }
 
+/// Poll a connection driver before its registration returns, once the endpoint has failed.
+#[derive(Debug)]
+struct DriverLossRuntime {
+    failure: Arc<SocketFailure>,
+    stopped_on_first_poll: AtomicBool,
+}
+
+impl crate::runtime::Runtime for DriverLossRuntime {
+    fn new_timer(&self, deadline: Instant) -> Pin<Box<dyn AsyncTimer>> {
+        TokioRuntime.new_timer(deadline)
+    }
+
+    fn spawn(&self, mut future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        if self.failure.armed.load(Ordering::SeqCst) {
+            let mut cx = Context::from_waker(Waker::noop());
+            if future.as_mut().poll(&mut cx).is_ready() {
+                self.stopped_on_first_poll.store(true, Ordering::SeqCst);
+                return;
+            }
+        }
+        TokioRuntime.spawn(future);
+    }
+
+    fn wrap_udp_socket(&self, socket: UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>> {
+        TokioRuntime.wrap_udp_socket(socket)
+    }
+
+    fn now(&self) -> Instant {
+        TokioRuntime.now()
+    }
+}
+
 fn localhost_socket() -> Arc<dyn AsyncUdpSocket> {
     TokioRuntime
         .wrap_udp_socket(
@@ -550,6 +582,7 @@ fn blocking_server_pair(
     server_alpn: &[u8],
     client_alpn: &[u8],
     server_socket: Arc<dyn AsyncUdpSocket>,
+    server_runtime: Arc<dyn crate::runtime::Runtime>,
 ) -> (Endpoint, Endpoint, Arc<HandshakeBlocker>) {
     let factory = EndpointFactory::new();
     let key = PrivateKeyDer::Pkcs8(factory.cert.signing_key.serialize_der().into());
@@ -573,7 +606,7 @@ fn blocking_server_pair(
         factory.endpoint_config.clone(),
         Some(server_config),
         server_socket,
-        Arc::new(TokioRuntime),
+        server_runtime,
     )
     .unwrap();
 
@@ -629,7 +662,22 @@ fn blocked_handshake_with_socket(
     client_alpn: &[u8],
     server_socket: Arc<dyn AsyncUdpSocket>,
 ) -> BlockedHandshake {
-    let (client, server, blocker) = blocking_server_pair(server_alpn, client_alpn, server_socket);
+    blocked_handshake_with_runtime(
+        server_alpn,
+        client_alpn,
+        server_socket,
+        Arc::new(TokioRuntime),
+    )
+}
+
+fn blocked_handshake_with_runtime(
+    server_alpn: &[u8],
+    client_alpn: &[u8],
+    server_socket: Arc<dyn AsyncUdpSocket>,
+    server_runtime: Arc<dyn crate::runtime::Runtime>,
+) -> BlockedHandshake {
+    let (client, server, blocker) =
+        blocking_server_pair(server_alpn, client_alpn, server_socket, server_runtime);
     let server_addr = server.local_addr().unwrap();
 
     let accept = tokio::spawn({
@@ -1281,6 +1329,51 @@ async fn split_accept_driver_lost_during_handshake() {
     assert!(await_connection(accept).await.is_err());
     assert!(wake_counter.wakes() > 0);
     timeout(Duration::from_secs(5), idle).await.unwrap();
+
+    client.close(0u32.into(), b"done");
+    assert!(await_connection(connect).await.is_err());
+    wait_idle(&client).await;
+}
+
+#[tokio::test]
+async fn split_accept_driver_lost_before_connection_spawn() {
+    let _guard = subscribe();
+    let failure = Arc::new(SocketFailure::default());
+    let runtime = Arc::new(DriverLossRuntime {
+        failure: failure.clone(),
+        stopped_on_first_poll: AtomicBool::new(false),
+    });
+    let socket = Arc::new(FailingSocket {
+        inner: localhost_socket(),
+        failure: failure.clone(),
+    });
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake_with_runtime(b"test", b"test", socket, runtime.clone());
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    failure.trigger();
+    assert!(
+        timeout(Duration::from_secs(5), server.accept())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    blocker.release();
+    // The runtime polls the connection driver before registration returns. It must observe the
+    // closed event channel immediately, before transmitting any handshake packets.
+    assert!(await_connection(accept).await.is_err());
+    assert!(
+        runtime.stopped_on_first_poll.load(Ordering::SeqCst),
+        "connection driver ran before its event channel was closed"
+    );
+    wait_idle(&server).await;
 
     client.close(0u32.into(), b"done");
     assert!(await_connection(connect).await.is_err());
