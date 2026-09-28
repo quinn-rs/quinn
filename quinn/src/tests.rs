@@ -632,6 +632,87 @@ async fn wait_idle(endpoint: &Endpoint) {
         .unwrap();
 }
 
+/// A parked `wait_idle` must not hang when the endpoint driver is dropped.
+///
+/// `EndpointDriver::drop` clears the connection senders, which is what makes
+/// the endpoint idle, but it wakes only `incoming`. A caller already parked on
+/// `idle` is therefore never woken, and with the driver gone nothing else can
+/// wake it. `EndpointInner::accept` already guards this same hazard for accepts
+/// that complete after driver loss.
+#[test]
+fn wait_idle_returns_when_the_driver_is_dropped() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+
+    // The endpoint under test owns its runtime, so shutting that runtime down
+    // drops its driver.
+    let endpoint_runtime = rt_threaded();
+    let endpoint_handle = endpoint_runtime.handle().clone();
+    let endpoint = {
+        let _guard = endpoint_runtime.enter();
+        factory.endpoint()
+    };
+    let endpoint_addr = endpoint.local_addr().unwrap();
+
+    // A peer on a second runtime, so a live connection exists to wait for.
+    let peer_runtime = rt_threaded();
+    let peer = {
+        let _guard = peer_runtime.enter();
+        factory.endpoint()
+    };
+    let peer_handle = peer_runtime.handle().clone();
+    // Accept concurrently: the client's handshake cannot complete until the
+    // server drives its half, and the accepted handle must stay alive or the
+    // connection would close and the endpoint become idle before the assertion.
+    let accepted = {
+        let handle = endpoint_handle.clone();
+        let endpoint = endpoint.clone();
+        std::thread::spawn(move || {
+            handle.block_on(async {
+                let incoming = endpoint.accept().await.expect("incoming");
+                incoming.await.expect("accept")
+            })
+        })
+    };
+    let connection = peer_handle.block_on(async {
+        peer.connect(endpoint_addr, "localhost")
+            .expect("connect")
+            .await
+            .expect("connection")
+    });
+    let _server_connection = accepted.join().expect("accept thread");
+
+    // Park `wait_idle`; it blocks while that connection is live.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let waiter = {
+        let handle = endpoint_handle.clone();
+        let endpoint = endpoint.clone();
+        std::thread::spawn(move || {
+            handle.block_on(endpoint.wait_idle());
+            let _ = done_tx.send(());
+        })
+    };
+
+    // Otherwise a pass below would be vacuous.
+    assert!(
+        done_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "wait_idle returned before the driver was dropped"
+    );
+
+    // Dropping the runtime drops the endpoint driver.
+    endpoint_runtime.shutdown_background();
+
+    let woke = done_rx.recv_timeout(Duration::from_secs(10)).is_ok();
+    drop(connection);
+    drop(peer);
+    drop(peer_runtime);
+    assert!(
+        woke,
+        "wait_idle never returned after the endpoint driver was dropped"
+    );
+    let _ = waiter.join();
+}
+
 async fn wait_closed(conn: &crate::Connection) -> crate::ConnectionError {
     timeout(Duration::from_secs(5), conn.closed())
         .await
