@@ -406,6 +406,10 @@ impl Drop for EndpointDriver {
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
         endpoint.recv_state.connections.senders.clear();
+        // Clearing the senders is what makes the endpoint idle, but a waiter already parked on
+        // `idle` only re-reads that after being notified, and with the driver gone nothing else
+        // can wake it.
+        self.0.shared.idle.notify_waiters();
     }
 }
 
