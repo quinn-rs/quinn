@@ -20,10 +20,12 @@ pub(crate) enum Timer {
     PushNewCid = 7,
     /// When to send an immediate ACK if there are unacked ack-eliciting packets of the peer
     MaxAckDelay = 8,
+    /// When to repeat a blocked frame so a flow control limited connection does not time out
+    Blocked = 9,
 }
 
 impl Timer {
-    pub(crate) const VALUES: [Self; 9] = [
+    pub(crate) const VALUES: [Self; 10] = [
         Self::LossDetection,
         Self::Idle,
         Self::Close,
@@ -33,6 +35,7 @@ impl Timer {
         Self::Pacing,
         Self::PushNewCid,
         Self::MaxAckDelay,
+        Self::Blocked,
     ];
 }
 
