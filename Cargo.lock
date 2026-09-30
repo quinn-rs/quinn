@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.18"
+version = "0.11.19"
 dependencies = [
  "arbitrary",
  "assert_matches",
