@@ -1071,7 +1071,10 @@ mod tests {
     #[test]
     fn recv_single_skips_truncated_datagrams() {
         let receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        receiver.set_nonblocking(true).unwrap();
+        // Block instead of polling, since loopback delivery can be asynchronous (on FreeBSD)
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         let sender = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let address = receiver.local_addr().unwrap();
         sender.send_to(&[0; 16], address).unwrap();
