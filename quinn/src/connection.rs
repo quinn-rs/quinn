@@ -210,7 +210,8 @@ impl Future for Connecting {
     type Output = Result<Connection, ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.connected).poll(cx).map(|_| {
-            let conn = self.conn.take().unwrap();
+            let conn = self.conn.take().ok_or(ConnectionError::AlreadyConnected)?;
+
             let inner = conn.state.lock("connecting");
             if inner.connected {
                 drop(inner);
