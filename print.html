@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6057e2c4.js";
+            window.path_to_searchindex_js = "searchindex-e2a1147a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-fe9b6941.js"></script>
@@ -475,6 +475,21 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 </span>    let client_config = quinn::ClientConfig::try_with_platform_verifier().unwrap();
 <span class="boring">}</span></code></pre>
 <p>This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.</p>
+<h3 id="custom-and-asynchronous-certificate-validation"><a class="header" href="#custom-and-asynchronous-certificate-validation">Custom and Asynchronous Certificate Validation</a></h3>
+<p><code>rustls</code> verifiers are synchronous. Applications that need asynchronous validation—such as checking a certificate against an external database—can inspect <code>Connection::peer_identity()</code> after the handshake and close the connection if the peer is untrusted:</p>
+<pre><code class="language-rust ignore">let connection = endpoint.connect(server_addr, "localhost")?.await?;
+
+if let Some(identity) = connection.peer_identity() {
+    let certs = identity
+        .downcast_ref::&lt;Vec&lt;rustls::pki_types::CertificateDer&gt;&gt;()
+        .expect("rustls peer identity");
+
+    if !is_authorized(certs).await {
+        connection.close(0u32.into(), b"unauthorized");
+        return;
+    }
+}</code></pre>
+<p>In TLS 1.3, peer certificates arrive in the same flight as handshake completion. <code>Connection</code> is a lightweight handle, so awaiting <code>Connecting</code> and then calling <code>close()</code> on rejection costs no more than an early abort.</p>
 <p><br>
 <hr></p>
 <p><a href="#connection-setup">Next</a>, let’s have a look at how to set up a connection.</p>
