@@ -2523,7 +2523,15 @@ impl Connection {
         was_drained: bool,
     ) {
         // State transitions for error cases
-        if let Err(conn_err) = result {
+        if let Err(ConnectionError::Reset) = result
+            && matches!(self.state, State::Draining | State::Drained)
+        {
+            // The connection has already ended, and a stateless reset is not a new reason for
+            // that. It only requires us to enter the draining period and send nothing more
+            // (RFC 9000 section 10.3.1), which we have done. As after any other stateless reset,
+            // we don't wait out the rest of that period.
+            self.state = State::Drained;
+        } else if let Err(conn_err) = result {
             self.error = Some(conn_err.clone());
             self.state = match conn_err {
                 ConnectionError::ApplicationClosed(reason) => State::closed(reason),
