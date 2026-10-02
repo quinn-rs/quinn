@@ -382,6 +382,137 @@ fn client_stateless_reset() {
     );
 }
 
+/// The client reads CONNECTION_CLOSE after the server forgets the connection.
+/// The client's reply triggers a reset before the application polls.
+#[test]
+fn stateless_reset_while_draining_keeps_close_reason() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    const REASON: &[u8] = b"not accepted";
+    server_closes_and_forgets(&mut pair, server_ch, REASON);
+
+    pair.drive_client();
+    assert!(
+        !pair.server.inbound.is_empty(),
+        "client should have answered the close"
+    );
+    pair.drive_server();
+    assert!(
+        !pair.client.inbound.is_empty(),
+        "server should have sent a stateless reset"
+    );
+    pair.drive_client();
+
+    assert!(pair.client_conn_mut(client_ch).is_drained());
+    assert_eq!(pair.client_conn_mut(client_ch).poll_timeout(), None);
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_matches!(pair.client_conn_mut(client_ch).poll(),
+                    Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed(
+                        ApplicationClose { error_code: VarInt(42), reason }
+                    )}) if reason == REASON);
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+}
+
+/// The application consumes the peer's close reason before the reset is processed.
+#[test]
+fn stateless_reset_while_draining_is_not_a_second_loss() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    const REASON: &[u8] = b"not accepted";
+    server_closes_and_forgets(&mut pair, server_ch, REASON);
+
+    pair.drive_client();
+    assert_matches!(pair.client_conn_mut(client_ch).poll(),
+                    Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed(
+                        ApplicationClose { error_code: VarInt(42), reason }
+                    )}) if reason == REASON);
+
+    pair.drive_server();
+    assert!(
+        !pair.client.inbound.is_empty(),
+        "server should have sent a stateless reset"
+    );
+    pair.drive_client();
+
+    assert!(pair.client_conn_mut(client_ch).is_drained());
+    assert_eq!(pair.client_conn_mut(client_ch).poll_timeout(), None);
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+}
+
+/// Process CONNECTION_CLOSE followed by two resets in one batch. The first reset ends draining;
+/// the second reaches the Drained state.
+#[test]
+fn stateless_reset_after_draining_keeps_close_reason() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    const REASON: &[u8] = b"not accepted";
+    server_closes_and_forgets(&mut pair, server_ch, REASON);
+    let mut unread = mem::take(&mut pair.client.inbound);
+    assert_eq!(unread.len(), 1, "the close should be a single datagram");
+
+    for _ in 0..2 {
+        pair.client_conn_mut(client_ch).ping();
+        pair.drive_client();
+        pair.drive_server();
+        unread.append(&mut pair.client.inbound);
+        // The server sends at most one stateless reset per interval.
+        pair.time += pair.server.config().min_reset_interval;
+    }
+    assert_eq!(
+        unread.len(),
+        3,
+        "server should have sent two stateless resets"
+    );
+
+    // Model the client reading all three datagrams at the current time.
+    for (_, ecn, packet) in unread {
+        pair.client.inbound.push_back((pair.time, ecn, packet));
+    }
+    pair.drive_client();
+
+    assert!(pair.client_conn_mut(client_ch).is_drained());
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_matches!(pair.client_conn_mut(client_ch).poll(),
+                    Some(Event::ConnectionLost { reason: ConnectionError::ApplicationClosed(
+                        ApplicationClose { error_code: VarInt(42), reason }
+                    )}) if reason == REASON);
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+}
+
+/// Leave the server's CONNECTION_CLOSE unread until the server discards its connection state.
+fn server_closes_and_forgets(pair: &mut Pair, server_ch: ConnectionHandle, reason: &'static [u8]) {
+    pair.drive(); // Flush post-handshake traffic so the close is the only unread datagram.
+    let now = pair.time;
+    pair.server_conn_mut(server_ch)
+        .close(now, VarInt(42), reason.into());
+    pair.drive_server();
+    assert!(
+        !pair.client.inbound.is_empty(),
+        "server should have sent its CONNECTION_CLOSE"
+    );
+
+    while pair.server.known_connections() > 0 {
+        pair.time = pair
+            .server
+            .next_wakeup()
+            .expect("server should have its close timer armed");
+        pair.drive_server();
+    }
+
+    // Use the client's read time so the reset reaches Draining. With the original timestamp,
+    // the draining deadline would expire before the reset is processed.
+    for (recv_time, _, _) in &mut pair.client.inbound {
+        *recv_time = pair.time;
+    }
+}
+
 /// Verify that stateless resets are rate-limited
 #[test]
 fn stateless_reset_limit() {

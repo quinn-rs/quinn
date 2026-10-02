@@ -2523,7 +2523,12 @@ impl Connection {
         was_drained: bool,
     ) {
         // State transitions for error cases
-        if let Err(conn_err) = result {
+        if let Err(ConnectionError::Reset) = result
+            && matches!(self.state, State::Draining | State::Drained)
+        {
+            // Preserve the original close reason once draining has begun.
+            self.state = State::Drained;
+        } else if let Err(conn_err) = result {
             self.error = Some(conn_err.clone());
             self.state = match conn_err {
                 ConnectionError::ApplicationClosed(reason) => State::closed(reason),
