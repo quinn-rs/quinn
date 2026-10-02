@@ -92,6 +92,27 @@ This is the only thing you need to do for your server to be secured.
 
 This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.
 
+### Custom and Asynchronous Certificate Validation
+
+`rustls` verifiers are synchronous. Applications that need asynchronous validation—such as checking a certificate against an external database—can inspect `Connection::peer_identity()` after the handshake and close the connection if the peer is untrusted:
+
+```rust,ignore
+let connection = endpoint.connect(server_addr, "localhost")?.await?;
+
+if let Some(identity) = connection.peer_identity() {
+    let certs = identity
+        .downcast_ref::<Vec<rustls::pki_types::CertificateDer>>()
+        .expect("rustls peer identity");
+
+    if !is_authorized(certs).await {
+        connection.close(0u32.into(), b"unauthorized");
+        return;
+    }
+}
+```
+
+In TLS 1.3, peer certificates arrive in the same flight as handshake completion. `Connection` is a lightweight handle, so awaiting `Connecting` and then calling `close()` on rejection costs no more than an early abort.
+
 <br><hr>
 
 [Next](set-up-connection.md), let's have a look at how to set up a connection.
