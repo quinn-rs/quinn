@@ -108,7 +108,7 @@ impl QlogSink {
                 frames: None,
                 is_mtu_probe_packet: None,
                 trigger: Some(
-                    match info.time_sent.saturating_duration_since(now) >= loss_delay {
+                    match now.saturating_duration_since(info.time_sent) >= loss_delay {
                         true => PacketLostTrigger::TimeThreshold,
                         false => PacketLostTrigger::ReorderingThreshold,
                     },

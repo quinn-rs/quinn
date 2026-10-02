@@ -37,6 +37,12 @@ use proto::{
 };
 
 /// In-progress connection attempt future
+///
+/// Resolves into a [`Connection`] once the TLS handshake completes. In TLS 1.3, peer
+/// certificates arrive with handshake completion, so they are only available via
+/// [`Connection::peer_identity()`]. [`Connection`] is a lightweight handle, so completing the
+/// handshake imposes no extra cost; use [`Connection::close()`] to reject peers that fail
+/// custom validation.
 #[derive(Debug)]
 pub struct Connecting {
     conn: Option<ConnectionRef>,
@@ -154,6 +160,8 @@ impl Connecting {
     /// be [`downcast`](Box::downcast) to a
     /// [`crypto::rustls::HandshakeData`](crate::crypto::rustls::HandshakeData).
     ///
+    /// Peer certificates are not available at this stage; see [`Connection::peer_identity()`].
+    ///
     /// This operation is cancel-safe.
     pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, ConnectionError> {
         // Taking &mut self allows us to use a single oneshot channel rather than dealing with
@@ -264,7 +272,12 @@ impl Future for ConnectionDriver {
             conn.terminate(e, &self.conn.shared);
             return Poll::Ready(Ok(()));
         }
-        let mut keep_going = conn.drive_transmit(cx)?;
+        let mut keep_going = conn.drive_transmit(cx).inspect_err(|_| {
+            // Transmit failed, so close the connection and clean state before returning the error.
+            if !conn.inner.is_closed() {
+                conn.implicit_close(&self.conn.shared);
+            }
+        })?;
         // If a timer expires, there might be more to transmit. When we transmit something, we
         // might need to reset a timer. Hence, we must loop until neither happens.
         keep_going |= conn.drive_timer(cx);
@@ -679,7 +692,11 @@ impl Connection {
     ///
     /// The dynamic type returned is determined by the configured
     /// [`Session`](proto::crypto::Session). For the default `rustls` session, the return value can
-    /// be [`downcast`](Box::downcast) to a <code>Vec<[rustls::pki_types::CertificateDer]></code>
+    /// be [`downcast`](Box::downcast) to a <code>Vec<[rustls::pki_types::CertificateDer]></code>.
+    ///
+    /// For custom asynchronous validation (e.g. checking a certificate against an external
+    /// database), call this after awaiting [`Connecting`] and use [`close()`][Self::close] to
+    /// reject untrusted peers.
     pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
         self.0
             .state

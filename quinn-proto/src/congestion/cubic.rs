@@ -224,14 +224,11 @@ impl Controller for Cubic {
         self.state.cwnd_inc = (self.state.cwnd_inc as f64 * BETA_CUBIC) as u64;
 
         if is_persistent_congestion {
+            // ssthresh already carries the single β_cubic reduction of the pre-event window
+            // applied above; RFC 9438 §4.8 (Timeout) requires no further reduction of ssthresh,
+            // only cwnd lowered to the minimum window.
             self.state.recovery_start_time = None;
             self.state.w_max = self.state.window as f64;
-
-            // 4.7 Timeout - reduce ssthresh based on BETA_CUBIC
-            self.state.ssthresh = cmp::max(
-                (self.state.window as f64 * BETA_CUBIC) as u64,
-                self.minimum_window(),
-            );
 
             self.state.cwnd_inc = 0;
 
@@ -327,6 +324,25 @@ mod tests {
         assert_eq!(cubic.state.w_max, window as f64 * (1.0 + BETA_CUBIC) / 2.0);
         assert_eq!(cubic.state.ssthresh, (window as f64 * BETA_CUBIC) as u64);
         assert_eq!(cubic.state.window, cubic.state.ssthresh);
+    }
+
+    #[test]
+    fn persistent_congestion_does_not_double_reduce_ssthresh() {
+        let now = Instant::now();
+        let config = Arc::new(CubicConfig::default());
+        let mut cubic = Cubic::new(config, now, BASE_DATAGRAM_SIZE as u16);
+        let window = 8 * BASE_DATAGRAM_SIZE;
+
+        cubic.state.window = window;
+        cubic.state.ssthresh = window;
+        cubic.state.w_max = window as f64;
+
+        cubic.on_congestion_event(now, now + Duration::from_millis(1), true, false, 0);
+
+        // RFC 9438 §4.8 (Timeout): ssthresh is the pre-event window reduced by β_cubic
+        // exactly once, as in §4.6; only cwnd is lowered to the minimum window.
+        assert_eq!(cubic.state.ssthresh, (window as f64 * BETA_CUBIC) as u64);
+        assert_eq!(cubic.state.window, 2 * BASE_DATAGRAM_SIZE);
     }
 
     #[test]

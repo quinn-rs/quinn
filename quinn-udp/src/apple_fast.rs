@@ -237,7 +237,7 @@ impl MsgHdr for msghdr_x {
         unsafe { libc::CMSG_FIRSTHDR(selfp) }
     }
 
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+    unsafe fn cmsg_nxt_hdr(&self, cmsg: *const Self::ControlMessage) -> *mut Self::ControlMessage {
         let selfp = self as *const _ as *mut libc::msghdr;
         unsafe { libc::CMSG_NXTHDR(selfp, cmsg) }
     }

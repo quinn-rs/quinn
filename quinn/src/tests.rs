@@ -8,21 +8,26 @@ use rustls::crypto::ring::default_provider;
 use std::{
     convert::TryInto,
     future::Future,
-    io,
+    io::{self, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
-    pin::pin,
+    pin::{Pin, pin},
     str,
     sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use crate::runtime::TokioRuntime;
+use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime as _, TokioRuntime, UdpSender};
 use crate::{Duration, Instant};
 use bytes::Bytes;
-use proto::{RandomConnectionIdGenerator, crypto::rustls::QuicClientConfig};
+use proto::{
+    ConnectionId, RandomConnectionIdGenerator,
+    crypto::rustls::{QuicClientConfig, QuicServerConfig},
+    crypto::{Keys, ServerConfig as ProtoServerConfig, Session, UnsupportedVersion},
+    transport_parameters::TransportParameters,
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustls::{
     RootCertStore,
@@ -36,6 +41,7 @@ use tokio::{
 use tracing::instrument::Instrument as _;
 use tracing::{error_span, info};
 use tracing_subscriber::EnvFilter;
+use udp::RecvMeta;
 
 use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
 
@@ -312,6 +318,405 @@ impl EndpointFactory {
 
         endpoint
     }
+}
+
+#[derive(Default)]
+struct HandshakeBlocker {
+    state: Mutex<HandshakeBlockerState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct HandshakeBlockerState {
+    started: bool,
+    released: bool,
+}
+
+impl HandshakeBlocker {
+    fn block(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.started = true;
+        self.changed.notify_all();
+        while !state.released {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    fn wait_until_started(&self) {
+        let state = self.state.lock().unwrap();
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| !state.started)
+            .unwrap();
+        assert!(state.started, "timed out waiting for handshake to start");
+    }
+
+    fn release(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.released = true;
+        self.changed.notify_all();
+    }
+}
+
+struct HandshakeReleaseGuard(Arc<HandshakeBlocker>);
+
+impl Drop for HandshakeReleaseGuard {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+struct BlockingServerConfig {
+    inner: Arc<dyn ProtoServerConfig>,
+    blocker: Arc<HandshakeBlocker>,
+}
+
+impl ProtoServerConfig for BlockingServerConfig {
+    fn initial_keys(
+        &self,
+        version: u32,
+        dst_cid: ConnectionId,
+    ) -> Result<Keys, UnsupportedVersion> {
+        self.inner.initial_keys(version, dst_cid)
+    }
+
+    fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
+        self.inner.retry_tag(version, orig_dst_cid, packet)
+    }
+
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+    ) -> Box<dyn Session> {
+        self.blocker.block();
+        self.inner.clone().start_session(version, params)
+    }
+}
+
+/// Wraps a socket so that a test can make its next receive fail, which ends the endpoint driver
+#[derive(Debug)]
+struct FailingSocket {
+    inner: Box<dyn AsyncUdpSocket>,
+    failure: Arc<SocketFailure>,
+}
+
+#[derive(Debug, Default)]
+struct SocketFailure {
+    armed: AtomicBool,
+    recv_waker: Mutex<Option<Waker>>,
+}
+
+impl SocketFailure {
+    /// Make the next receive fail, waking the endpoint driver so that it observes the failure
+    fn trigger(&self) {
+        self.armed.store(true, Ordering::SeqCst);
+        if let Some(waker) = self.recv_waker.lock().unwrap().as_ref() {
+            waker.wake_by_ref();
+        }
+    }
+}
+
+impl AsyncUdpSocket for FailingSocket {
+    fn create_sender(&self) -> Pin<Box<dyn UdpSender>> {
+        self.inner.create_sender()
+    }
+
+    fn poll_recv(
+        &mut self,
+        cx: &mut Context<'_>,
+        bufs: &mut [IoSliceMut<'_>],
+        meta: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        if self.failure.armed.load(Ordering::SeqCst) {
+            return Poll::Ready(Err(io::Error::other("injected socket failure")));
+        }
+        *self.failure.recv_waker.lock().unwrap() = Some(cx.waker().clone());
+        self.inner.poll_recv(cx, bufs, meta)
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.local_addr()
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        self.inner.max_receive_segments()
+    }
+
+    fn may_fragment(&self) -> bool {
+        self.inner.may_fragment()
+    }
+}
+
+/// Poll a connection driver before its registration returns, once the endpoint has failed.
+#[derive(Debug)]
+struct DriverLossRuntime {
+    failure: Arc<SocketFailure>,
+    stopped_on_first_poll: AtomicBool,
+}
+
+impl crate::runtime::Runtime for DriverLossRuntime {
+    fn new_timer(&self, deadline: Instant) -> Pin<Box<dyn AsyncTimer>> {
+        TokioRuntime.new_timer(deadline)
+    }
+
+    fn spawn(&self, mut future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        if self.failure.armed.load(Ordering::SeqCst) {
+            let mut cx = Context::from_waker(Waker::noop());
+            if future.as_mut().poll(&mut cx).is_ready() {
+                self.stopped_on_first_poll.store(true, Ordering::SeqCst);
+                return;
+            }
+        }
+        TokioRuntime.spawn(future);
+    }
+
+    fn wrap_udp_socket(&self, socket: UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
+        TokioRuntime.wrap_udp_socket(socket)
+    }
+
+    fn now(&self) -> Instant {
+        TokioRuntime.now()
+    }
+}
+
+fn localhost_socket() -> Box<dyn AsyncUdpSocket> {
+    TokioRuntime
+        .wrap_udp_socket(
+            UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+        )
+        .unwrap()
+}
+
+fn blocking_server_pair(
+    server_alpn: &[u8],
+    client_alpn: &[u8],
+    server_socket: Box<dyn AsyncUdpSocket>,
+    server_runtime: Arc<dyn crate::runtime::Runtime>,
+) -> (Endpoint, Endpoint, Arc<HandshakeBlocker>) {
+    let factory = EndpointFactory::new();
+    let key = PrivateKeyDer::Pkcs8(factory.cert.signing_key.serialize_der().into());
+    let mut server_crypto = rustls::ServerConfig::builder_with_provider(default_provider().into())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![factory.cert.cert.der().clone()], key)
+        .unwrap();
+    server_crypto.alpn_protocols = vec![server_alpn.to_vec()];
+    let mut server_config = crate::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(server_crypto).unwrap(),
+    ));
+    let blocker = Arc::new(HandshakeBlocker::default());
+    server_config.crypto = Arc::new(BlockingServerConfig {
+        inner: server_config.crypto.clone(),
+        blocker: blocker.clone(),
+    });
+
+    let server = Endpoint::new_with_abstract_socket(
+        factory.endpoint_config.clone(),
+        Some(server_config),
+        server_socket,
+        server_runtime,
+    )
+    .unwrap();
+
+    let mut roots = RootCertStore::empty();
+    roots.add(factory.cert.cert.der().clone()).unwrap();
+    let client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    let mut client_crypto = rustls::ClientConfig::builder_with_provider(default_provider().into())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    client_crypto.alpn_protocols = vec![client_alpn.to_vec()];
+    client.set_default_client_config(ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_crypto).unwrap(),
+    )));
+
+    (client, server, blocker)
+}
+
+async fn wait_for_blocked_handshake(blocker: Arc<HandshakeBlocker>) {
+    tokio::task::spawn_blocking(move || blocker.wait_until_started())
+        .await
+        .unwrap();
+}
+
+async fn accept_with_blocked_start_session(
+    server: Endpoint,
+) -> Result<crate::Connection, crate::ConnectionError> {
+    let incoming = server.accept().await.unwrap();
+    // The test crypto provider intentionally blocks in `start_session`, so run
+    // accept on the blocking pool rather than parking a Tokio worker thread.
+    let connecting = tokio::task::spawn_blocking(move || incoming.accept())
+        .await
+        .unwrap()?;
+    connecting.await
+}
+
+struct BlockedHandshake {
+    client: Endpoint,
+    server: Endpoint,
+    blocker: Arc<HandshakeBlocker>,
+    release_guard: HandshakeReleaseGuard,
+    accept: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+    connect: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+}
+
+fn blocked_handshake(server_alpn: &[u8], client_alpn: &[u8]) -> BlockedHandshake {
+    blocked_handshake_with_socket(server_alpn, client_alpn, localhost_socket())
+}
+
+fn blocked_handshake_with_socket(
+    server_alpn: &[u8],
+    client_alpn: &[u8],
+    server_socket: Box<dyn AsyncUdpSocket>,
+) -> BlockedHandshake {
+    blocked_handshake_with_runtime(
+        server_alpn,
+        client_alpn,
+        server_socket,
+        Arc::new(TokioRuntime),
+    )
+}
+
+fn blocked_handshake_with_runtime(
+    server_alpn: &[u8],
+    client_alpn: &[u8],
+    server_socket: Box<dyn AsyncUdpSocket>,
+    server_runtime: Arc<dyn crate::runtime::Runtime>,
+) -> BlockedHandshake {
+    let (client, server, blocker) =
+        blocking_server_pair(server_alpn, client_alpn, server_socket, server_runtime);
+    let server_addr = server.local_addr().unwrap();
+
+    let accept = tokio::spawn({
+        let server = server.clone();
+        async move { accept_with_blocked_start_session(server).await }
+    });
+    let connect = tokio::spawn({
+        let client = client.clone();
+        async move { client.connect(server_addr, "localhost").unwrap().await }
+    });
+
+    BlockedHandshake {
+        client,
+        server,
+        blocker: blocker.clone(),
+        release_guard: HandshakeReleaseGuard(blocker),
+        accept,
+        connect,
+    }
+}
+
+async fn await_connection(
+    task: tokio::task::JoinHandle<Result<crate::Connection, crate::ConnectionError>>,
+) -> Result<crate::Connection, crate::ConnectionError> {
+    timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn assert_wait_idle_pending(endpoint: &Endpoint) {
+    assert!(
+        timeout(Duration::from_millis(50), endpoint.wait_idle())
+            .await
+            .is_err()
+    );
+}
+
+async fn wait_idle(endpoint: &Endpoint) {
+    timeout(Duration::from_secs(5), endpoint.wait_idle())
+        .await
+        .unwrap();
+}
+
+/// A parked `wait_idle` must not hang when the endpoint driver is dropped.
+///
+/// `EndpointDriver::drop` clears the connection senders, which is what makes
+/// the endpoint idle, but it wakes only `incoming`. A caller already parked on
+/// `idle` is therefore never woken, and with the driver gone nothing else can
+/// wake it. `EndpointInner::accept` already guards this same hazard for accepts
+/// that complete after driver loss.
+#[test]
+fn wait_idle_returns_when_the_driver_is_dropped() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+
+    // The endpoint under test owns its runtime, so shutting that runtime down
+    // drops its driver.
+    let endpoint_runtime = rt_threaded();
+    let endpoint_handle = endpoint_runtime.handle().clone();
+    let endpoint = {
+        let _guard = endpoint_runtime.enter();
+        factory.endpoint()
+    };
+    let endpoint_addr = endpoint.local_addr().unwrap();
+
+    // A peer on a second runtime, so a live connection exists to wait for.
+    let peer_runtime = rt_threaded();
+    let peer = {
+        let _guard = peer_runtime.enter();
+        factory.endpoint()
+    };
+    let peer_handle = peer_runtime.handle().clone();
+    // Accept concurrently: the client's handshake cannot complete until the
+    // server drives its half, and the accepted handle must stay alive or the
+    // connection would close and the endpoint become idle before the assertion.
+    let accepted = {
+        let handle = endpoint_handle.clone();
+        let endpoint = endpoint.clone();
+        std::thread::spawn(move || {
+            handle.block_on(async {
+                let incoming = endpoint.accept().await.expect("incoming");
+                incoming.await.expect("accept")
+            })
+        })
+    };
+    let connection = peer_handle.block_on(async {
+        peer.connect(endpoint_addr, "localhost")
+            .expect("connect")
+            .await
+            .expect("connection")
+    });
+    let _server_connection = accepted.join().expect("accept thread");
+
+    // Park `wait_idle`; it blocks while that connection is live.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let waiter = {
+        let handle = endpoint_handle.clone();
+        let endpoint = endpoint.clone();
+        std::thread::spawn(move || {
+            handle.block_on(endpoint.wait_idle());
+            let _ = done_tx.send(());
+        })
+    };
+
+    // Otherwise a pass below would be vacuous.
+    assert!(
+        done_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "wait_idle returned before the driver was dropped"
+    );
+
+    // Dropping the runtime drops the endpoint driver.
+    endpoint_runtime.shutdown_background();
+
+    let woke = done_rx.recv_timeout(Duration::from_secs(10)).is_ok();
+    drop(connection);
+    drop(peer);
+    drop(peer_runtime);
+    assert!(
+        woke,
+        "wait_idle never returned after the endpoint driver was dropped"
+    );
+    let _ = waiter.join();
+}
+
+async fn wait_closed(conn: &crate::Connection) -> crate::ConnectionError {
+    timeout(Duration::from_secs(5), conn.closed())
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -786,6 +1191,222 @@ async fn rebind_recv() {
     let mut stream = connection.accept_uni().await.unwrap();
     assert_eq!(stream.read_to_end(MSG.len()).await.unwrap(), MSG);
     server.await.unwrap();
+}
+
+/// Verify endpoint behavior while a connection is between `start_accept` and `finish_accept`:
+/// `open_connections` must be 0, and `wait_idle` must not complete while `pending_accepts > 0`.
+/// After the accept completes and the connection is closed, `wait_idle` must resolve.
+#[tokio::test]
+async fn split_accept_wait_idle_and_open_connections() {
+    let _guard = subscribe();
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake(b"test", b"test");
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    assert_eq!(server.open_connections(), 0);
+    assert_wait_idle_pending(&server).await;
+
+    blocker.release();
+
+    let client_conn = await_connection(connect).await.unwrap();
+    let server_conn = await_connection(accept).await.unwrap();
+    assert_eq!(server.open_connections(), 1);
+
+    client_conn.close(0u32.into(), b"done");
+    let _ = wait_closed(&client_conn).await;
+    let _ = wait_closed(&server_conn).await;
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+}
+
+/// A failed accept never becomes a connection, so no Drained event will wake idle waiters.
+#[tokio::test]
+async fn split_accept_failure_wakes_idle_waiter() {
+    let _guard = subscribe();
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake(b"server", b"client");
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    assert_eq!(server.open_connections(), 0);
+
+    let mut idle = pin!(server.wait_idle());
+    let (waker, wake_counter) = new_count_waker();
+    assert!(
+        idle.as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert_eq!(wake_counter.wakes(), 0);
+
+    blocker.release();
+    let error = await_connection(accept).await.unwrap_err();
+    assert!(matches!(
+        error,
+        crate::ConnectionError::TransportError(error)
+            if error.code == proto::TransportErrorCode::crypto(0x78)
+    ));
+    // Repolling wait_idle alone would hide a missing notification now that the endpoint is
+    // idle. Verify that the waiter registered before the failure was actually woken.
+    assert!(wake_counter.wakes() > 0);
+    timeout(Duration::from_secs(5), idle).await.unwrap();
+    assert_eq!(server.open_connections(), 0);
+
+    assert!(await_connection(connect).await.is_err());
+    wait_idle(&client).await;
+}
+
+/// Verify that calling `Endpoint::close` while a connection is in the `Accepting` state
+/// (between `start_accept` and `finish_accept`) produces `LocallyClosed` on the server side
+/// and `ConnectionClosed` on the client side, and that `wait_idle` resolves afterward.
+#[tokio::test]
+async fn split_accept_close_during_pending_accept() {
+    let _guard = subscribe();
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake(b"test", b"test");
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    server.close(0u32.into(), b"closing");
+    assert_wait_idle_pending(&server).await;
+
+    blocker.release();
+
+    match await_connection(accept).await {
+        Ok(conn) => {
+            let err = wait_closed(&conn).await;
+            assert!(matches!(err, crate::ConnectionError::LocallyClosed));
+        }
+        Err(err) => assert!(matches!(err, crate::ConnectionError::LocallyClosed)),
+    }
+
+    match await_connection(connect).await {
+        Ok(conn) => {
+            let err = wait_closed(&conn).await;
+            assert!(matches!(err, crate::ConnectionError::ConnectionClosed(_)));
+        }
+        Err(err) => {
+            assert!(matches!(err, crate::ConnectionError::ConnectionClosed(_)));
+        }
+    }
+
+    wait_idle(&server).await;
+    wait_idle(&client).await;
+    assert_eq!(server.open_connections(), 0);
+}
+
+/// The endpoint driver may exit while an accept runs without the lock. The connection registered
+/// afterwards must still be told that the driver is gone, so that its `Connecting` fails promptly
+/// and `wait_idle` does not wait on a connection nobody drives.
+#[tokio::test]
+async fn split_accept_driver_lost_during_handshake() {
+    let _guard = subscribe();
+    let failure = Arc::new(SocketFailure::default());
+    let socket = Box::new(FailingSocket {
+        inner: localhost_socket(),
+        failure: failure.clone(),
+    });
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake_with_socket(b"test", b"test", socket);
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    // Fail the server socket, which ends the endpoint driver while the handshake is blocked.
+    // `accept` yields `None` once the driver is gone.
+    failure.trigger();
+    assert!(
+        timeout(Duration::from_secs(5), server.accept())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Register an idle waiter while the accept is still pending. Nothing but the accept's
+    // completion can wake it now that the driver is gone.
+    let mut idle = pin!(server.wait_idle());
+    let (waker, wake_counter) = new_count_waker();
+    assert!(
+        idle.as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending()
+    );
+    assert_eq!(wake_counter.wakes(), 0);
+
+    blocker.release();
+    // Without the fix this waits for the handshake timeout, well past `await_connection`'s limit.
+    assert!(await_connection(accept).await.is_err());
+    assert!(wake_counter.wakes() > 0);
+    timeout(Duration::from_secs(5), idle).await.unwrap();
+
+    client.close(0u32.into(), b"done");
+    assert!(await_connection(connect).await.is_err());
+    wait_idle(&client).await;
+}
+
+#[tokio::test]
+async fn split_accept_driver_lost_before_connection_spawn() {
+    let _guard = subscribe();
+    let failure = Arc::new(SocketFailure::default());
+    let runtime = Arc::new(DriverLossRuntime {
+        failure: failure.clone(),
+        stopped_on_first_poll: AtomicBool::new(false),
+    });
+    let socket = Box::new(FailingSocket {
+        inner: localhost_socket(),
+        failure: failure.clone(),
+    });
+    let BlockedHandshake {
+        client,
+        server,
+        blocker,
+        release_guard: _release_guard,
+        accept,
+        connect,
+    } = blocked_handshake_with_runtime(b"test", b"test", socket, runtime.clone());
+
+    wait_for_blocked_handshake(blocker.clone()).await;
+    failure.trigger();
+    assert!(
+        timeout(Duration::from_secs(5), server.accept())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    blocker.release();
+    // The runtime polls the connection driver before registration returns. It must observe the
+    // closed event channel immediately, before transmitting any handshake packets.
+    assert!(await_connection(accept).await.is_err());
+    assert!(
+        runtime.stopped_on_first_poll.load(Ordering::SeqCst),
+        "connection driver ran before its event channel was closed"
+    );
+    wait_idle(&server).await;
+
+    client.close(0u32.into(), b"done");
+    assert!(await_connection(connect).await.is_err());
+    wait_idle(&client).await;
 }
 
 #[tokio::test]

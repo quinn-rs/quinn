@@ -259,7 +259,7 @@ impl Endpoint {
         Ok(endpoint
             .recv_state
             .connections
-            .insert(ch, conn, sender, self.runtime.clone()))
+            .insert(ch, conn, sender, false, self.runtime.clone()))
     }
 
     /// Switch to a new UDP socket
@@ -432,6 +432,12 @@ impl Drop for EndpointDriver {
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
         endpoint.recv_state.connections.senders.clear();
+        // Clearing the senders is what makes the endpoint idle, but a waiter already parked on
+        // `idle` only re-reads that after being notified, and with the driver gone nothing else
+        // can wake it. Same reason as the equivalent check in `EndpointInner::accept`.
+        if endpoint.is_idle() {
+            self.0.shared.idle.notify_waiters();
+        }
     }
 }
 
@@ -447,21 +453,46 @@ impl EndpointInner {
         incoming: proto::Incoming,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
-        let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
-        let now = state.runtime.now();
-        match state
-            .inner
-            .accept(incoming, now, &mut response_buffer, server_config)
-        {
+
+        // Phase 1: reserve endpoint state for the connection under the lock.
+        let accepting = {
+            let mut state = self.state.lock().unwrap();
+            let now = state.runtime.now();
+            match state
+                .inner
+                .start_accept(incoming, now, &mut response_buffer, server_config)
+            {
+                Ok(accepting) => {
+                    state.pending_accepts += 1;
+                    accepting
+                }
+                Err(error) => {
+                    if let Some(transmit) = error.response {
+                        respond(transmit, &response_buffer, &mut state.sender);
+                    }
+                    return Err(error.cause);
+                }
+            }
+        };
+
+        // Phase 2: TLS session setup, connection construction, and first-packet handling,
+        // without holding the lock.
+        let accepted = accepting.accept();
+
+        // Phase 3: register the connection, or release the reservation, under the lock.
+        let mut state = self.state.lock().unwrap();
+        state.pending_accepts -= 1;
+        let result = match state.inner.finish_accept(accepted, &mut response_buffer) {
             Ok((handle, conn)) => {
                 state.stats.accepted_handshakes += 1;
                 let sender = state.socket.create_sender();
                 let runtime = state.runtime.clone();
+                let driver_lost = state.driver_lost;
                 Ok(state
                     .recv_state
                     .connections
-                    .insert(handle, conn, sender, runtime))
+                    .insert(handle, conn, sender, driver_lost, runtime))
             }
             Err(error) => {
                 if let Some(transmit) = error.response {
@@ -469,7 +500,13 @@ impl EndpointInner {
                 }
                 Err(error.cause)
             }
+        };
+        // Failed accepts and accepts completed after driver loss cannot rely on a Drained event
+        // being processed to wake idle waiters.
+        if state.is_idle() {
+            self.shared.idle.notify_waiters();
         }
+        result
     }
 
     pub(crate) fn refuse(&self, incoming: proto::Incoming) {
@@ -511,6 +548,8 @@ pub(crate) struct State {
     runtime: Arc<dyn Runtime>,
     stats: EndpointStats,
     default_client_config: Option<ClientConfig>,
+    /// Connections in the process of being accepted
+    pending_accepts: usize,
 }
 
 #[derive(Debug)]
@@ -590,7 +629,7 @@ impl State {
     }
 
     fn is_idle(&self) -> bool {
-        self.recv_state.connections.is_empty()
+        self.recv_state.connections.is_empty() && self.pending_accepts == 0
     }
 }
 
@@ -677,6 +716,7 @@ impl ConnectionSet {
         handle: ConnectionHandle,
         conn: proto::Connection,
         sender: Pin<Box<dyn UdpSender>>,
+        driver_lost: bool,
         runtime: Arc<dyn Runtime>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
@@ -687,7 +727,14 @@ impl ConnectionSet {
             })
             .unwrap();
         }
-        self.senders.insert(handle, send);
+        match driver_lost {
+            // Close the event channel before spawning the connection driver, so it cannot
+            // transmit a handshake after the endpoint driver has stopped.
+            true => drop(send),
+            false => {
+                self.senders.insert(handle, send);
+            }
+        }
         Connecting::new(handle, conn, self.sender.clone(), recv, sender, runtime)
     }
 
@@ -774,6 +821,7 @@ impl EndpointRef {
                 runtime,
                 stats: EndpointStats::default(),
                 default_client_config: None,
+                pending_accepts: 0,
             }),
         }))
     }

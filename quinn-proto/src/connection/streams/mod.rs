@@ -51,7 +51,7 @@ impl<'a> Streams<'a> {
 
         self.state.next[dir as usize] += 1;
         let id = StreamId::new(self.state.side, dir, self.state.next[dir as usize] - 1);
-        self.state.insert(false, id);
+        self.state.insert_local(id);
         self.state.send_streams += 1;
         Some(id)
     }
@@ -470,7 +470,9 @@ struct PendingStream {
 /// Application events about streams
 #[derive(Debug, PartialEq, Eq)]
 pub enum StreamEvent {
-    /// One or more new streams has been opened and might be readable
+    /// One or more new streams has been opened and can be accepted
+    ///
+    /// A separate [`StreamEvent::Readable`] is emitted once data arrives.
     Opened {
         /// Directionality for which streams have been opened
         dir: Dir,
