@@ -1153,6 +1153,7 @@ impl State {
             .min(MAX_TRANSMIT_SEGMENTS);
 
         loop {
+            // Retry last transmit attempt
             if let Some(x) = self.buffered_transmit.as_ref() {
                 match self
                     .sender
