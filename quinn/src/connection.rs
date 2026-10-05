@@ -1143,7 +1143,7 @@ impl State {
         }
     }
 
-    fn drive_transmit(&mut self, cx: &mut Context<'_>) -> Result<bool, io::Error> {
+    fn drive_transmit(&mut self, cx: &mut Context<'_>) -> io::Result<bool> {
         let now = self.runtime.now();
         let mut transmits = 0;
 
