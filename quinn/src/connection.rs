@@ -1160,7 +1160,7 @@ impl State {
                     .as_mut()
                     .poll_send(&udp_transmit(t, &self.send_buffer[..t.size]), cx)?
                 {
-                    Poll::Pending => break,
+                    Poll::Pending => return Ok(false),
                     Poll::Ready(_) => {
                         self.buffered_transmit = None;
                         if transmits >= MAX_TRANSMIT_DATAGRAMS {
