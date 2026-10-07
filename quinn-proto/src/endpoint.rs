@@ -352,7 +352,9 @@ impl Endpoint {
         trace!(initial_dcid = %remote_id);
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(RouteDatagramTo::Connection(ch));
+        let loc_cid = self
+            .new_cid(RouteDatagramTo::Connection(ch))
+            .ok_or(ConnectError::CidsExhausted)?;
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -398,7 +400,9 @@ impl Endpoint {
     ) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
-            let id = self.new_cid(RouteDatagramTo::Connection(ch));
+            let Some(id) = self.new_cid(RouteDatagramTo::Connection(ch)) else {
+                return ConnectionEvent(ConnectionEventInner::CidsExhausted(now));
+            };
             let meta = &mut self.connections[ch];
             let sequence = meta.cids_issued;
             meta.cids_issued += 1;
@@ -413,19 +417,22 @@ impl Endpoint {
     }
 
     /// Generate and reserve a local connection ID
-    fn new_cid(&mut self, route_to: RouteDatagramTo) -> ConnectionId {
-        loop {
+    fn new_cid(&mut self, route_to: RouteDatagramTo) -> Option<ConnectionId> {
+        // A generator's output space can be much smaller than its CID length implies.
+        const MAX_CID_ATTEMPTS: usize = 64;
+        for _ in 0..MAX_CID_ATTEMPTS {
             let cid = self.local_cid_generator.generate_cid();
             if cid.is_empty() {
                 // Zero-length CID; nothing to track
                 debug_assert_eq!(self.local_cid_generator.cid_len(), 0);
-                return cid;
+                return Some(cid);
             }
             if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
                 e.insert(route_to);
-                break cid;
+                return Some(cid);
             }
         }
+        None
     }
 
     fn handle_first_packet(
@@ -616,18 +623,9 @@ impl Endpoint {
 
         if self.cids_exhausted() {
             debug!("refusing connection");
-            let response = self.initial_close(
-                version,
-                incoming.addresses,
-                &incoming.crypto,
-                src_cid,
-                TransportError::CONNECTION_REFUSED(""),
-                buf,
-            );
-            self.ignore(incoming);
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::CidsExhausted,
-                response: Some(response),
+                response: Some(self.refuse(incoming, buf)),
             }));
         }
 
@@ -650,7 +648,12 @@ impl Endpoint {
             }));
         };
 
-        let loc_cid = self.new_cid(RouteDatagramTo::Incoming(incoming.incoming_idx));
+        let Some(loc_cid) = self.new_cid(RouteDatagramTo::Incoming(incoming.incoming_idx)) else {
+            return Err(Box::new(AcceptError {
+                cause: ConnectionError::CidsExhausted,
+                response: Some(self.refuse(incoming, buf)),
+            }));
+        };
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -664,7 +667,13 @@ impl Endpoint {
         params.retry_src_cid = incoming.token.retry_src_cid;
         let mut pref_addr_cid = None;
         if server_config.has_preferred_address() {
-            let cid = self.new_cid(RouteDatagramTo::Incoming(incoming.incoming_idx));
+            let Some(cid) = self.new_cid(RouteDatagramTo::Incoming(incoming.incoming_idx)) else {
+                self.index.retire(loc_cid);
+                return Err(Box::new(AcceptError {
+                    cause: ConnectionError::CidsExhausted,
+                    response: Some(self.refuse(incoming, buf)),
+                }));
+            };
             pref_addr_cid = Some(cid);
             params.preferred_address = Some(PreferredAddress {
                 address_v4: server_config.preferred_address_v4,
@@ -1086,7 +1095,7 @@ impl Endpoint {
 
     /// Whether we've used up 3/4 of the available CID space
     ///
-    /// We leave some space unused so that `new_cid` can be relied upon to finish quickly. We don't
+    /// We leave some space unused to reduce collisions during CID allocation. We don't
     /// bother to check when CID longer than 4 bytes are used because 2^40 connections is a lot.
     fn cids_exhausted(&self) -> bool {
         let cid_len = self.local_cid_generator.cid_len();
