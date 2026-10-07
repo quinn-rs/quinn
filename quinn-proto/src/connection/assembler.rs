@@ -44,7 +44,7 @@ impl Assembler {
             // Enter unordered mode
             if !self.data.is_empty() {
                 // Get rid of possible duplicates
-                self.defragment();
+                self.defragment(self.bytes_read);
             }
             let mut recvd = RangeSet::new();
             recvd.insert(0..self.bytes_read);
@@ -101,8 +101,9 @@ impl Assembler {
     /// Copy fragmented chunk data to new chunks backed by a single buffer
     ///
     /// This makes sure we're not unnecessarily holding on to many larger allocations.
-    /// We merge contiguous chunks in the process of doing so.
-    fn defragment(&mut self) {
+    /// We merge contiguous chunks in the process of doing so. Bytes before `start`
+    /// are treated as already delivered and discarded.
+    fn defragment(&mut self, start: u64) {
         // Chunks smaller than min_chunk_size are merged regardless of fragmentation
         let min_chunk_size = max(self.buffered.div_ceil(MAX_CHUNKS), MIN_RETAINED_CHUNK_SIZE);
         let new = BinaryHeap::with_capacity(self.data.len());
@@ -110,7 +111,7 @@ impl Assembler {
         let mut buffers = old.into_sorted_vec();
         self.buffered = 0;
         let mut fragmented_buffered = 0;
-        let mut offset = 0;
+        let mut offset = start;
         for chunk in buffers.iter_mut().rev() {
             chunk.try_mark_defragment(offset);
             let size = chunk.bytes.len();
@@ -213,7 +214,7 @@ impl Assembler {
         let threshold = 32768.max(buffered * 3 / 2);
         // Small gapped frames hold over-allocation below the threshold, so bound the count too.
         if over_allocation > threshold || self.data.len() > COMPACT_THRESHOLD {
-            self.defragment();
+            self.defragment(0);
             // ngtcp2 uses a threshold of 4000 -- try to be a little more conservative?
             if self.data.len() > MAX_CHUNKS {
                 return Err(TooManyChunks);
@@ -419,7 +420,7 @@ mod test {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"123"), 3).unwrap();
         x.insert(0, Bytes::from_static(b"123"), 3).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"123");
         assert_matches!(next(&mut x, 32), None);
     }
@@ -438,7 +439,7 @@ mod test {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"12345"), 5).unwrap();
         x.insert(1, Bytes::from_static(b"234"), 3).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"12345");
         assert_matches!(next(&mut x, 32), None);
     }
@@ -457,7 +458,7 @@ mod test {
         let mut x = Assembler::new();
         x.insert(1, Bytes::from_static(b"234"), 3).unwrap();
         x.insert(0, Bytes::from_static(b"12345"), 5).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"12345");
         assert_matches!(next(&mut x, 32), None);
     }
@@ -477,7 +478,7 @@ mod test {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"123"), 4).unwrap();
         x.insert(1, Bytes::from_static(b"234"), 4).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"1234");
         assert_matches!(next(&mut x, 32), None);
     }
@@ -500,7 +501,7 @@ mod test {
         x.insert(2, Bytes::from_static(b"3"), 1).unwrap();
         x.insert(4, Bytes::from_static(b"5"), 1).unwrap();
         x.insert(0, Bytes::from_static(b"123456"), 6).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"123456");
         assert_matches!(next(&mut x, 32), None);
     }
@@ -521,7 +522,7 @@ mod test {
         x.insert(3, Bytes::from_static(b"def"), 4).unwrap();
         x.insert(9, Bytes::from_static(b"jkl"), 4).unwrap();
         x.insert(12, Bytes::from_static(b"mno"), 4).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert_eq!(
             next_unordered(&mut x),
             Chunk::new(0, Bytes::from_static(b"abcdef"))
@@ -536,7 +537,7 @@ mod test {
     fn defrag_with_missing_prefix() {
         let mut x = Assembler::new();
         x.insert(3, Bytes::from_static(b"def"), 3).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert_eq!(
             next_unordered(&mut x),
             Chunk::new(3, Bytes::from_static(b"def"))
@@ -550,7 +551,7 @@ mod test {
         x.insert(0, Bytes::from_static(b"abc"), 4).unwrap();
         x.insert(7, Bytes::from_static(b"hij"), 4).unwrap();
         x.insert(11, Bytes::from_static(b"lmn"), 4).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert_matches!(x.read(usize::MAX, true), Some(ref y) if &y.bytes[..] == b"abcdef");
         x.insert(5, Bytes::from_static(b"fghijklmn"), 9).unwrap();
         assert_matches!(x.read(usize::MAX, true), Some(ref y) if &y.bytes[..] == b"ghijklmn");
@@ -559,6 +560,18 @@ mod test {
         x.insert(15, Bytes::from_static(b"pqrs"), 4).unwrap();
         assert_matches!(x.read(usize::MAX, true), Some(ref y) if &y.bytes[..] == b"rs");
         assert_matches!(x.read(usize::MAX, true), None);
+    }
+
+    #[test]
+    fn unordered_after_ordered_read_drops_a_stale_duplicate() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"abc"), 3).unwrap();
+        x.insert(0, Bytes::from_static(b"abc"), 3).unwrap();
+        assert_matches!(next(&mut x, 3), Some(y) if &y[..] == b"abc");
+        assert_eq!(x.bytes_read(), 3);
+        x.ensure_ordering(false).unwrap();
+        assert_eq!(x.read(usize::MAX, false), None);
+        assert_eq!(x.bytes_read(), 3);
     }
 
     #[test]
@@ -712,7 +725,7 @@ mod test {
         // Add 1 extra chunk, defragment must coalesce the previous
         // chunks to stay within MAX_CHUNKS
         x.insert(offset, Bytes::from_static(b"x"), 1).unwrap();
-        x.defragment();
+        x.defragment(0);
         assert!(x.data.len() <= MAX_CHUNKS);
     }
 
