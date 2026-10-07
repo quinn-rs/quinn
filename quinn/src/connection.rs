@@ -1191,7 +1191,8 @@ impl State {
                 .poll_send(&udp_transmit(&t, &self.send_buffer[..t.size]), cx)?
                 .is_pending()
             {
-                self.buffered_transmit = Some(t)
+                self.buffered_transmit = Some(t);
+                return Ok(false);
             } else if transmits >= MAX_TRANSMIT_DATAGRAMS {
                 break;
             }
