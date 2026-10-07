@@ -69,6 +69,15 @@ impl Code {
     pub fn crypto(code: u8) -> Self {
         Self(0x100 | u64::from(code))
     }
+
+    /// Whether this is a crypto error code
+    ///
+    /// Crypto errors occupy the reserved `0x0100..0x0200` range, each encoding a TLS alert (see
+    /// [`Code::crypto`]). This makes it possible to distinguish a failed cryptographic handshake
+    /// (e.g. certificate or authentication failure) from other transport errors.
+    pub const fn is_crypto(self) -> bool {
+        0x100 <= self.0 && self.0 < 0x200
+    }
 }
 
 impl coding::Codec for Code {
@@ -105,7 +114,7 @@ macro_rules! errors {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
-                    x if (0x100..0x200).contains(&x) => write!(f, "Code::crypto({:02x})", self.0 as u8),
+                    _ if self.is_crypto() => write!(f, "Code::crypto({:02x})", self.0 as u8),
                     _ => write!(f, "Code({:x})", self.0),
                 }
             }
@@ -116,7 +125,7 @@ macro_rules! errors {
                 match self.0 {
                     $($val => f.write_str($desc),)*
                     // We're trying to be abstract over the crypto protocol, so human-readable descriptions here is tricky.
-                    _ if self.0 >= 0x100 && self.0 < 0x200 => write!(f, "the cryptographic handshake failed: error {}", self.0 & 0xFF),
+                    _ if self.is_crypto() => write!(f, "the cryptographic handshake failed: error {}", self.0 & 0xFF),
                     _ => f.write_str("unknown error"),
                 }
             }
