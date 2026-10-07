@@ -1154,14 +1154,19 @@ impl State {
 
         loop {
             // Retry last transmit attempt
-            if let Some(x) = self.buffered_transmit.as_ref() {
+            if let Some(t) = &self.buffered_transmit {
                 match self
                     .sender
                     .as_mut()
-                    .poll_send(&udp_transmit(x, &self.send_buffer[..x.size]), cx)?
+                    .poll_send(&udp_transmit(t, &self.send_buffer[..t.size]), cx)?
                 {
                     Poll::Pending => break,
-                    Poll::Ready(_) => self.buffered_transmit = None,
+                    Poll::Ready(_) => {
+                        self.buffered_transmit = None;
+                        if transmits >= MAX_TRANSMIT_DATAGRAMS {
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -1187,18 +1192,16 @@ impl State {
                 .is_pending()
             {
                 self.buffered_transmit = Some(t)
-            }
-
-            if transmits >= MAX_TRANSMIT_DATAGRAMS {
-                // TODO: What isn't ideal here yet is that if we don't poll all
-                // datagrams that could be sent we don't go into the `app_limited`
-                // state and CWND continues to grow until we get here the next time.
-                // See https://github.com/quinn-rs/quinn/issues/1126
-                return Ok(true);
+            } else if transmits >= MAX_TRANSMIT_DATAGRAMS {
+                break;
             }
         }
 
-        Ok(false)
+        // TODO: What isn't ideal here yet is that if we don't poll all
+        // datagrams that could be sent we don't go into the `app_limited`
+        // state and CWND continues to grow until we get here the next time.
+        // See https://github.com/quinn-rs/quinn/issues/1126
+        Ok(transmits >= MAX_TRANSMIT_DATAGRAMS)
     }
 
     fn forward_endpoint_events(&mut self) {
