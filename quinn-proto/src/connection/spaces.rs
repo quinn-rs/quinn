@@ -143,14 +143,19 @@ impl PacketSpace {
             return;
         }
 
-        // Retransmit the data of the oldest in-flight packet
-        for packet in self.sent_packets.values_mut() {
-            if !packet.retransmits.is_empty(streams) {
+        // Retransmit the data of the oldest in-flight packet.
+        let retransmit_pn = self
+            .sent_packets
+            .range(..)
+            .find(|(_, p)| !p.retransmits.is_empty(streams))
+            .map(|(pn, _)| pn);
+        if let Some(pn) = retransmit_pn {
+            if let Some(packet) = self.sent_packets.get_mut(pn) {
                 // Remove retransmitted data from the old packet so we don't end up retransmitting
                 // it *again* even if the copy we're sending now gets acknowledged.
                 self.pending |= mem::take(&mut packet.retransmits);
-                return;
             }
+            return;
         }
 
         // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
@@ -288,7 +293,7 @@ impl IndexMut<SpaceId> for [PacketSpace; 3] {
 
 /// Represents one or more packets subject to retransmission
 #[derive(Debug, Clone)]
-#[allow(unreachable_pub)] // bench only
+#[allow(unreachable_pub, reason = "only pub for benches")]
 pub struct SentPacket {
     /// [`PathData::generation`](super::PathData::generation) of the path on which this packet was sent
     pub(super) path_generation: u64,
