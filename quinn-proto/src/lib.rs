@@ -43,6 +43,8 @@ mod bloom_token_log;
 pub use bloom_token_log::BloomTokenLog;
 
 mod connection;
+#[cfg(feature = "__bench")]
+pub use crate::connection::bench;
 pub use crate::connection::{
     Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
     FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream, RttEstimator,
