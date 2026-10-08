@@ -288,7 +288,8 @@ impl IndexMut<SpaceId> for [PacketSpace; 3] {
 
 /// Represents one or more packets subject to retransmission
 #[derive(Debug, Clone)]
-pub(super) struct SentPacket {
+#[allow(unreachable_pub)] // bench only
+pub struct SentPacket {
     /// [`PathData::generation`](super::PathData::generation) of the path on which this packet was sent
     pub(super) path_generation: u64,
     /// The time the packet was sent.
@@ -309,6 +310,20 @@ pub(super) struct SentPacket {
     ///
     /// The actual application data is stored with the stream state.
     pub(super) stream_frames: frame::StreamMetaVec,
+}
+
+#[cfg(feature = "__bench")]
+/// Construct a [`SentPacket`] for benchmarking.
+pub fn bench_packet(size: u16, ack_eliciting: bool) -> SentPacket {
+    SentPacket {
+        path_generation: 0,
+        time_sent: Instant::now(),
+        size,
+        ack_eliciting,
+        largest_acked: None,
+        retransmits: Default::default(),
+        stream_frames: Default::default(),
+    }
 }
 
 /// Represents one or more packets that are deemed lost.

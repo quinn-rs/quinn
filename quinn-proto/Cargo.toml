@@ -39,6 +39,8 @@ qlog = ["dep:qlog"]
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at any time.
 
+# Expose internal structures for benchmarks
+__bench = []
 __rustls-post-quantum-test =  []
 
 [dependencies]
@@ -73,6 +75,19 @@ hex-literal = { workspace = true  }
 rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 wasm-bindgen-test = { workspace = true }
+
+# Cargo builds dev-dependencies for every test target, and criterion doesn't build for wasm.
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+criterion = { version = "0.8", default-features = false }
+
+[lib]
+# See https://github.com/bheisler/criterion.rs/blob/master/book/src/faq.md#cargo-bench-gives-unrecognized-option-errors-for-valid-command-line-options
+bench = false
+
+[[bench]]
+name = "sent_packets"
+harness = false
+required-features = ["__bench"]
 
 [lints]
 workspace = true
