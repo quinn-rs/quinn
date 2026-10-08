@@ -5016,6 +5016,34 @@ fn application_close_in_initial_is_rejected() {
     );
 }
 
+#[test]
+fn min_loss_delay_prevents_time_based_loss() {
+    let mut transport = TransportConfig::default();
+    transport
+        .deterministic_packet_numbers(true)
+        .min_loss_delay(Duration::from_millis(10));
+
+    let mut config = client_config();
+    config.transport_config(Arc::new(transport));
+
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect_with(config);
+
+    // Send a packet and drop it.
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    assert_eq!(pair.client.outbound.len(), 1);
+    pair.client.outbound.clear();
+
+    // Send a later packet and deliver it before the loss timer expires.
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    pair.server.drive(pair.time, pair.client.addr);
+    pair.client.drive(pair.time, pair.server.addr);
+
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+}
+
 #[cfg(feature = "qlog")]
 #[test]
 fn qlog_packet_lost_trigger() {
