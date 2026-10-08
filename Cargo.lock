@@ -1994,6 +1994,7 @@ dependencies = [
  "assert_matches",
  "aws-lc-rs",
  "bytes",
+ "criterion",
  "fastbloom",
  "getrandom 0.4.3",
  "hex-literal",
