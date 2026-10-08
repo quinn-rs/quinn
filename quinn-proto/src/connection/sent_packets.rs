@@ -8,7 +8,8 @@ use super::spaces::SentPacket;
 /// Storage must depend on the number of tracked packets, not the distance between
 /// packet numbers: an old unacknowledged packet can outlive many removed entries.
 #[derive(Default)]
-pub(super) struct SentPackets {
+#[allow(unreachable_pub)] // bench only
+pub struct SentPackets {
     packets: BTreeMap<u64, SentPacket>,
     /// Count of present entries with `size != 0`, for O(1) `has_in_flight`.
     in_flight: usize,
@@ -16,7 +17,8 @@ pub(super) struct SentPackets {
 
 impl SentPackets {
     /// Insert `value` at `pn`, which must exceed every previously inserted packet number.
-    pub(super) fn insert(&mut self, pn: u64, value: SentPacket) {
+    #[allow(unreachable_pub)] // bench only
+    pub fn insert(&mut self, pn: u64, value: SentPacket) {
         debug_assert!(
             self.packets
                 .last_key_value()
@@ -29,7 +31,8 @@ impl SentPackets {
     }
 
     /// Remove and return the entry for `pn`.
-    pub(super) fn remove(&mut self, pn: u64) -> Option<SentPacket> {
+    #[allow(unreachable_pub)] // bench only
+    pub fn remove(&mut self, pn: u64) -> Option<SentPacket> {
         let value = self.packets.remove(&pn)?;
         if value.size != 0 {
             self.in_flight -= 1;
@@ -38,17 +41,32 @@ impl SentPackets {
     }
 
     /// Return the entry for `pn`.
-    pub(super) fn get(&self, pn: u64) -> Option<&SentPacket> {
+    #[allow(unreachable_pub)] // bench only
+    pub fn get(&self, pn: u64) -> Option<&SentPacket> {
         self.packets.get(&pn)
     }
 
     /// Whether any present entry has `size != 0`.
-    pub(super) fn has_in_flight(&self) -> bool {
+    #[allow(unreachable_pub)] // bench only
+    pub fn has_in_flight(&self) -> bool {
         self.in_flight != 0
     }
 
+    /// The number of present entries.
+    #[cfg(feature = "bench")]
+    pub fn len(&self) -> usize {
+        self.packets.len()
+    }
+
+    /// Whether any entries are present.
+    #[cfg(feature = "bench")]
+    pub fn is_empty(&self) -> bool {
+        self.packets.is_empty()
+    }
+
     /// Iterate present entries in `range`, in increasing packet-number order.
-    pub(super) fn range(
+    #[allow(unreachable_pub)] // bench only
+    pub fn range(
         &self,
         range: impl RangeBounds<u64>,
     ) -> impl Iterator<Item = (u64, &SentPacket)> + '_ {
@@ -56,12 +74,14 @@ impl SentPackets {
     }
 
     /// Mutably iterate present entries in increasing packet-number order.
-    pub(super) fn values_mut(&mut self) -> impl Iterator<Item = &mut SentPacket> + '_ {
+    #[allow(unreachable_pub)] // bench only
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut SentPacket> + '_ {
         self.packets.values_mut()
     }
 
     /// Consume the map, yielding present entries in increasing packet-number order.
-    pub(super) fn into_values(self) -> impl Iterator<Item = SentPacket> {
+    #[allow(unreachable_pub)] // bench only
+    pub fn into_values(self) -> impl Iterator<Item = SentPacket> {
         self.packets.into_values()
     }
 }
