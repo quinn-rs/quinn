@@ -1145,6 +1145,15 @@ impl Connection {
     pub fn handle_event(&mut self, event: ConnectionEvent) {
         use ConnectionEventInner::*;
         match event.0 {
+            CidsExhausted(now) => {
+                if !self.state.is_closed() {
+                    self.error = Some(ConnectionError::CidsExhausted);
+                    self.close_inner(
+                        now,
+                        TransportError::INTERNAL_ERROR("connection ID allocation exhausted").into(),
+                    );
+                }
+            }
             Datagram(DatagramConnectionEvent {
                 now,
                 remote,
@@ -4104,7 +4113,7 @@ pub enum ConnectionError {
     /// The local application closed the connection
     #[error("closed")]
     LocallyClosed,
-    /// The connection could not be created because not enough of the CID space is available
+    /// The connection could not be created or continued because no new CID could be allocated
     ///
     /// Try using longer connection IDs.
     #[error("CIDs exhausted")]

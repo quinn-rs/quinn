@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     convert::TryInto,
     iter, mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -2412,6 +2413,340 @@ fn implicit_open() {
     assert_eq!(pair.server_streams(server_ch).accept(Dir::Uni), Some(s1));
     assert_eq!(pair.server_streams(server_ch).accept(Dir::Uni), Some(s2));
     assert_eq!(pair.server_streams(server_ch).accept(Dir::Uni), None);
+}
+
+#[test]
+fn cid_exhaustion_connect() {
+    let mut config = EndpointConfig::default();
+    config.cid_generator(Arc::new(|| Box::new(TestConnectionIdGenerator::new([0]))));
+    let mut endpoint = Endpoint::new(Arc::new(config), None, true);
+    let server_addr = "[::1]:4433".parse().unwrap();
+    let now = Instant::now();
+    let (ch, connection) = endpoint
+        .connect(now, client_config(), server_addr, "localhost")
+        .unwrap();
+
+    assert_matches!(
+        endpoint.connect(now, client_config(), server_addr, "localhost"),
+        Err(ConnectError::CidsExhausted)
+    );
+    assert_eq!(endpoint.open_connections(), 1);
+    assert_eq!(endpoint.known_cids(), 1);
+    assert!(!connection.is_closed());
+
+    drop(connection);
+    endpoint.handle_event(ch, EndpointEvent::drained());
+    endpoint
+        .connect(now, client_config(), server_addr, "localhost")
+        .unwrap();
+    assert_eq!(endpoint.known_cids(), 1);
+}
+
+#[test]
+fn cid_collision_connect_retries() {
+    let mut config = EndpointConfig::default();
+    config.cid_generator(Arc::new(|| {
+        Box::new(TestConnectionIdGenerator::new([0, 0, 1]))
+    }));
+    let mut endpoint = Endpoint::new(Arc::new(config), None, true);
+    let server_addr = "[::1]:4433".parse().unwrap();
+    let now = Instant::now();
+    let (first, _) = endpoint
+        .connect(now, client_config(), server_addr, "localhost")
+        .unwrap();
+    let (second, _) = endpoint
+        .connect(now, client_config(), server_addr, "localhost")
+        .unwrap();
+
+    assert_ne!(first, second);
+    assert_eq!(endpoint.open_connections(), 2);
+    assert_eq!(endpoint.known_cids(), 2);
+}
+
+#[test]
+fn cid_exhaustion_accept_cleans_up_incoming() {
+    let _guard = subscribe();
+    let mut config = EndpointConfig::default();
+    config.cid_generator(Arc::new(|| Box::new(TestConnectionIdGenerator::new([0]))));
+    let mut server_config = server_config();
+    server_config.max_incoming(1);
+    let mut server = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)), true);
+    let (existing_ch, existing) = server
+        .connect(
+            Instant::now(),
+            client_config(),
+            "[::1]:4433".parse().unwrap(),
+            "localhost",
+        )
+        .unwrap();
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let mut pair = Pair::new_from_endpoint(client, server);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+    let incoming = pair.server.pop_waiting_incoming();
+
+    pair.time = pair.client.next_wakeup().unwrap();
+    pair.drive_client();
+    pair.drive_server();
+    assert!(pair.server.incoming_buffer_bytes() > 0);
+    assert_matches!(
+        pair.server.try_accept(incoming, pair.time),
+        Err(ConnectionError::CidsExhausted)
+    );
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.known_cids(), 1);
+    assert!(!existing.is_closed());
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::ConnectionClosed(ConnectionClose {
+                error_code: TransportErrorCode::CONNECTION_REFUSED,
+                ..
+            })
+        })
+    );
+
+    // Both the incoming slot and the original CID can be reused after their owners are gone.
+    drop(existing);
+    pair.server
+        .handle_event(existing_ch, EndpointEvent::drained());
+    assert_eq!(pair.server.known_connections(), 0);
+    pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+    let incoming = pair.server.pop_waiting_incoming();
+    pair.server.try_accept(incoming, pair.time).unwrap();
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.known_cids(), 1);
+}
+
+#[test]
+fn cid_exhaustion_preferred_address_releases_first_cid() {
+    let _guard = subscribe();
+    let mut config = EndpointConfig::default();
+    config.cid_generator(Arc::new(|| Box::new(TestConnectionIdGenerator::new([0]))));
+    let mut server_config = server_config();
+    server_config.max_incoming(1);
+    server_config.preferred_address_v6(Some("[::1]:65535".parse().unwrap()));
+    let server = Endpoint::new(
+        Arc::new(config),
+        Some(Arc::new(server_config.clone())),
+        true,
+    );
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let mut pair = Pair::new_from_endpoint(client, server);
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+    pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+    let incoming = pair.server.pop_waiting_incoming();
+
+    pair.time = pair.client.next_wakeup().unwrap();
+    pair.drive_client();
+    pair.drive_server();
+    assert!(pair.server.incoming_buffer_bytes() > 0);
+    assert_matches!(
+        pair.server.try_accept(incoming, pair.time),
+        Err(ConnectionError::CidsExhausted)
+    );
+    assert_eq!(pair.server.incoming_buffer_bytes(), 0);
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+
+    // Accepting without a preferred address only needs the first CID, which must be reusable.
+    server_config.preferred_address_v6(None);
+    pair.server.set_server_config(Some(Arc::new(server_config)));
+    pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+    let incoming = pair.server.pop_waiting_incoming();
+    pair.server.try_accept(incoming, pair.time).unwrap();
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.known_cids(), 1);
+}
+
+#[test]
+fn cid_exhaustion_partial_batch_cleans_up_connection() {
+    let _guard = subscribe();
+    let mut config = EndpointConfig::default();
+    // Reserve one CID for another connection, one for the handshake, and one in the first batch.
+    config.cid_generator(Arc::new(|| {
+        Box::new(TestConnectionIdGenerator::new([0, 1, 2]))
+    }));
+    let mut server = Endpoint::new(Arc::new(config), Some(Arc::new(server_config())), true);
+    let (_, existing) = server
+        .connect(
+            Instant::now(),
+            client_config(),
+            "[::1]:4433".parse().unwrap(),
+            "localhost",
+        )
+        .unwrap();
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let mut pair = Pair::new_from_endpoint(client, server);
+    pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.drive_server();
+    let server_ch = pair.server.assert_accept();
+    assert_eq!(pair.server.known_cids(), 3);
+    pair.drive();
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::CidsExhausted
+        })
+    );
+    assert!(pair.server_conn_mut(server_ch).is_drained());
+    assert_eq!(pair.server.open_connections(), 1);
+    assert_eq!(pair.server.known_cids(), 1);
+    assert!(!existing.is_closed());
+
+    // The failed batch's CID is no longer reserved, while the unrelated connection keeps its CID.
+    pair.server
+        .connect(
+            pair.time,
+            client_config(),
+            "[::1]:4434".parse().unwrap(),
+            "localhost",
+        )
+        .unwrap();
+    assert_eq!(pair.server.open_connections(), 2);
+    assert_eq!(pair.server.known_cids(), 2);
+}
+
+#[test]
+fn cid_exhaustion_on_expiration_closes_connection() {
+    let _guard = subscribe();
+    let mut generator = TestConnectionIdGenerator::new(0..100);
+    generator.lifetime = Some(Duration::from_secs(2));
+    let ids = generator.ids.clone();
+    let mut config = EndpointConfig::default();
+    config.cid_generator(Arc::new(move || Box::new(generator.clone())));
+    let server = Endpoint::new(Arc::new(config), Some(Arc::new(server_config())), true);
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let (client_ch, server_ch) = pair.connect();
+    ids.lock().unwrap().clear();
+
+    pair.time += Duration::from_secs(2);
+    pair.drive();
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::CidsExhausted
+        })
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::ConnectionClosed(ConnectionClose {
+                error_code: TransportErrorCode::INTERNAL_ERROR,
+                ..
+            })
+        })
+    );
+    assert!(pair.server_conn_mut(server_ch).is_drained());
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[test]
+fn cid_exhaustion_after_close_keeps_close_reason() {
+    let _guard = subscribe();
+    let mut generator = TestConnectionIdGenerator::new(0..100);
+    generator.lifetime = Some(Duration::from_secs(2));
+    let ids = generator.ids.clone();
+    let mut config = EndpointConfig::default();
+    config.cid_generator(Arc::new(move || Box::new(generator.clone())));
+    let server = Endpoint::new(Arc::new(config), Some(Arc::new(server_config())), true);
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let (client_ch, server_ch) = pair.connect();
+    ids.lock().unwrap().clear();
+
+    pair.time += Duration::from_secs(2);
+    let now = pair.time;
+    pair.server_conn_mut(server_ch).handle_timeout(now);
+    let request = pair
+        .server_conn_mut(server_ch)
+        .poll_endpoint_events()
+        .unwrap();
+    let failure = pair.server.handle_event(server_ch, request).unwrap();
+    assert_matches!(failure.0, shared::ConnectionEventInner::CidsExhausted(_));
+
+    pair.time += Duration::from_millis(1);
+    let close_now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .close(close_now, VarInt(42), b"finished"[..].into());
+    pair.drive_client();
+    pair.drive_server();
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::ApplicationClosed(ApplicationClose {
+                error_code: VarInt(42),
+                ..
+            })
+        })
+    );
+    let close_timeout = pair.server_conn_mut(server_ch).poll_timeout();
+    assert!(close_timeout.is_some());
+    pair.server_conn_mut(server_ch).handle_event(failure);
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    assert_eq!(
+        pair.server_conn_mut(server_ch).poll_timeout(),
+        close_timeout
+    );
+    pair.drive();
+    assert!(pair.server_conn_mut(server_ch).is_drained());
+    assert_eq!(pair.server.open_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[derive(Clone)]
+struct TestConnectionIdGenerator {
+    ids: Arc<Mutex<VecDeque<u64>>>,
+    last: u64,
+    calls: usize,
+    lifetime: Option<Duration>,
+}
+
+impl TestConnectionIdGenerator {
+    fn new(ids: impl IntoIterator<Item = u64>) -> Self {
+        Self {
+            ids: Arc::new(Mutex::new(ids.into_iter().collect())),
+            last: 0,
+            calls: 0,
+            lifetime: None,
+        }
+    }
+}
+
+impl ConnectionIdGenerator for TestConnectionIdGenerator {
+    fn generate_cid(&mut self) -> ConnectionId {
+        self.calls += 1;
+        // Fail instead of hanging if collision retries become unbounded.
+        assert!(self.calls < 1000, "CID generation did not stop retrying");
+        self.last = self.ids.lock().unwrap().pop_front().unwrap_or(self.last);
+        ConnectionId::new(&self.last.to_be_bytes())
+    }
+
+    fn cid_len(&self) -> usize {
+        8
+    }
+
+    fn cid_lifetime(&self) -> Option<Duration> {
+        self.lifetime
+    }
 }
 
 #[test]
