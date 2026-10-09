@@ -1164,7 +1164,7 @@ impl State {
                     Poll::Ready(_) => {
                         self.buffered_transmit = None;
                         if transmits >= MAX_TRANSMIT_DATAGRAMS {
-                            break;
+                            return Ok(true);
                         }
                     }
                 }
@@ -1177,7 +1177,7 @@ impl State {
                 .inner
                 .poll_transmit(now, max_datagrams, &mut self.send_buffer)
             else {
-                break;
+                return Ok(transmits >= MAX_TRANSMIT_DATAGRAMS);
             };
 
             transmits += t.segment_size.map_or(
@@ -1194,7 +1194,7 @@ impl State {
                 self.buffered_transmit = Some(t);
                 return Ok(false);
             } else if transmits >= MAX_TRANSMIT_DATAGRAMS {
-                break;
+                return Ok(true);
             }
         }
 
@@ -1202,7 +1202,6 @@ impl State {
         // datagrams that could be sent we don't go into the `app_limited`
         // state and CWND continues to grow until we get here the next time.
         // See https://github.com/quinn-rs/quinn/issues/1126
-        Ok(transmits >= MAX_TRANSMIT_DATAGRAMS)
     }
 
     fn forward_endpoint_events(&mut self) {
