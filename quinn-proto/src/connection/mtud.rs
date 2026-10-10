@@ -375,6 +375,10 @@ struct BlackHoleDetector {
     /// The maximum of `min_mtu` and the size of `largest_post_loss_packet`, or exactly `min_mtu` if
     /// no larger packets have been received since the most recent loss burst.
     acked_mtu: u16,
+    /// Packet number and size of the most recently transmitted delivered packet larger than
+    /// `min_mtu`, if any. Unlike `acked_mtu`, this includes packets smaller than the largest size
+    /// seen, which is most traffic once MTU discovery has reached the path MTU.
+    latest_delivery: Option<(u64, u16)>,
     /// The UDP payload size guaranteed to be supported by the network
     min_mtu: u16,
 }
@@ -386,11 +390,22 @@ impl BlackHoleDetector {
             current_loss_burst: None,
             largest_post_loss_packet: 0,
             acked_mtu: min_mtu,
+            latest_delivery: None,
             min_mtu,
         }
     }
 
+    /// Records a delivered packet as evidence against loss bursts sent before it
+    fn record_delivery(&mut self, pn: u64, len: u16) {
+        // Bursts containing packets no larger than `min_mtu` are never suspicious, and an
+        // acknowledgment of an older packet must not replace evidence about a newer one
+        if len > self.min_mtu && self.latest_delivery.is_none_or(|(latest, _)| pn > latest) {
+            self.latest_delivery = Some((pn, len));
+        }
+    }
+
     fn on_probe_acked(&mut self, pn: u64, len: u16) {
+        self.record_delivery(pn, len);
         // MTU probes are always larger than the previous MTU, so no previous loss bursts are
         // suspicious. At most one MTU probe is in flight at a time, so we don't need to worry about
         // reordering between them.
@@ -403,9 +418,11 @@ impl BlackHoleDetector {
     }
 
     fn on_non_probe_acked(&mut self, pn: u64, len: u16) {
+        self.record_delivery(pn, len);
         if len < self.acked_mtu {
-            // We've already seen a larger packet since the most recent suspicious loss burst;
-            // nothing to do.
+            // Smaller than the largest delivery seen since the most recent suspicious loss burst.
+            // It cannot raise `acked_mtu`, but `record_delivery` keeps it as evidence against the
+            // loss bursts it follows.
             return;
         }
         if len == self.acked_mtu {
@@ -465,6 +482,9 @@ impl BlackHoleDetector {
         if burst.smallest_packet_size <= self.min_mtu
             || (burst.latest_non_probe < self.largest_post_loss_packet
                 && burst.smallest_packet_size <= self.acked_mtu)
+            || self.latest_delivery.is_some_and(|(pn, len)| {
+                burst.latest_non_probe < pn && burst.smallest_packet_size <= len
+            })
         {
             return;
         }
@@ -1012,5 +1032,82 @@ mod tests {
         bhd.on_non_probe_acked(BLACK_HOLE_THRESHOLD as u64 * 2, 1400);
         bhd.on_non_probe_lost(BLACK_HOLE_THRESHOLD as u64 * 2 + 1, 1400);
         assert!(!bhd.black_hole_detected());
+    }
+
+    // Loss bursts that precede the delivery of a packet at least as large are not suspicious,
+    // even when that packet is smaller than `acked_mtu`. This is the steady state of traffic
+    // whose packets are mostly below the path MTU, such as DATAGRAM frames carrying tunneled
+    // packets: MTU discovery reaches the full size, but nearly every later packet is smaller.
+    #[test]
+    fn sub_mtu_delivery_clears_preceding_bursts() {
+        let mut bhd = BlackHoleDetector::new(1200);
+        // A full-size packet (e.g. an MTU probe) was delivered long ago...
+        bhd.on_non_probe_acked(0, 1452);
+        // ...and a newer, smaller packet is delivered now, before loss detection runs
+        bhd.on_non_probe_acked((BLACK_HOLE_THRESHOLD + 1) as u64 * 2, 1300);
+        // Loss detection then reveals bursts of the same smaller size, transmitted before it
+        for i in 0..(BLACK_HOLE_THRESHOLD + 1) {
+            bhd.on_non_probe_lost(i as u64 * 2 + 1, 1300);
+        }
+        assert!(
+            !bhd.black_hole_detected(),
+            "1300 byte losses preceding a 1300 byte delivery are not suspicious"
+        );
+        // Losses transmitted after the last delivery are still suspicious
+        for i in 0..(BLACK_HOLE_THRESHOLD + 1) {
+            bhd.on_non_probe_lost((BLACK_HOLE_THRESHOLD as u64 + 1 + i as u64) * 2 + 1, 1300);
+        }
+        assert!(
+            bhd.black_hole_detected(),
+            "1300 byte losses following the last delivery are suspicious"
+        );
+    }
+
+    // A newer delivery smaller than the lost packets is no evidence against an MTU reduction
+    #[test]
+    fn smaller_delivery_does_not_clear_larger_bursts() {
+        let mut bhd = BlackHoleDetector::new(1200);
+        bhd.on_non_probe_acked(0, 1452);
+        bhd.on_non_probe_acked((BLACK_HOLE_THRESHOLD + 1) as u64 * 2, 1300);
+        for i in 0..(BLACK_HOLE_THRESHOLD + 1) {
+            bhd.on_non_probe_lost(i as u64 * 2 + 1, 1452);
+        }
+        assert!(
+            bhd.black_hole_detected(),
+            "1452 byte losses followed only by a 1300 byte delivery are suspicious"
+        );
+    }
+
+    // The most recently transmitted delivery is the evidence, whatever its size relative to
+    // `acked_mtu`
+    #[test]
+    fn newest_delivery_is_the_evidence() {
+        let mut bhd = BlackHoleDetector::new(1200);
+        bhd.on_non_probe_acked(0, 1452);
+        bhd.on_non_probe_acked(100, 1300);
+        bhd.on_non_probe_acked(101, 1400);
+        for i in 0..(BLACK_HOLE_THRESHOLD + 1) {
+            bhd.on_non_probe_lost(i as u64 * 2 + 1, 1350);
+        }
+        assert!(
+            !bhd.black_hole_detected(),
+            "the newest delivery, 1400 bytes, clears the earlier 1350 byte losses"
+        );
+    }
+
+    // An acknowledgment of an older packet arriving late does not replace newer evidence
+    #[test]
+    fn late_older_acknowledgment_keeps_newer_evidence() {
+        let mut bhd = BlackHoleDetector::new(1200);
+        bhd.on_non_probe_acked(0, 1452);
+        bhd.on_non_probe_acked(101, 1300);
+        bhd.on_non_probe_acked(100, 1250);
+        for i in 0..(BLACK_HOLE_THRESHOLD + 1) {
+            bhd.on_non_probe_lost(i as u64 * 2 + 1, 1300);
+        }
+        assert!(
+            !bhd.black_hole_detected(),
+            "packet 101 (1300 bytes) still clears the earlier 1300 byte losses"
+        );
     }
 }
