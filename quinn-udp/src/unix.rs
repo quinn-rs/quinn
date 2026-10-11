@@ -69,11 +69,16 @@ impl UdpSocketState {
                 unsafe { libc::CMSG_SPACE(size_of::<libc::in6_pktinfo>() as _) as usize };
         }
 
-        assert!(
-            cmsg::LEN
-                >= unsafe { libc::CMSG_SPACE(size_of::<libc::c_int>() as _) as usize }
-                    + cmsg_platform_space
-        );
+        // Worst-case control message sets for sending and receiving.
+        let ecn_space = unsafe { libc::CMSG_SPACE(size_of::<libc::c_int>() as _) as usize };
+        let send_space = ecn_space
+            + unsafe { libc::CMSG_SPACE(size_of::<u16>() as _) as usize }
+            + cmsg_platform_space;
+        let recv_space = unsafe { libc::CMSG_SPACE(size_of::<libc::timespec>() as _) as usize }
+            + cmsg_platform_space
+            + ecn_space;
+
+        assert!(cmsg::LEN >= Ord::max(send_space, recv_space));
         assert!(
             align_of::<libc::cmsghdr>() <= align_of::<cmsg::Aligned<[u8; 0]>>(),
             "control message buffers will be misaligned"
