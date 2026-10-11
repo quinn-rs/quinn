@@ -660,6 +660,9 @@ fn recv_via_recvmmsg(
         ) as isize
     })?;
     for i in 0..(msg_count as usize) {
+        if hdrs[i].msg_hdr.msg_flags & libc::MSG_CTRUNC != 0 {
+            crate::log::debug!("control messages truncated");
+        }
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
     Ok(msg_count as usize)
@@ -693,6 +696,9 @@ pub(crate) fn recv_single(
             break n;
         }
     };
+    if hdr.msg_flags & libc::MSG_CTRUNC != 0 {
+        crate::log::debug!("control messages truncated");
+    }
     meta[0] = decode_recv(&name, &hdr, n as usize)?;
     Ok(1)
 }
