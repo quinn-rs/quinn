@@ -43,22 +43,23 @@ impl UdpSocketState {
         socket.0.set_nonblocking(true)?;
         let addr = socket.0.local_addr()?;
         let is_ipv6 = addr.as_socket_ipv6().is_some();
-        let v6only = unsafe {
-            let mut result: u32 = 0;
-            let mut len = mem::size_of_val(&result) as i32;
-            let rc = WinSock::getsockopt(
-                socket.0.as_raw_socket() as _,
-                WinSock::IPPROTO_IPV6,
-                WinSock::IPV6_V6ONLY as _,
-                &mut result as *mut _ as _,
-                &mut len,
-            );
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            result != 0
-        };
-        let is_ipv4 = addr.as_socket_ipv4().is_some() || !v6only;
+        let is_dual_stack = is_ipv6
+            && unsafe {
+                let mut result: u32 = 0;
+                let mut len = mem::size_of_val(&result) as i32;
+                let rc = WinSock::getsockopt(
+                    socket.0.as_raw_socket() as _,
+                    WinSock::IPPROTO_IPV6,
+                    WinSock::IPV6_V6ONLY as _,
+                    &mut result as *mut _ as _,
+                    &mut len,
+                );
+                if rc == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+                result == 0
+            };
+        let is_ipv4 = addr.as_socket_ipv4().is_some() || is_dual_stack;
 
         // We don't support old versions of Windows that do not enable access to `WSARecvMsg()`
         if WSARECVMSG_PTR.is_none() {
