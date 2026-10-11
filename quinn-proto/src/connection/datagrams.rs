@@ -138,7 +138,9 @@ impl DatagramState {
         let size_with_overhead = datagram.data.len() + size_of::<Datagram>();
 
         if size_with_overhead > window {
-            return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
+            // A valid frame can still exceed the local memory budget because of queue metadata.
+            debug!("dropping datagram exceeding receive memory budget");
+            return Ok(false);
         }
 
         let was_empty = self.incoming.is_empty();

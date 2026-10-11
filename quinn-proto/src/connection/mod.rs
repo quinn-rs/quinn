@@ -2754,7 +2754,8 @@ impl Connection {
         let mut close = None;
         let payload_len = payload.len();
         let mut ack_eliciting = false;
-        for result in frame::Iter::new(payload)? {
+        let mut frames = frame::Iter::new(payload)?;
+        while let Some((result, frame_size)) = frames.next_with_size() {
             let frame = result?;
             let span = match frame {
                 Frame::Padding => continue,
@@ -2970,6 +2971,14 @@ impl Connection {
                     token_store.insert(server_name, token);
                 }
                 Frame::Datagram(datagram) => {
+                    // The transport parameter limits the encoded frame size, not its heap usage.
+                    if self
+                        .config
+                        .datagram_receive_buffer_size
+                        .is_some_and(|window| frame_size > window.min(u16::MAX.into()))
+                    {
+                        return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
+                    }
                     if self
                         .datagrams
                         .received(datagram, &self.config.datagram_receive_buffer_size)?
