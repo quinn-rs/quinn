@@ -564,6 +564,13 @@ impl Iter {
         })
     }
 
+    /// Decode the next frame and report its encoded size, including its header.
+    pub(crate) fn next_with_size(&mut self) -> Option<(Result<Frame, InvalidFrame>, usize)> {
+        let remaining = self.bytes.len();
+        let frame = self.next()?;
+        Some((frame, remaining - self.bytes.len()))
+    }
+
     fn take_len(&mut self) -> Result<Bytes, UnexpectedEnd> {
         let len = self.bytes.get_var()?;
         if len > self.bytes.remaining() as u64 {
