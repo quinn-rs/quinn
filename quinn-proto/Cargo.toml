@@ -62,7 +62,7 @@ tracing = { workspace = true }
 # Feature flags & dependencies for wasm
 # wasm-bindgen is assumed for a wasm*-*-unknown target
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-ring = { workspace = true, features = ["wasm32_unknown_unknown_js"] }
+ring = { workspace = true, features = ["wasm32_unknown_unknown_js"], optional = true }
 getrandom = { workspace = true, features = ["wasm_js"] }
 rustls-pki-types = { workspace = true, features = ["web"] } # only added as dependency to enforce the `web` feature for this target
 web-time = { workspace = true }
