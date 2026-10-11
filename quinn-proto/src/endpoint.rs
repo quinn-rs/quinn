@@ -609,7 +609,8 @@ impl Endpoint {
             .transport
             .max_idle_timeout
             .is_some_and(|timeout| {
-                incoming.received_at + Duration::from_millis(timeout.into()) <= now
+                timeout.into_inner() != 0
+                    && incoming.received_at + Duration::from_millis(timeout.into()) <= now
             })
         {
             debug!("abandoning accept of stale initial");
