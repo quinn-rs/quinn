@@ -485,7 +485,7 @@ impl TransportParameters {
                             match id {
                                 $(TransportParameterId::$id => {
                                     let value = r.get::<VarInt>()?;
-                                    if len != value.size() || got.$name { return Err(Error::Malformed); }
+                                    if got.$name { return Err(Error::Malformed); }
                                     params.$name = value.into();
                                     got.$name = true;
                                 })*
