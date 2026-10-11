@@ -891,7 +891,7 @@ impl RecvState {
                 // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
                 // attacker
                 Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::ConnectionReset => {
-                    continue;
+                    self.recv_limiter.record_work(1);
                 }
                 Poll::Ready(Err(e)) => {
                     return Err(e);
@@ -924,4 +924,76 @@ struct PollProgress {
     received_connection_packet: bool,
     /// Whether datagram handling was interrupted early by the work limiter for fairness
     keep_going: bool,
+}
+
+#[cfg(all(
+    test,
+    feature = "runtime-tokio",
+    any(feature = "ring", feature = "aws-lc-rs")
+))]
+mod tests {
+    use super::*;
+    use crate::{UdpPoller, runtime::TokioRuntime};
+
+    #[test]
+    fn ignored_receive_errors_respect_work_budget() {
+        let mut endpoint =
+            proto::Endpoint::new(Arc::new(EndpointConfig::default()), None, true, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut state = RecvState::new(tx, 1, &endpoint);
+        let now = Instant::now();
+
+        // Calibrate the next receive cycles to allow two work items each.
+        state.recv_limiter.start_cycle(|| now);
+        state.recv_limiter.record_work(2);
+        state.recv_limiter.finish_cycle(|| now + RECV_TIME_BOUND);
+
+        let socket = ErrorSocket {
+            remaining: Mutex::new(5),
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+        for (remaining, keep_going) in [(3, true), (1, true), (0, false)] {
+            state.recv_limiter.start_cycle(|| now);
+            let progress = state
+                .poll_socket(&mut cx, &mut endpoint, &socket, &TokioRuntime, now)
+                .unwrap();
+            state.recv_limiter.finish_cycle(|| now);
+            assert_eq!(*socket.remaining.lock().unwrap(), remaining);
+            assert_eq!(progress.keep_going, keep_going);
+            assert!(!progress.received_connection_packet);
+        }
+    }
+
+    #[derive(Debug)]
+    struct ErrorSocket {
+        remaining: Mutex<usize>,
+    }
+
+    impl AsyncUdpSocket for ErrorSocket {
+        fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
+            unreachable!("ignored receive errors must not produce responses")
+        }
+
+        fn try_send(&self, _transmit: &udp::Transmit) -> io::Result<()> {
+            unreachable!("ignored receive errors must not produce responses")
+        }
+
+        fn poll_recv(
+            &self,
+            _cx: &mut Context<'_>,
+            _bufs: &mut [IoSliceMut<'_>],
+            _meta: &mut [RecvMeta],
+        ) -> Poll<io::Result<usize>> {
+            let mut remaining = self.remaining.lock().unwrap();
+            if *remaining == 0 {
+                return Poll::Pending;
+            }
+            *remaining -= 1;
+            Poll::Ready(Err(io::ErrorKind::ConnectionReset.into()))
+        }
+
+        fn local_addr(&self) -> io::Result<SocketAddr> {
+            Ok("127.0.0.1:0".parse().unwrap())
+        }
+    }
 }
