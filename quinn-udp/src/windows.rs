@@ -65,10 +65,18 @@ impl UdpSocketState {
         }?;
         let family = info.iAddressFamily;
         let is_ipv6 = family == c_int::from(WinSock::AF_INET6);
-        let v6only = unsafe {
-            get_socket_option::<u32>(&*socket.0, WinSock::IPPROTO_IPV6, WinSock::IPV6_V6ONLY as _)
-        }?;
-        let is_ipv4 = family == c_int::from(WinSock::AF_INET) || v6only == 0;
+        let is_dual_stack = is_ipv6 && {
+            let v6_only = unsafe {
+                get_socket_option::<u32>(
+                    &*socket.0,
+                    WinSock::IPPROTO_IPV6,
+                    WinSock::IPV6_V6ONLY as _,
+                )
+            }?;
+            v6_only == 0
+        };
+
+        let is_ipv4 = family == c_int::from(WinSock::AF_INET) || is_dual_stack;
 
         // We don't support old versions of Windows that do not enable access to `WSARecvMsg()`
         let wsa_recvmsg = resolve_wsa_recvmsg(&*socket.0).ok_or_else(|| {
