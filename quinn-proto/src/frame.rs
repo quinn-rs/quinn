@@ -331,7 +331,10 @@ impl ApplicationClose {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
         out.write(FrameType::APPLICATION_CLOSE); // 1 byte
         out.write(self.error_code); // <= 8 bytes
-        let max_len = max_len - 3 - VarInt::from_u64(self.reason.len() as u64).unwrap().size();
+        let max_len = max_len
+            - 1
+            - self.error_code.size()
+            - VarInt::from_u64(self.reason.len() as u64).unwrap().size();
         let actual_len = self.reason.len().min(max_len);
         out.write_var(actual_len as u64); // <= 8 bytes
         out.put_slice(&self.reason[0..actual_len]); // whatever's left
@@ -960,6 +963,71 @@ mod test {
     }
 
     #[test]
+    fn application_close_coding() {
+        for &error_code in APPLICATION_ERROR_CODES {
+            for reason in [Bytes::new(), Bytes::from_static(b"application closed")] {
+                let original = ApplicationClose {
+                    error_code: VarInt::from_u64(error_code).unwrap(),
+                    reason,
+                };
+                let max_len = ApplicationClose::SIZE_BOUND + original.reason.len();
+                let mut buf = Vec::new();
+                original.encode(&mut buf, max_len);
+                assert!(buf.len() <= max_len);
+                let frames = frames(buf);
+                assert_eq!(frames.len(), 1);
+                match &frames[0] {
+                    Frame::Close(Close::Application(decoded)) => assert_eq!(decoded, &original),
+                    x => panic!("incorrect frame {x:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn application_close_reason_truncation() {
+        for &error_code in APPLICATION_ERROR_CODES {
+            for (reason_len, max_len) in [
+                (63, ApplicationClose::SIZE_BOUND),
+                (64, ApplicationClose::SIZE_BOUND),
+                (16383, ApplicationClose::SIZE_BOUND),
+                (16384, ApplicationClose::SIZE_BOUND),
+                (128, 64),
+                (128, 65),
+                (128, 66),
+                (128, 80),
+                (2048, 1200),
+            ] {
+                let original = ApplicationClose {
+                    error_code: VarInt::from_u64(error_code).unwrap(),
+                    reason: (0..reason_len).map(|i| (i % 251) as u8).collect(),
+                };
+                let mut buf = Vec::new();
+                original.encode(&mut buf, max_len);
+                assert!(
+                    buf.len() <= max_len,
+                    "error code {error_code}, reason length {reason_len}: encoded {} bytes with a budget of {max_len}",
+                    buf.len(),
+                );
+                let frames = frames(buf);
+                assert_eq!(frames.len(), 1);
+                match &frames[0] {
+                    Frame::Close(Close::Application(decoded)) => {
+                        assert_eq!(decoded.error_code, original.error_code);
+                        assert!(!decoded.reason.is_empty());
+                        assert!(decoded.reason.len() < original.reason.len());
+                        assert_eq!(
+                            decoded.reason,
+                            original.reason.slice(..decoded.reason.len())
+                        );
+                    }
+                    x => panic!("incorrect frame {x:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
     fn ack_coding() {
         const PACKETS: &[u64] = &[1, 2, 3, 5, 10, 11, 14];
         let mut ranges = ArrayRangeSet::new();
@@ -1012,4 +1080,15 @@ mod test {
         assert_eq!(frames.len(), 1);
         assert_matches!(&frames[0], Frame::ImmediateAck);
     }
+
+    const APPLICATION_ERROR_CODES: &[u64] = &[
+        0,
+        63,
+        64,
+        16383,
+        16384,
+        (1 << 30) - 1,
+        1 << 30,
+        VarInt::MAX.into_inner(),
+    ];
 }
