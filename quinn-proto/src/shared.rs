@@ -7,6 +7,24 @@ use crate::{Instant, MAX_CID_SIZE, ResetToken, coding::BufExt, packet::PartialDe
 /// Events sent from an Endpoint to a Connection
 #[derive(Debug)]
 pub struct ConnectionEvent(pub(crate) ConnectionEventInner);
+impl ConnectionEvent {
+    /// Estimate the heap buffers owned by this event while a runtime adapter queues it.
+    /// Excludes the inline event itself and allocator overhead.
+    pub fn estimated_heap_bytes(&self) -> u64 {
+        match &self.0 {
+            ConnectionEventInner::Datagram(event) => {
+                event.first_decode.allocated_size() as u64
+                    + event
+                        .remaining
+                        .as_ref()
+                        .map_or(0, |bytes| bytes.capacity() as u64)
+            }
+            ConnectionEventInner::NewIdentifiers(ids, _) => {
+                (ids.capacity() * size_of::<IssuedCid>()) as u64
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum ConnectionEventInner {
