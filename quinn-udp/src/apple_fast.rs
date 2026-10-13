@@ -170,6 +170,9 @@ pub(crate) fn recv_via_recvmsg_x(
         recvmsg_x(io.as_raw_fd(), hdrs.as_mut_ptr(), max_msg_count as _, 0)
     })?;
     for i in 0..(msg_count as usize) {
+        if hdrs[i].msg_flags & libc::MSG_CTRUNC != 0 {
+            crate::log::debug!("control messages truncated");
+        }
         meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen as usize)?;
     }
     Ok(msg_count as usize)

@@ -69,11 +69,16 @@ impl UdpSocketState {
                 unsafe { libc::CMSG_SPACE(size_of::<libc::in6_pktinfo>() as _) as usize };
         }
 
-        assert!(
-            cmsg::LEN
-                >= unsafe { libc::CMSG_SPACE(size_of::<libc::c_int>() as _) as usize }
-                    + cmsg_platform_space
-        );
+        // Worst-case control message sets for sending and receiving.
+        let ecn_space = unsafe { libc::CMSG_SPACE(size_of::<libc::c_int>() as _) as usize };
+        let send_space = ecn_space
+            + unsafe { libc::CMSG_SPACE(size_of::<u16>() as _) as usize }
+            + cmsg_platform_space;
+        let recv_space = unsafe { libc::CMSG_SPACE(size_of::<libc::timespec>() as _) as usize }
+            + cmsg_platform_space
+            + ecn_space;
+
+        assert!(cmsg::LEN >= Ord::max(send_space, recv_space));
         assert!(
             align_of::<libc::cmsghdr>() <= align_of::<cmsg::Aligned<[u8; 0]>>(),
             "control message buffers will be misaligned"
@@ -655,6 +660,9 @@ fn recv_via_recvmmsg(
         ) as isize
     })?;
     for i in 0..(msg_count as usize) {
+        if hdrs[i].msg_hdr.msg_flags & libc::MSG_CTRUNC != 0 {
+            crate::log::debug!("control messages truncated");
+        }
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize)?;
     }
     Ok(msg_count as usize)
@@ -688,6 +696,9 @@ pub(crate) fn recv_single(
             break n;
         }
     };
+    if hdr.msg_flags & libc::MSG_CTRUNC != 0 {
+        crate::log::debug!("control messages truncated");
+    }
     meta[0] = decode_recv(&name, &hdr, n as usize)?;
     Ok(1)
 }
