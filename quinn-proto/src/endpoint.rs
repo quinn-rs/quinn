@@ -616,18 +616,9 @@ impl Endpoint {
 
         if self.cids_exhausted() {
             debug!("refusing connection");
-            let response = self.initial_close(
-                version,
-                incoming.addresses,
-                &incoming.crypto,
-                src_cid,
-                TransportError::CONNECTION_REFUSED(""),
-                buf,
-            );
-            self.ignore(incoming);
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::CidsExhausted,
-                response: Some(response),
+                response: Some(self.refuse(incoming, buf)),
             }));
         }
 
