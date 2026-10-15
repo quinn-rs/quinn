@@ -60,6 +60,8 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
+
+mod reorder;
 pub use paths::RttEstimator;
 use paths::{PathData, PathResponses};
 
@@ -1515,7 +1517,7 @@ impl Connection {
             }
         };
 
-        if self.detect_spurious_loss(&ack, space) {
+        if self.detect_spurious_loss(now, &ack, space) {
             self.stats.path.spurious_congestion_events += 1;
             self.path.congestion.on_spurious_congestion_event();
         }
@@ -1614,7 +1616,10 @@ impl Connection {
         Ok(())
     }
 
-    fn detect_spurious_loss(&mut self, ack: &frame::Ack, space: SpaceId) -> bool {
+    fn detect_spurious_loss(&mut self, now: Instant, ack: &frame::Ack, space: SpaceId) -> bool {
+        // The same horizon `drain_lost_packets` forgets lost packets at, so no spurious loss we
+        // can observe is older than this anyway
+        let max_loss_delay = self.lost_packet_horizon();
         let lost_packets = &mut self.spaces[space].lost_packets;
 
         if lost_packets.is_empty() {
@@ -1629,7 +1634,15 @@ impl Connection {
                 .collect();
 
             for pn in spurious_losses {
-                lost_packets.remove(&pn);
+                let Some(info) = lost_packets.remove(&pn) else {
+                    continue;
+                };
+                self.path.reorder.on_spurious_loss(
+                    now,
+                    info.largest_acked.saturating_sub(pn),
+                    now.saturating_duration_since(info.time_sent),
+                    max_loss_delay,
+                );
             }
         }
 
@@ -1642,13 +1655,30 @@ impl Connection {
 
     /// Drain lost packets that we reasonably think will never arrive
     ///
-    /// The current criterion is copied from `msquic`:
-    /// discard packets that were sent earlier than 2 probe timeouts ago.
+    /// The criterion starts from `msquic`'s, discarding packets that were sent earlier than 2 probe
+    /// timeouts ago, but never before a late ACK could still prove the loss spurious; see
+    /// [`Self::lost_packet_horizon`].
     fn drain_lost_packets(&mut self, now: Instant, space: SpaceId) {
-        let two_pto = 2 * self.path.rtt.pto_base();
+        let horizon = self.lost_packet_horizon();
 
         let lost_packets = &mut self.spaces[space].lost_packets;
-        lost_packets.retain(|_pn, info| now.saturating_duration_since(info.time_sent) <= two_pto);
+        lost_packets.retain(|_pn, info| now.saturating_duration_since(info.time_sent) <= horizon);
+    }
+
+    /// How long a lost packet is remembered, so that a late ACK can still prove it spurious
+    ///
+    /// 2 PTO, but never less than twice the loss delay in force, which a path proven to reorder
+    /// widens; see [`reorder::horizon`].
+    fn lost_packet_horizon(&self) -> Duration {
+        let two_pto = 2 * self.path.rtt.pto_base();
+        let computed = cmp::max(
+            self.path
+                .rtt
+                .conservative()
+                .mul_f32(self.config.time_threshold),
+            TIMER_GRANULARITY,
+        );
+        reorder::horizon(two_pto, self.path.reorder.loss_delay(computed))
     }
 
     /// Process a new ECN block from an in-order ACK
@@ -1761,10 +1791,16 @@ impl Connection {
         let mut lost_mtu_probe = None;
         let in_flight_mtu_probe = self.path.mtud.in_flight_mtu_probe();
         let rtt = self.path.rtt.conservative();
-        let loss_delay = cmp::max(rtt.mul_f32(self.config.time_threshold), TIMER_GRANULARITY);
+        let loss_delay = self.path.reorder.loss_delay(cmp::max(
+            rtt.mul_f32(self.config.time_threshold),
+            TIMER_GRANULARITY,
+        ));
+        let packet_threshold = self
+            .path
+            .reorder
+            .packet_threshold(self.config.packet_threshold as u64);
 
         let largest_acked_packet = self.spaces[pn_space].largest_acked_packet.unwrap();
-        let packet_threshold = self.config.packet_threshold as u64;
         let mut size_of_lost_packets = 0u64;
 
         // InPersistentCongestion: Determine if all packets in the time period before the newest
@@ -1870,6 +1906,7 @@ impl Connection {
                     packet,
                     LostPacket {
                         time_sent: info.time_sent,
+                        largest_acked: largest_acked_packet,
                     },
                 );
             }
@@ -1887,6 +1924,9 @@ impl Connection {
 
             if lost_ack_eliciting {
                 self.stats.path.congestion_events += 1;
+                // Losses not proven spurious within the lost-packet horizon never will be
+                let quiet = self.lost_packet_horizon();
+                self.path.reorder.on_congestion_event(now, quiet);
                 self.path.congestion.on_congestion_event(
                     now,
                     largest_lost_sent,

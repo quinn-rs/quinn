@@ -316,6 +316,8 @@ pub(super) struct SentPacket {
 pub(super) struct LostPacket {
     /// The time the packet was sent.
     pub(super) time_sent: Instant,
+    /// The largest packet number acknowledged when this packet was declared lost
+    pub(super) largest_acked: u64,
 }
 
 /// Retransmittable data queue
