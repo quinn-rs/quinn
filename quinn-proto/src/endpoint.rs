@@ -875,14 +875,13 @@ impl Endpoint {
             version: incoming.packet.header.version,
         };
 
-        let encode = header.encode(buf);
+        header.encode(buf);
         buf.put_slice(&token);
         buf.extend_from_slice(&server_config.crypto.retry_tag(
             incoming.packet.header.version,
             incoming.packet.header.dst_cid,
             buf,
         ));
-        encode.finish(buf, &*incoming.crypto.header.local, None);
 
         Ok(Transmit {
             destination: incoming.addresses.remote,
