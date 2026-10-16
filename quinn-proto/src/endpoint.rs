@@ -503,7 +503,12 @@ impl Endpoint {
 
         let server_config = self.server_config.as_ref().unwrap().clone();
 
-        let token = match IncomingToken::from_header(&header, &server_config, addresses.remote) {
+        let token = match IncomingToken::from_header(
+            header.dst_cid,
+            &header.token,
+            &server_config,
+            addresses.remote,
+        ) {
             Ok(token) => token,
             Err(InvalidRetryTokenError) => {
                 debug!("rejecting invalid retry token");
