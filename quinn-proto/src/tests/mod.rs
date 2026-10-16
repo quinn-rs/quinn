@@ -36,6 +36,7 @@ use crate::{
 mod util;
 use util::*;
 
+mod initial_filter;
 mod token;
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
