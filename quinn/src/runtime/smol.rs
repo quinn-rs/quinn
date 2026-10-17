@@ -26,7 +26,10 @@ impl Runtime for SmolRuntime {
     }
 
     fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
-        Ok(Box::new(UdpSocket::new(sock)?))
+        Ok(Box::new(Arc::new(UdpSocketInner {
+            inner: udp::UdpSocketState::new((&sock).into())?,
+            io: Async::new_nonblocking(sock)?,
+        })))
     }
 }
 
@@ -40,22 +43,13 @@ impl AsyncTimer for Timer {
     }
 }
 
-#[derive(Debug, Clone)]
-struct UdpSocket {
-    io: Arc<Async<std::net::UdpSocket>>,
-    inner: Arc<udp::UdpSocketState>,
+#[derive(Debug)]
+struct UdpSocketInner {
+    io: Async<std::net::UdpSocket>,
+    inner: udp::UdpSocketState,
 }
 
-impl UdpSocket {
-    fn new(sock: std::net::UdpSocket) -> io::Result<Self> {
-        Ok(Self {
-            inner: Arc::new(udp::UdpSocketState::new((&sock).into())?),
-            io: Arc::new(Async::new_nonblocking(sock)?),
-        })
-    }
-}
-
-impl UdpSenderHelperSocket for UdpSocket {
+impl UdpSenderHelperSocket for Arc<UdpSocketInner> {
     fn max_transmit_segments(&self) -> usize {
         self.inner.max_gso_segments()
     }
@@ -67,7 +61,7 @@ impl UdpSenderHelperSocket for UdpSocket {
     }
 }
 
-impl AsyncUdpSocket for UdpSocket {
+impl AsyncUdpSocket for Arc<UdpSocketInner> {
     fn create_sender(&self) -> Pin<Box<dyn UdpSender>> {
         Box::pin(UdpSenderHelper::new(self.clone(), |socket: &Self| {
             let socket = socket.clone();
@@ -92,7 +86,7 @@ impl AsyncUdpSocket for UdpSocket {
     }
 
     fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
-        self.io.as_ref().as_ref().local_addr()
+        self.io.as_ref().local_addr()
     }
 
     fn may_fragment(&self) -> bool {
