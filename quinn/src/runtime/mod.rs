@@ -122,7 +122,7 @@ pin_project_lite::pin_project! {
         last_send_error: Option<Instant>,
         make_writable_fut_fn: MakeWritableFutFn,
         #[pin]
-        writable_fut: Option<WritableFut>,
+        writable_fut: WritableFut,
     }
 }
 
@@ -134,8 +134,9 @@ impl<Socket, MakeWritableFutFn, WritableFut> Debug
     }
 }
 
-impl<Socket, MakeWritableFutFn, WriteableFut>
-    UdpSenderHelper<Socket, MakeWritableFutFn, WriteableFut>
+impl<Socket, MakeWritableFutFn, WritableFut> UdpSenderHelper<Socket, MakeWritableFutFn, WritableFut>
+where
+    MakeWritableFutFn: Fn(&Socket) -> WritableFut,
 {
     /// Create helper that implements [`UdpSender`] from a socket.
     ///
@@ -146,10 +147,10 @@ impl<Socket, MakeWritableFutFn, WriteableFut>
     #[cfg(any(feature = "runtime-smol", feature = "runtime-tokio",))]
     fn new(inner: Socket, make_fut: MakeWritableFutFn) -> Self {
         Self {
-            socket: inner,
             last_send_error: None,
+            writable_fut: (make_fut)(&inner),
             make_writable_fut_fn: make_fut,
-            writable_fut: None,
+            socket: inner,
         }
     }
 }
@@ -168,19 +169,11 @@ where
     ) -> Poll<io::Result<()>> {
         let mut this = self.project();
         loop {
-            if this.writable_fut.is_none() {
-                this.writable_fut
-                    .set(Some((this.make_writable_fut_fn)(this.socket)));
-            }
-            // We're forced to `unwrap` here because `Fut` may be `!Unpin`, which means we can't safely
-            // obtain an `&mut WritableFut` after storing it in `self.writable_fut` when `self` is already behind `Pin`,
-            // and if we didn't store it then we wouldn't be able to keep it alive between
-            // `poll_send` calls.
-            let result = task::ready!(this.writable_fut.as_mut().as_pin_mut().unwrap().poll(cx));
+            let result = task::ready!(this.writable_fut.as_mut().poll(cx));
 
-            // Polling an arbitrary `Future` after it becomes ready is a logic error, so arrange for
-            // a new `Future` to be created on the next call.
-            this.writable_fut.set(None);
+            // Reset the stored Future so that the next iteration can poll it again.
+            this.writable_fut
+                .set((this.make_writable_fut_fn)(this.socket));
 
             // If .writable() fails, propagate the error
             result?;
