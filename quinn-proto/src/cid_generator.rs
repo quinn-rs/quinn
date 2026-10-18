@@ -26,6 +26,10 @@ pub trait ConnectionIdGenerator: Send + Sync {
 
     /// Returns the length of a CID for connections created by this generator
     fn cid_len(&self) -> usize;
+
+    /// Returns the bits required to store the maximum amount of CIDs this generator can generate.
+    fn effective_cid_space_len_bits(&self) -> usize;
+
     /// Returns the lifetime of generated Connection IDs
     ///
     /// Connection IDs will be retired after the returned `Duration`, if any. Assumed to be constant.
@@ -85,6 +89,10 @@ impl ConnectionIdGenerator for RandomConnectionIdGenerator {
     /// Provide the length of dst_cid in short header packet
     fn cid_len(&self) -> usize {
         self.cid_len
+    }
+
+    fn effective_cid_space_len_bits(&self) -> usize {
+        self.cid_len * 8
     }
 
     fn cid_lifetime(&self) -> Option<Duration> {
@@ -157,6 +165,10 @@ impl ConnectionIdGenerator for HashedConnectionIdGenerator {
 
     fn cid_len(&self) -> usize {
         NONCE_LEN + SIGNATURE_LEN
+    }
+
+    fn effective_cid_space_len_bits(&self) -> usize {
+        NONCE_LEN * 8
     }
 
     fn cid_lifetime(&self) -> Option<Duration> {

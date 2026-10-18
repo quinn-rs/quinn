@@ -1090,15 +1090,15 @@ impl Endpoint {
     /// We leave some space unused so that `new_cid` can be relied upon to finish quickly. We don't
     /// bother to check when CID longer than 4 bytes are used because 2^40 connections is a lot.
     fn cids_exhausted(&self) -> bool {
-        let cid_len = self.local_cid_generator.cid_len();
-        if cid_len == 0 || cid_len > 4 {
+        let cid_len_bits = self.local_cid_generator.effective_cid_space_len_bits();
+        if cid_len_bits == 0 || cid_len_bits > 32 {
             return false;
         }
 
         // Keep this architecture-independent: on 32-bit targets, 2usize.pow(32) overflows.
-        let bits = (cid_len * 8) as u32;
-        let space = 1u64 << bits;
-        let reserve = 1u64 << (bits - 2);
+        let cid_len_bits = cid_len_bits as u32;
+        let space = 1u64 << cid_len_bits;
+        let reserve = 1u64 << (cid_len_bits - 2);
         let len = self.index.connection_ids.len() as u64;
 
         len > (space - reserve)
