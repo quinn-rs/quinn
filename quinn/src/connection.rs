@@ -1153,52 +1153,55 @@ impl State {
             .min(MAX_TRANSMIT_SEGMENTS);
 
         loop {
-            // Retry the last transmit, or get a new one.
-            let t = match self.buffered_transmit.take() {
-                Some(t) => t,
-                None => {
-                    self.send_buffer.clear();
-                    self.send_buffer.reserve(self.inner.current_mtu() as usize);
-                    match self
-                        .inner
-                        .poll_transmit(now, max_datagrams, &mut self.send_buffer)
-                    {
-                        Some(t) => {
-                            transmits += match t.segment_size {
-                                None => 1,
-                                Some(s) => t.size.div_ceil(s), // round up
-                            };
-                            t
+            // Retry last transmit attempt
+            if let Some(t) = &self.buffered_transmit {
+                match self
+                    .sender
+                    .as_mut()
+                    .poll_send(&udp_transmit(t, &self.send_buffer[..t.size]), cx)?
+                {
+                    Poll::Pending => return Ok(false),
+                    Poll::Ready(_) => {
+                        self.buffered_transmit = None;
+                        if transmits >= MAX_TRANSMIT_DATAGRAMS {
+                            return Ok(true);
                         }
-                        None => break,
                     }
                 }
-            };
-
-            let len = t.size;
-            match self
-                .sender
-                .as_mut()
-                .poll_send(&udp_transmit(&t, &self.send_buffer[..len]), cx)
-            {
-                Poll::Pending => {
-                    self.buffered_transmit = Some(t);
-                    return Ok(false);
-                }
-                Poll::Ready(Err(e)) => return Err(e),
-                Poll::Ready(Ok(())) => {}
             }
 
-            if transmits >= MAX_TRANSMIT_DATAGRAMS {
-                // TODO: What isn't ideal here yet is that if we don't poll all
-                // datagrams that could be sent we don't go into the `app_limited`
-                // state and CWND continues to grow until we get here the next time.
-                // See https://github.com/quinn-rs/quinn/issues/1126
+            self.send_buffer.clear();
+            self.send_buffer.reserve(self.inner.current_mtu() as usize);
+
+            let Some(t) = self
+                .inner
+                .poll_transmit(now, max_datagrams, &mut self.send_buffer)
+            else {
+                return Ok(transmits >= MAX_TRANSMIT_DATAGRAMS);
+            };
+
+            transmits += t.segment_size.map_or(
+                1,
+                |s| t.size.div_ceil(s), //round up
+            );
+
+            if self
+                .sender
+                .as_mut()
+                .poll_send(&udp_transmit(&t, &self.send_buffer[..t.size]), cx)?
+                .is_pending()
+            {
+                self.buffered_transmit = Some(t);
+                return Ok(false);
+            } else if transmits >= MAX_TRANSMIT_DATAGRAMS {
                 return Ok(true);
             }
         }
 
-        Ok(false)
+        // TODO: What isn't ideal here yet is that if we don't poll all
+        // datagrams that could be sent we don't go into the `app_limited`
+        // state and CWND continues to grow until we get here the next time.
+        // See https://github.com/quinn-rs/quinn/issues/1126
     }
 
     fn forward_endpoint_events(&mut self) {
