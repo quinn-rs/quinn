@@ -90,3 +90,51 @@ The expected output should be something like:
 
 Notice how the server sees multiple incoming connections with different IDs coming from the same
 endpoint.
+
+## Initial Filter Example
+
+The `initial_filter.rs` example rate limits inbound connection attempts with `InitialFilter`, which
+runs before any per-connection state is allocated. Every new Initial first passes a global budget.
+Peers without a valid token get a Retry within their own budget and are dropped beyond it. Peers
+with a valid token proceed under a separate, larger budget.
+
+```text
+$ cargo run --example initial_filter
+```
+
+The expected output should be something like:
+
+```text
+New client connecting to a server retrying 1 new client/s
+[client] connected: 127.0.0.1:36999
+[server] accepted 127.0.0.1:47383
+[server] admitted=1 retried=1 ignored=0
+Familiar client connecting again - no problem
+[client] connected: 127.0.0.1:36999
+[server] accepted 127.0.0.1:47383
+[server] admitted=2 retried=1 ignored=0
+Unfamiliar client connecting
+[client] no response within 500ms: the strangers' budget is used up
+[server] admitted=2 retried=1 ignored=1
+```
+
+The first client is retried, then admitted when it returns with the Retry token. It reconnects with
+the NEW_TOKEN it received, so it's admitted without a Retry. A second client arriving right after
+usually finds the strangers' budget used up and hears nothing. On a slow run the one-second window
+may have rolled over, and it connects instead.
+
+`InitialFilter` has two hooks. Both run synchronously in the receive path and must not block or
+re-enter the endpoint. Packets for existing connections never reach them.
+
+- `before_token_check` runs before any token, replay-log or Initial-key work. The example enforces
+  its global budget here. This also bounds Initials that skip `after_token_check`: a malformed
+  header or an invalid Retry token triggers an encrypted CONNECTION_CLOSE, which costs Initial keys
+  and a response. The example drops malformed Initials outright.
+- `after_token_check` runs after the token check, so an `Ignore` there has already paid for it: a
+  key derivation and a decryption per token, forged or not. Peers with a valid token get their own
+  budget, so a retried client's return doesn't compete with new strangers. They still need one: a
+  Retry token can be reused within its lifetime.
+
+On `Retry`, the endpoint answers right away, without creating an `Incoming` or deriving Initial
+keys. A custom crypto provider should override `crypto::ServerConfig::supports_version`, whose
+default derives Initial keys.
