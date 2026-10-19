@@ -1,4 +1,4 @@
-//! Admission ordering regressions
+//! Admission ordering and fast Retry regressions
 use super::*;
 use crate::{
     crypto::{HandshakeTokenKey, Keys, UnsupportedVersion},
@@ -74,6 +74,8 @@ impl Counts {
 }
 
 /// Crypto provider counting Initial-key derivations
+///
+/// Uses the default `supports_version`, as a custom provider would.
 struct SpyCrypto {
     inner: Arc<dyn crypto::ServerConfig>,
     counts: Arc<Counts>,
@@ -188,6 +190,10 @@ fn initial_packet(config: &ServerConfig, dst_cid: ConnectionId, token: &[u8]) ->
 
 fn server_endpoint(config: ServerConfig) -> Endpoint {
     Endpoint::new(Default::default(), Some(Arc::new(config)), true)
+}
+
+fn is_retry(datagram: &[u8]) -> bool {
+    datagram.first().is_some_and(|byte| byte & 0xf0 == 0xf0)
 }
 
 /// A NEW_TOKEN for `addr`
@@ -306,28 +312,37 @@ fn ignored_new_token_is_used_up() {
     assert_eq!(validated, [true, false]);
 }
 
+/// Manual Retry through `Incoming`, and fast Retry through the filter
 #[test]
 fn filtered_handshake_after_retry() {
-    let policy = Policy::new(InitialDecision::Proceed);
-    let mut config = keyed_server_config();
-    config.initial_filter(policy.clone());
-    let mut pair = Pair::new(Default::default(), config);
-    pair.server.handle_incoming = Box::new(validate_incoming);
-    pair.connect();
-    let seen = policy.seen();
-    assert!(
-        seen.iter()
-            .all(|(initial, _)| initial.remote_address() == pair.client.addr)
-    );
-    let checks: Vec<_> = seen
-        .iter()
-        .map(|(_, token)| (token.remote_address_validated(), token.may_retry()))
-        .collect();
-    assert_eq!(
-        checks,
-        [(false, true), (true, false)],
-        "a valid Retry token validates the address and forbids another Retry"
-    );
+    for fast in [false, true] {
+        let verdict = match fast {
+            true => InitialDecision::Retry,
+            false => InitialDecision::Proceed,
+        };
+        let policy = Policy::new(verdict);
+        let mut config = keyed_server_config();
+        config.initial_filter(policy.clone());
+        let mut pair = Pair::new(Default::default(), config);
+        if !fast {
+            pair.server.handle_incoming = Box::new(validate_incoming);
+        }
+        pair.connect();
+        let seen = policy.seen();
+        assert!(
+            seen.iter()
+                .all(|(initial, _)| initial.remote_address() == pair.client.addr)
+        );
+        let checks: Vec<_> = seen
+            .iter()
+            .map(|(_, token)| (token.remote_address_validated(), token.may_retry()))
+            .collect();
+        assert_eq!(
+            checks,
+            [(false, true), (true, false)],
+            "a valid Retry token validates the address and forbids another Retry (fast: {fast})"
+        );
+    }
 }
 
 #[test]
@@ -442,16 +457,21 @@ fn invalid_retry_tokens_only_reach_the_gate() {
         .map(|token| initial_packet(&config, ConnectionId::new(&[1; 8]), token))
         .collect();
         let counts = instrument(&mut config);
-        let policy = Policy::new(InitialDecision::Ignore);
+        let policy = Policy::new(InitialDecision::Retry);
         policy.allow.store(allow, Ordering::Relaxed);
         config.initial_filter(policy.clone());
         let mut endpoint = server_endpoint(config);
         for data in packets {
-            let event = endpoint.handle(Instant::now(), addr, None, None, data, &mut Vec::new());
+            let mut out = Vec::new();
+            let event = endpoint.handle(Instant::now(), addr, None, None, data, &mut out);
             assert_eq!(
                 matches!(event, Some(DatagramEvent::Response(_))),
                 allow,
                 "invalid Retry token answered only when admitted (allow: {allow})"
+            );
+            assert!(
+                !is_retry(&out),
+                "an invalid Retry token must not draw Retry"
             );
         }
         assert!(
@@ -488,4 +508,116 @@ fn existing_connection_bypasses_exhausted_admission() {
         gate_calls,
         "established connection traffic must not reach the gate"
     );
+}
+
+/// The default `supports_version` derives Initial keys, but fast Retry still creates no state
+#[test]
+fn fast_retry_with_default_supports_version() {
+    let addr = "[::1]:4433".parse().unwrap();
+    let mut config = keyed_server_config();
+    let data = initial_packet(&config, ConnectionId::new(&[1; 8]), &[]);
+    let counts = instrument(&mut config);
+    config.initial_filter(Policy::new(InitialDecision::Retry));
+    let mut endpoint = server_endpoint(config);
+    for _ in 0..3 {
+        let mut out = Vec::new();
+        let event = endpoint.handle(Instant::now(), addr, None, None, data.clone(), &mut out);
+        assert!(matches!(event, Some(DatagramEvent::Response(_))));
+        assert!(is_retry(&out), "expected a Retry");
+        assert_eq!(endpoint.open_connections(), 0, "fast Retry opened state");
+    }
+    // One key derivation per `supports_version`, one token encryption per Retry
+    assert_eq!(counts.values(), [3, 3, 0]);
+}
+
+/// Provider that overrides `supports_version` and panics if Initial keys or TLS are used
+struct NoInitialKeys(Arc<dyn crypto::ServerConfig>);
+
+impl crypto::ServerConfig for NoInitialKeys {
+    fn supports_version(&self, version: u32) -> bool {
+        self.0.supports_version(version)
+    }
+
+    fn initial_keys(&self, _: u32, _: ConnectionId) -> Result<Keys, UnsupportedVersion> {
+        panic!("fast Retry derived Initial keys")
+    }
+
+    fn retry_tag(&self, version: u32, cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
+        self.0.retry_tag(version, cid, packet)
+    }
+
+    fn start_session(self: Arc<Self>, _: u32, _: &TransportParameters) -> Box<dyn crypto::Session> {
+        panic!("fast Retry started TLS")
+    }
+}
+
+#[test]
+fn fast_retry_needs_no_initial_keys_or_state() {
+    let addr = "[::1]:4433".parse().unwrap();
+    let mut config = keyed_server_config();
+    let data = initial_packet(&config, ConnectionId::new(&[1; 8]), &[7; 80]);
+    config.crypto = Arc::new(NoInitialKeys(config.crypto.clone()));
+    // A leaked `Incoming` would make the next attempt fail
+    config.max_incoming = 1;
+    config.initial_filter(Policy::new(InitialDecision::Retry));
+    let mut endpoint = server_endpoint(config);
+    for _ in 0..3 {
+        let mut out = Vec::new();
+        let event = endpoint.handle(Instant::now(), addr, None, None, data.clone(), &mut out);
+        assert!(matches!(event, Some(DatagramEvent::Response(_))));
+        assert!(is_retry(&out), "expected a Retry");
+        assert_eq!(
+            endpoint.known_connections(),
+            0,
+            "fast Retry created a connection"
+        );
+        assert_eq!(
+            endpoint.known_cids(),
+            0,
+            "fast Retry registered a CID route"
+        );
+    }
+}
+
+/// `EndpointConfig::supported_versions` can't make fast Retry call `retry_tag` for a version
+/// the provider doesn't support
+#[test]
+fn fast_retry_checks_provider_version_support() {
+    let addr = "[::1]:4433".parse().unwrap();
+    let unknown_version: u32 = 0x12345678;
+    let mut config = keyed_server_config();
+    let mut data = initial_packet(&config, ConnectionId::new(&[1; 8]), &[]);
+    data[1..5].copy_from_slice(&unknown_version.to_be_bytes());
+    config.initial_filter(Policy::new(InitialDecision::Retry));
+    let mut endpoint_config = EndpointConfig::default();
+    endpoint_config.supported_versions(vec![1, unknown_version]);
+    let mut endpoint = Endpoint::new(Arc::new(endpoint_config), Some(Arc::new(config)), true);
+    let mut out = Vec::new();
+    let event = endpoint.handle(Instant::now(), addr, None, None, data, &mut out);
+    assert!(
+        event.is_none() && out.is_empty(),
+        "unsupported version must be dropped"
+    );
+}
+
+#[test]
+fn coalesced_initials_draw_one_retry() {
+    let mut config = keyed_server_config();
+    let mut data = initial_packet(&config, ConnectionId::new(&[1; 8]), &[]);
+    data.extend_from_slice(&data.clone());
+    let policy = Policy::new(InitialDecision::Retry);
+    config.initial_filter(policy.clone());
+    let mut out = Vec::new();
+    let event = server_endpoint(config).handle(
+        Instant::now(),
+        "[::1]:4433".parse().unwrap(),
+        None,
+        None,
+        data,
+        &mut out,
+    );
+    assert!(matches!(event, Some(DatagramEvent::Response(_))));
+    assert!(is_retry(&out), "expected a Retry");
+    assert_eq!(policy.gate_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(policy.seen().len(), 1);
 }

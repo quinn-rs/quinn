@@ -493,7 +493,25 @@ impl Endpoint {
                             trace!("dropping initial for connection {dst_cid} per filter");
                             return None;
                         }
-                        InitialDecision::Proceed => {}
+                        InitialDecision::Retry if check.may_retry => {
+                            if !server_config.crypto.supports_version(header.version) {
+                                debug!(
+                                    "ignoring initial packet version {:#x} unsupported by cryptographic layer",
+                                    header.version
+                                );
+                                return None;
+                            }
+                            let server_config = server_config.clone();
+                            return Some(DatagramEvent::Response(self.encode_retry(
+                                &server_config,
+                                header.version,
+                                addresses,
+                                header.dst_cid,
+                                header.src_cid,
+                                buf,
+                            )));
+                        }
+                        InitialDecision::Proceed | InitialDecision::Retry => {}
                     }
                 }
                 filtered_token = Some(token);
@@ -911,6 +929,8 @@ impl Endpoint {
     }
 
     /// Encode a Retry packet
+    ///
+    /// The caller must have checked that the crypto provider supports `version`.
     fn encode_retry(
         &mut self,
         server_config: &ServerConfig,

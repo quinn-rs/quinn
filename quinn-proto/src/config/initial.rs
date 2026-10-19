@@ -41,6 +41,11 @@ pub trait InitialFilter: Send + Sync {
 pub enum InitialDecision {
     /// Continue as without a filter
     Proceed,
+    /// Send a Retry without deriving Initial keys or creating incoming state
+    ///
+    /// Initial keys are still derived if the provider doesn't override
+    /// [`crate::crypto::ServerConfig::supports_version`].
+    Retry,
     /// Drop silently, before Initial keys are derived or incoming state is created
     Ignore,
 }
@@ -88,6 +93,8 @@ impl TokenCheck {
         self.validated
     }
     /// Whether a Retry may be sent, i.e. the Initial carries no valid Retry token
+    ///
+    /// If false, [`InitialDecision::Retry`] is treated as [`InitialDecision::Proceed`].
     pub fn may_retry(&self) -> bool {
         self.may_retry
     }
