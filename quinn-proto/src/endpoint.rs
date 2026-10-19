@@ -470,6 +470,7 @@ impl Endpoint {
                 local_ip: addresses.local_ip,
                 received_at: event.now,
                 datagram_len,
+                malformed: early_validation.is_err(),
             };
             if !filter.before_token_check(&metadata) {
                 trace!("dropping initial for connection {dst_cid} per admission gate");

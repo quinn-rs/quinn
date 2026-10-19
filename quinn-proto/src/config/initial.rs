@@ -14,9 +14,10 @@ pub trait InitialFilter: Send + Sync {
     /// unauthenticated, so per-source limits alone don't bound spoofed traffic: use a global
     /// budget. The default admits everything.
     ///
-    /// Initials with a malformed header or an invalid Retry token (e.g. expired, or issued for
-    /// another address) skip [`Self::after_token_check`] and are refused with an encrypted
-    /// CONNECTION_CLOSE, which costs Initial keys and a response. Only this hook bounds them.
+    /// Initials with a [malformed](InitialMetadata::is_malformed) header or an invalid Retry token
+    /// (e.g. expired, or issued for another address) skip [`Self::after_token_check`] and are
+    /// refused with an encrypted CONNECTION_CLOSE, which costs Initial keys and a response. Only
+    /// this hook bounds them.
     fn before_token_check(&self, _initial: &InitialMetadata) -> bool {
         true
     }
@@ -57,6 +58,7 @@ pub struct InitialMetadata {
     pub(crate) local_ip: Option<IpAddr>,
     pub(crate) received_at: Instant,
     pub(crate) datagram_len: usize,
+    pub(crate) malformed: bool,
 }
 
 impl InitialMetadata {
@@ -75,6 +77,13 @@ impl InitialMetadata {
     /// Size of the UDP datagram carrying the Initial
     pub fn datagram_len(&self) -> usize {
         self.datagram_len
+    }
+    /// Whether the header is malformed, e.g. its destination CID is too short
+    ///
+    /// If admitted, the Initial skips [`InitialFilter::after_token_check`] and is refused with an
+    /// encrypted CONNECTION_CLOSE. False doesn't mean the packet is valid: most checks come later.
+    pub fn is_malformed(&self) -> bool {
+        self.malformed
     }
 }
 

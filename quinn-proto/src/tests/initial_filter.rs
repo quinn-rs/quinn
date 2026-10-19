@@ -420,6 +420,27 @@ fn malformed_initial_is_gated() {
         );
         assert!(policy.seen().is_empty());
     }
+
+    // The gate sees the flag only on malformed Initials
+    struct Flags(Mutex<Vec<bool>>);
+    impl InitialFilter for Flags {
+        fn before_token_check(&self, initial: &InitialMetadata) -> bool {
+            self.0.lock().unwrap().push(initial.is_malformed());
+            false
+        }
+        fn after_token_check(&self, _: &InitialMetadata, _: &TokenCheck) -> InitialDecision {
+            unreachable!("the gate drops everything")
+        }
+    }
+    let flags = Arc::new(Flags(Mutex::default()));
+    let mut config = keyed_server_config();
+    let valid = initial_packet(&config, ConnectionId::new(&[1; 8]), &[]);
+    config.initial_filter(flags.clone());
+    let mut endpoint = server_endpoint(config);
+    for data in [data, valid] {
+        endpoint.handle(Instant::now(), addr, None, None, data, &mut Vec::new());
+    }
+    assert_eq!(*flags.0.lock().unwrap(), [true, false]);
 }
 
 #[test]
