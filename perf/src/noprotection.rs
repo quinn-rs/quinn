@@ -120,7 +120,7 @@ impl crypto::Session for NoProtectionSession {
     }
 
     fn export_keying_material(
-        &self,
+        &mut self,
         output: &mut [u8],
         label: &[u8],
         context: &[u8],

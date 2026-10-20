@@ -1,21 +1,4 @@
-use std::{any::Any, io, str, sync::Arc};
-
-#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-use aws_lc_rs::aead;
-use bytes::BytesMut;
-#[cfg(feature = "ring")]
-use ring::aead;
-pub use rustls::Error;
-#[cfg(feature = "__rustls-post-quantum-test")]
-use rustls::NamedGroup;
-use rustls::{
-    self, CipherSuite,
-    client::danger::ServerCertVerifier,
-    pki_types::{CertificateDer, PrivateKeyDer, ServerName},
-    quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
-};
-#[cfg(feature = "platform-verifier")]
-use rustls_platform_verifier::BuilderVerifierExt;
+use std::{any::Any, collections::VecDeque, io, str, sync::Arc};
 
 use crate::{
     ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
@@ -24,8 +7,28 @@ use crate::{
     },
     transport_parameters::TransportParameters,
 };
+use bytes::BytesMut;
+pub use rustls::Error;
+#[cfg(feature = "__rustls-post-quantum-test")]
+use rustls::crypto::kx::NamedGroup;
+use rustls::{
+    self, TlsInputBuffer,
+    client::danger::ServerVerifier,
+    crypto::{
+        CipherSuite, CryptoProvider, Identity,
+        cipher::{AeadKey, Iv},
+    },
+    error::AlertDescription,
+    pki_types::{CertificateDer, PrivateKeyDer, ServerName},
+    quic::{
+        ClientHandshake, DirectionalKeys, HeaderProtectionKey, KeyChange, PacketKey, QuicEvent,
+        Secrets, ServerHandshake, Side as QuicSide, Suite, Version,
+    },
+};
+#[cfg(feature = "platform-verifier")]
+use rustls_platform_verifier::BuilderVerifierExt;
 
-impl From<Side> for rustls::Side {
+impl From<Side> for QuicSide {
     fn from(s: Side) -> Self {
         match s {
             Side::Client => Self::Client,
@@ -39,15 +42,136 @@ pub struct TlsSession {
     version: Version,
     got_handshake_data: bool,
     next_secrets: Option<Secrets>,
-    inner: Connection,
+    exporter: Option<rustls::KeyingMaterialExporter>,
+    inner: QuicConnection,
+    input: HandshakeInput,
+    pending_events: VecDeque<QuicEvent>,
     suite: Suite,
+}
+
+/// A rustls input buffer that Quinn can append ordered QUIC CRYPTO data to
+pub trait QuicInputBuffer: TlsInputBuffer + Send + Sync + 'static {
+    /// Append newly received data to the end of the buffer
+    fn extend_from_slice(&mut self, bytes: &[u8]);
+}
+
+#[derive(Default)]
+struct VecInput {
+    bytes: Vec<u8>,
+    offset: usize,
+}
+
+impl QuicInputBuffer for VecInput {
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        if self.offset != 0 {
+            self.bytes.drain(..self.offset);
+            self.offset = 0;
+        }
+        self.bytes.extend_from_slice(bytes);
+    }
+}
+
+impl VecInput {
+    fn len(&self) -> usize {
+        self.bytes.len() - self.offset
+    }
+}
+
+impl TlsInputBuffer for VecInput {
+    fn slice_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes[self.offset..]
+    }
+
+    fn discard(&mut self, num_bytes: usize) {
+        assert!(num_bytes <= self.len());
+        self.offset += num_bytes;
+        if self.offset == self.bytes.len() {
+            self.bytes.clear();
+            self.offset = 0;
+        }
+    }
+
+    fn received_close_notify(&mut self) {}
+
+    fn has_seen_eof(&self) -> bool {
+        false
+    }
+}
+
+enum HandshakeInput {
+    Default(VecInput),
+    Custom(Box<dyn QuicInputBuffer>),
+}
+
+impl Default for HandshakeInput {
+    fn default() -> Self {
+        Self::Default(VecInput::default())
+    }
+}
+
+impl HandshakeInput {
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Default(input) => input.extend_from_slice(bytes),
+            Self::Custom(input) => input.extend_from_slice(bytes),
+        }
+    }
+
+    fn len(&mut self) -> usize {
+        match self {
+            Self::Default(input) => input.len(),
+            Self::Custom(input) => input.slice_mut().len(),
+        }
+    }
+
+    fn is_empty(&mut self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl TlsInputBuffer for HandshakeInput {
+    fn slice_mut(&mut self) -> &mut [u8] {
+        match self {
+            Self::Default(input) => input.slice_mut(),
+            Self::Custom(input) => input.slice_mut(),
+        }
+    }
+
+    fn discard(&mut self, num_bytes: usize) {
+        match self {
+            Self::Default(input) => input.discard(num_bytes),
+            Self::Custom(input) => input.discard(num_bytes),
+        }
+    }
+
+    fn received_close_notify(&mut self) {
+        match self {
+            Self::Default(input) => input.received_close_notify(),
+            Self::Custom(input) => input.received_close_notify(),
+        }
+    }
+
+    fn has_seen_eof(&self) -> bool {
+        match self {
+            Self::Default(input) => input.has_seen_eof(),
+            Self::Custom(input) => input.has_seen_eof(),
+        }
+    }
 }
 
 impl TlsSession {
     fn side(&self) -> Side {
-        match self.inner {
-            Connection::Client(_) => Side::Client,
-            Connection::Server(_) => Side::Server,
+        self.inner.side()
+    }
+
+    fn required_handshake_data_is_ready(&self) -> bool {
+        #[cfg(feature = "__rustls-post-quantum-test")]
+        {
+            self.inner.negotiated_key_exchange_group().is_some()
+        }
+        #[cfg(not(feature = "__rustls-post-quantum-test"))]
+        {
+            true
         }
     }
 }
@@ -63,38 +187,29 @@ impl crypto::Session for TlsSession {
         }
         Some(Box::new(HandshakeData {
             protocol: self.inner.alpn_protocol().map(|x| x.into()),
-            server_name: match &self.inner {
-                Connection::Client(_) => None,
-                Connection::Server(session) => session.server_name().map(|x| x.into()),
-            },
-            protocol_version: match &self.inner {
-                Connection::Client(session) => session.protocol_version(),
-                Connection::Server(session) => session.protocol_version(),
-            }
-            .map(|x| -> Box<dyn Any> { Box::new(x) }),
-            cipher_suite: match &self.inner {
-                Connection::Client(session) => session.negotiated_cipher_suite(),
-                Connection::Server(session) => session.negotiated_cipher_suite(),
-            }
-            .map(|suite| -> Box<dyn Any> { Box::new(suite.suite()) }),
+            server_name: self.inner.server_name().map(str::to_owned),
+            protocol_version: self
+                .inner
+                .protocol_version()
+                .map(|x| -> Box<dyn Any> { Box::new(x) }),
+            cipher_suite: self
+                .inner
+                .negotiated_cipher_suite()
+                .map(|suite| -> Box<dyn Any> { Box::new(suite.suite()) }),
             #[cfg(feature = "__rustls-post-quantum-test")]
             negotiated_key_exchange_group: self
                 .inner
                 .negotiated_key_exchange_group()
-                .expect("key exchange group is negotiated")
-                .name(),
+                .expect("key exchange group is negotiated"),
         }))
     }
 
-    /// For the rustls `TlsSession`, the `Any` type is `Vec<rustls::pki_types::CertificateDer>`
+    /// For the rustls `TlsSession`, the `Any` type is `rustls::crypto::Identity<'static>`
     fn peer_identity(&self) -> Option<Box<dyn Any>> {
-        self.inner.peer_certificates().map(|v| -> Box<dyn Any> {
-            Box::new(
-                v.iter()
-                    .map(|v| v.clone().into_owned())
-                    .collect::<Vec<CertificateDer<'static>>>(),
-            )
-        })
+        self.inner
+            .peer_identity()
+            .cloned()
+            .map(|identity| -> Box<dyn Any> { Box::new(identity) })
     }
 
     fn early_crypto(&self) -> Option<(Box<dyn HeaderKey>, Box<dyn crypto::PacketKey>)> {
@@ -103,10 +218,7 @@ impl crypto::Session for TlsSession {
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
-        match &self.inner {
-            Connection::Client(session) => Some(session.is_early_data_accepted()),
-            _ => None,
-        }
+        self.inner.is_early_data_accepted()
     }
 
     fn is_handshaking(&self) -> bool {
@@ -114,27 +226,35 @@ impl crypto::Session for TlsSession {
     }
 
     fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError> {
-        self.inner.read_hs(buf).map_err(|e| {
-            if let Some(alert) = self.inner.alert() {
-                TransportError {
-                    code: TransportErrorCode::crypto(alert.into()),
-                    frame: None,
-                    reason: e.to_string(),
-                    crypto: Some(Arc::new(e)),
-                }
-            } else {
-                TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
+        self.input.extend_from_slice(buf);
+        loop {
+            let before = self.input.len();
+            self.inner
+                .read_hs(&mut self.input, &mut self.pending_events)
+                .map_err(|e| {
+                    if let Ok(alert) = AlertDescription::try_from(&e) {
+                        TransportError {
+                            code: TransportErrorCode::crypto(alert.into()),
+                            frame: None,
+                            reason: e.to_string(),
+                            crypto: Some(Arc::new(e)),
+                        }
+                    } else {
+                        TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
+                    }
+                })?;
+            if self.input.is_empty() || self.input.len() == before {
+                break;
             }
-        })?;
+        }
         if !self.got_handshake_data {
             // Hack around the lack of an explicit signal from rustls to reflect ClientHello being
             // ready on incoming connections, or ALPN negotiation completing on outgoing
             // connections.
-            let have_server_name = match &self.inner {
-                Connection::Client(_) => false,
-                Connection::Server(session) => session.server_name().is_some(),
-            };
-            if self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
+            let have_server_name = self.inner.server_name().is_some();
+            if (self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking())
+                && self.required_handshake_data_is_ready()
+            {
                 self.got_handshake_data = true;
                 return Ok(true);
             }
@@ -153,11 +273,19 @@ impl crypto::Session for TlsSession {
     }
 
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys> {
-        let keys = match self.inner.write_hs(buf)? {
-            KeyChange::Handshake { keys } => keys,
-            KeyChange::OneRtt { keys, next } => {
-                self.next_secrets = Some(next);
-                keys
+        let keys = loop {
+            match self.pending_events.pop_front()? {
+                QuicEvent::Message(message) => buf.extend_from_slice(&message),
+                QuicEvent::KeyChange(key_change) => {
+                    break match key_change {
+                        KeyChange::Handshake { keys } => keys,
+                        KeyChange::OneRtt { keys, next } => {
+                            self.next_secrets = Some(next);
+                            keys
+                        }
+                    };
+                }
+                event => unreachable!("unsupported rustls QUIC event: {event:?}"),
             }
         };
 
@@ -195,45 +323,303 @@ impl crypto::Session for TlsSession {
         let tag_start = tag_start + pseudo_packet.len();
         pseudo_packet.extend_from_slice(payload);
 
-        let (nonce, key) = match self.version {
-            Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
-            Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
-            _ => unreachable!(),
-        };
-
-        let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
-
         let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
-        key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
+        retry_key_for_version(self.version, &self.suite)
+            .decrypt_in_place(0, aad, tag, None)
+            .is_ok()
     }
 
     fn export_keying_material(
-        &self,
+        &mut self,
         output: &mut [u8],
         label: &[u8],
         context: &[u8],
     ) -> Result<(), ExportKeyingMaterialError> {
-        self.inner
-            .export_keying_material(output, label, Some(context))
+        if self.exporter.is_none() {
+            self.exporter = Some(
+                self.inner
+                    .exporter()
+                    .map_err(|_| ExportKeyingMaterialError)?,
+            );
+        }
+
+        self.exporter
+            .as_ref()
+            .expect("exporter is set")
+            .derive(label, Some(context), output)
             .map_err(|_| ExportKeyingMaterialError)?;
         Ok(())
     }
 }
 
-const RETRY_INTEGRITY_KEY_DRAFT: [u8; 16] = [
-    0xcc, 0xce, 0x18, 0x7e, 0xd0, 0x9a, 0x09, 0xd0, 0x57, 0x28, 0x15, 0x5a, 0x6c, 0xb9, 0x6b, 0xe1,
-];
-const RETRY_INTEGRITY_NONCE_DRAFT: [u8; 12] = [
-    0xe5, 0x49, 0x30, 0xf9, 0x7f, 0x21, 0x36, 0xf0, 0x53, 0x0a, 0x8c, 0x1c,
-];
+enum QuicConnection {
+    Client(Option<ClientHandshake>),
+    Server {
+        state: Option<ServerHandshake>,
+        config: Arc<rustls::ServerConfig>,
+        params: Vec<u8>,
+    },
+}
 
-const RETRY_INTEGRITY_KEY_V1: [u8; 16] = [
-    0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e,
-];
-const RETRY_INTEGRITY_NONCE_V1: [u8; 12] = [
-    0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb,
-];
+impl QuicConnection {
+    fn side(&self) -> Side {
+        match self {
+            Self::Client(_) => Side::Client,
+            Self::Server { .. } => Side::Server,
+        }
+    }
+
+    fn alpn_protocol(&self) -> Option<&[u8]> {
+        match self {
+            Self::Client(Some(ClientHandshake::NeedsInput(session))) => session.alpn_protocol(),
+            Self::Client(Some(ClientHandshake::Complete(session))) => session.alpn_protocol(),
+            Self::Server {
+                state: Some(ServerHandshake::NeedsInput(session)),
+                ..
+            } => session.alpn_protocol(),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.alpn_protocol(),
+            _ => None,
+        }
+        .map(AsRef::as_ref)
+    }
+
+    fn peer_identity(&self) -> Option<&Identity<'static>> {
+        match self {
+            Self::Client(Some(ClientHandshake::NeedsInput(session))) => session.peer_identity(),
+            Self::Client(Some(ClientHandshake::Complete(session))) => session.peer_identity(),
+            Self::Server {
+                state: Some(ServerHandshake::NeedsInput(session)),
+                ..
+            } => session.peer_identity(),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.peer_identity(),
+            _ => None,
+        }
+        .map(|identity| identity.identity())
+    }
+
+    fn zero_rtt_keys(&self) -> Option<DirectionalKeys> {
+        match self {
+            Self::Client(Some(ClientHandshake::NeedsInput(session))) => session.zero_rtt_keys(),
+            Self::Client(Some(ClientHandshake::Complete(session))) => session.zero_rtt_keys(),
+            Self::Server {
+                state: Some(ServerHandshake::NeedsInput(session)),
+                ..
+            } => session.zero_rtt_keys(),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.zero_rtt_keys(),
+            _ => None,
+        }
+    }
+
+    fn is_early_data_accepted(&self) -> Option<bool> {
+        match self {
+            Self::Client(Some(ClientHandshake::NeedsInput(session))) => {
+                Some(session.side().is_early_data_accepted())
+            }
+            Self::Client(Some(ClientHandshake::Complete(session))) => {
+                Some(session.side().is_early_data_accepted())
+            }
+            _ => None,
+        }
+    }
+
+    fn is_handshaking(&self) -> bool {
+        !matches!(
+            self,
+            Self::Client(Some(ClientHandshake::Complete(_)))
+                | Self::Server {
+                    state: Some(ServerHandshake::Complete(_)),
+                    ..
+                }
+        )
+    }
+
+    fn read_hs(
+        &mut self,
+        input: &mut dyn TlsInputBuffer,
+        pending_events: &mut VecDeque<QuicEvent>,
+    ) -> Result<(), Error> {
+        let mut output = Vec::new();
+        match self {
+            Self::Client(state) => {
+                let current = state.take().expect("QUIC client handshake state is set");
+                let mut next = match current {
+                    ClientHandshake::NeedsInput(session) => session.process(input, &mut output)?,
+                    ClientHandshake::Complete(mut session) => {
+                        session.read_hs(input)?;
+                        output.extend(session.events());
+                        ClientHandshake::Complete(session)
+                    }
+                    _ => unreachable!("transient QUIC client handshake state was retained"),
+                };
+                let mut process_after_transition = false;
+                next = loop {
+                    next = match next {
+                        ClientHandshake::VerifyServerIdentity(verify) => {
+                            process_after_transition = true;
+                            verify.with_config(&mut output)?
+                        }
+                        ClientHandshake::NeedsInput(session) if process_after_transition => {
+                            process_after_transition = false;
+                            session.process(input, &mut output)?
+                        }
+                        next => break next,
+                    };
+                };
+                *state = Some(next);
+            }
+            Self::Server {
+                state,
+                config,
+                params,
+            } => {
+                let current = state.take().expect("QUIC server handshake state is set");
+                let mut next = match current {
+                    ServerHandshake::NeedsInput(session) => session.process(input, &mut output)?,
+                    ServerHandshake::Complete(mut session) => {
+                        session.read_hs(input)?;
+                        output.extend(session.events());
+                        ServerHandshake::Complete(session)
+                    }
+                    _ => unreachable!("transient QUIC server handshake state was retained"),
+                };
+                let mut process_after_transition = false;
+                next = loop {
+                    next = match next {
+                        ServerHandshake::Accepted(accepted) => {
+                            process_after_transition = true;
+                            accepted.choose_config(config.clone(), params.clone(), &mut output)?
+                        }
+                        ServerHandshake::VerifyClientIdentity(verify) => {
+                            process_after_transition = true;
+                            verify.with_config(&mut output)?
+                        }
+                        ServerHandshake::NeedsInput(session) if process_after_transition => {
+                            process_after_transition = false;
+                            session.process(input, &mut output)?
+                        }
+                        next => break next,
+                    };
+                };
+                *state = Some(next);
+            }
+        }
+        pending_events.extend(output);
+        Ok(())
+    }
+
+    fn quic_transport_parameters(&self) -> Option<&[u8]> {
+        match self {
+            Self::Client(Some(ClientHandshake::NeedsInput(session))) => {
+                session.quic_transport_parameters()
+            }
+            Self::Client(Some(ClientHandshake::Complete(session))) => {
+                session.quic_transport_parameters()
+            }
+            Self::Server {
+                state: Some(ServerHandshake::NeedsInput(session)),
+                ..
+            } => session.quic_transport_parameters(),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.quic_transport_parameters(),
+            _ => None,
+        }
+    }
+
+    fn server_name(&self) -> Option<&str> {
+        match self {
+            Self::Client(_) => None,
+            Self::Server {
+                state: Some(ServerHandshake::NeedsInput(session)),
+                ..
+            } => session.side().server_name().map(AsRef::as_ref),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.side().server_name().map(AsRef::as_ref),
+            Self::Server { .. } => None,
+        }
+    }
+
+    fn protocol_version(&self) -> Option<rustls::enums::ProtocolVersion> {
+        match self {
+            Self::Client(Some(ClientHandshake::NeedsInput(session))) => session.protocol_version(),
+            Self::Client(Some(ClientHandshake::Complete(session))) => session.protocol_version(),
+            Self::Server {
+                state: Some(ServerHandshake::NeedsInput(session)),
+                ..
+            } => session.protocol_version(),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.protocol_version(),
+            _ => None,
+        }
+    }
+
+    fn negotiated_cipher_suite(&self) -> Option<rustls::SupportedCipherSuite> {
+        match self {
+            Self::Client(Some(ClientHandshake::NeedsInput(session))) => {
+                session.negotiated_cipher_suite()
+            }
+            Self::Client(Some(ClientHandshake::Complete(session))) => {
+                session.negotiated_cipher_suite()
+            }
+            Self::Server {
+                state: Some(ServerHandshake::NeedsInput(session)),
+                ..
+            } => session.negotiated_cipher_suite(),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.negotiated_cipher_suite(),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "__rustls-post-quantum-test")]
+    fn negotiated_key_exchange_group(&self) -> Option<NamedGroup> {
+        match self {
+            Self::Client(Some(ClientHandshake::NeedsInput(session))) => {
+                session.negotiated_key_exchange_group()
+            }
+            Self::Client(Some(ClientHandshake::Complete(session))) => {
+                session.negotiated_key_exchange_group()
+            }
+            Self::Server {
+                state: Some(ServerHandshake::NeedsInput(session)),
+                ..
+            } => session.negotiated_key_exchange_group(),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.negotiated_key_exchange_group(),
+            _ => None,
+        }
+        .map(|group| group.name())
+    }
+
+    fn exporter(&mut self) -> Result<rustls::KeyingMaterialExporter, Error> {
+        match self {
+            Self::Client(Some(ClientHandshake::Complete(session))) => session.exporter(),
+            Self::Server {
+                state: Some(ServerHandshake::Complete(session)),
+                ..
+            } => session.exporter(),
+            _ => Err(Error::HandshakeNotComplete),
+        }
+    }
+}
 
 impl HeaderKey for Box<dyn HeaderProtectionKey> {
     fn decrypt(&self, pn_offset: usize, packet: &mut [u8]) {
@@ -288,7 +674,8 @@ pub struct HandshakeData {
 /// A QUIC-compatible TLS client configuration
 ///
 /// Quinn implicitly constructs a `QuicClientConfig` with reasonable defaults within
-/// [`ClientConfig::with_root_certificates()`][root_certs] and [`ClientConfig::try_with_platform_verifier()`][platform].
+/// [`ClientConfig::with_root_certificates()`][root_certs] and
+/// [`ClientConfig::try_with_platform_verifier()`][platform].
 /// Alternatively, `QuicClientConfig`'s [`TryFrom`] implementation can be used to wrap around a
 /// custom [`rustls::ClientConfig`], in which case care should be taken around certain points:
 ///
@@ -311,17 +698,15 @@ pub struct QuicClientConfig {
 impl QuicClientConfig {
     #[cfg(feature = "platform-verifier")]
     pub(crate) fn with_platform_verifier() -> Result<Self, Error> {
-        // Keep in sync with `inner()` below
-        let mut inner = rustls::ClientConfig::builder_with_provider(configured_provider())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap() // The default providers support TLS 1.3
+        let mut inner = rustls::ClientConfig::builder(configured_provider())
             .with_platform_verifier()?
-            .with_no_client_auth();
+            .with_no_client_auth()
+            .expect("default providers are valid for QUIC");
 
         inner.enable_early_data = true;
         Ok(Self {
-            // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
-            initial: initial_suite_from_provider(inner.crypto_provider())
+            // We're confident that the default providers contain TLS13_AES_128_GCM_SHA256
+            initial: initial_suite_from_provider(inner.provider())
                 .expect("no initial cipher suite found"),
             inner: Arc::new(inner),
         })
@@ -331,11 +716,11 @@ impl QuicClientConfig {
     ///
     /// QUIC requires that TLS 1.3 be enabled. Advanced users can use any [`rustls::ClientConfig`] that
     /// satisfies this requirement.
-    pub(crate) fn new(verifier: Arc<dyn ServerCertVerifier>) -> Self {
+    pub(crate) fn new(verifier: Arc<dyn ServerVerifier>) -> Self {
         let inner = Self::inner(verifier);
         Self {
-            // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
-            initial: initial_suite_from_provider(inner.crypto_provider())
+            // We're confident that the default providers contain TLS13_AES_128_GCM_SHA256
+            initial: initial_suite_from_provider(inner.provider())
                 .expect("no initial cipher suite found"),
             inner: Arc::new(inner),
         }
@@ -348,20 +733,25 @@ impl QuicClientConfig {
         inner: Arc<rustls::ClientConfig>,
         initial: Suite,
     ) -> Result<Self, NoInitialCipherSuite> {
-        match initial.suite.common.suite {
+        match initial.inner.common.suite {
             CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial }),
             _ => Err(NoInitialCipherSuite { specific: true }),
         }
     }
 
-    pub(crate) fn inner(verifier: Arc<dyn ServerCertVerifier>) -> rustls::ClientConfig {
-        // Keep in sync with `with_platform_verifier()` above
-        let mut config = rustls::ClientConfig::builder_with_provider(configured_provider())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap() // The default providers support TLS 1.3
+    pub(crate) fn inner(verifier: Arc<dyn ServerVerifier>) -> rustls::ClientConfig {
+        Self::inner_with_provider(verifier, configured_provider())
+    }
+
+    pub(crate) fn inner_with_provider(
+        verifier: Arc<dyn ServerVerifier>,
+        provider: Arc<CryptoProvider>,
+    ) -> rustls::ClientConfig {
+        let mut config = rustls::ClientConfig::builder(provider)
             .dangerous()
             .with_custom_certificate_verifier(verifier)
-            .with_no_client_auth();
+            .with_no_client_auth()
+            .expect("default providers are valid for QUIC");
 
         config.enable_early_data = true;
         config
@@ -376,21 +766,23 @@ impl crypto::ClientConfig for QuicClientConfig {
         params: &TransportParameters,
     ) -> Result<Box<dyn crypto::Session>, ConnectError> {
         let version = interpret_version(version)?;
+        let server_name = ServerName::try_from(server_name)
+            .map_err(|_| ConnectError::InvalidServerName(server_name.into()))?
+            .to_owned();
+        let mut pending_events = Vec::new();
+        let session = self
+            .inner
+            .connect(server_name)
+            .start_quic_handshake(version, to_vec(params), &mut pending_events)
+            .unwrap();
         Ok(Box::new(TlsSession {
             version,
             got_handshake_data: false,
             next_secrets: None,
-            inner: Connection::Client(
-                rustls::quic::ClientConnection::new(
-                    self.inner.clone(),
-                    version,
-                    ServerName::try_from(server_name)
-                        .map_err(|_| ConnectError::InvalidServerName(server_name.into()))?
-                        .to_owned(),
-                    to_vec(params),
-                )
-                .unwrap(),
-            ),
+            exporter: None,
+            inner: QuicConnection::Client(Some(ClientHandshake::NeedsInput(session))),
+            input: HandshakeInput::default(),
+            pending_events: pending_events.into(),
             suite: self.initial,
         }))
     }
@@ -409,7 +801,7 @@ impl TryFrom<Arc<rustls::ClientConfig>> for QuicClientConfig {
 
     fn try_from(inner: Arc<rustls::ClientConfig>) -> Result<Self, Self::Error> {
         Ok(Self {
-            initial: initial_suite_from_provider(inner.crypto_provider())
+            initial: initial_suite_from_provider(inner.provider())
                 .ok_or(NoInitialCipherSuite { specific: false })?,
             inner,
         })
@@ -420,9 +812,7 @@ impl TryFrom<Arc<rustls::ClientConfig>> for QuicClientConfig {
 ///
 /// When the cipher suite is supplied `with_initial()`, it must be
 /// [`CipherSuite::TLS13_AES_128_GCM_SHA256`]. When the cipher suite is derived from a config's
-/// [`CryptoProvider`][provider], that provider must reference a cipher suite with the same ID.
-///
-/// [provider]: rustls::crypto::CryptoProvider
+/// [`CryptoProvider`], that provider must reference a cipher suite with the same ID.
 #[derive(Clone, Debug)]
 pub struct NoInitialCipherSuite {
     /// Whether the initial cipher suite was supplied by the caller
@@ -455,6 +845,7 @@ impl std::error::Error for NoInitialCipherSuite {}
 pub struct QuicServerConfig {
     inner: Arc<rustls::ServerConfig>,
     initial: Suite,
+    input_buffer_factory: Option<Arc<dyn Fn() -> Box<dyn QuicInputBuffer> + Send + Sync + 'static>>,
 }
 
 impl QuicServerConfig {
@@ -464,10 +855,11 @@ impl QuicServerConfig {
     ) -> Result<Self, Error> {
         let inner = Self::inner(cert_chain, key)?;
         Ok(Self {
-            // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
-            initial: initial_suite_from_provider(inner.crypto_provider())
+            // We're confident that the default providers contain TLS13_AES_128_GCM_SHA256
+            initial: initial_suite_from_provider(inner.provider())
                 .expect("no initial cipher suite found"),
             inner: Arc::new(inner),
+            input_buffer_factory: None,
         })
     }
 
@@ -478,10 +870,24 @@ impl QuicServerConfig {
         inner: Arc<rustls::ServerConfig>,
         initial: Suite,
     ) -> Result<Self, NoInitialCipherSuite> {
-        match initial.suite.common.suite {
-            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial }),
+        match initial.inner.common.suite {
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self {
+                inner,
+                initial,
+                input_buffer_factory: None,
+            }),
             _ => Err(NoInitialCipherSuite { specific: true }),
         }
+    }
+
+    /// Use `factory` to construct the TLS input buffer for each incoming connection
+    pub fn tls_input_buffer_factory<F, B>(&mut self, factory: F) -> &mut Self
+    where
+        F: Fn() -> B + Send + Sync + 'static,
+        B: QuicInputBuffer,
+    {
+        self.input_buffer_factory = Some(Arc::new(move || Box::new(factory())));
+        self
     }
 
     /// Initialize a sane QUIC-compatible TLS server configuration
@@ -493,11 +899,17 @@ impl QuicServerConfig {
         cert_chain: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
     ) -> Result<rustls::ServerConfig, Error> {
-        let mut inner = rustls::ServerConfig::builder_with_provider(configured_provider())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap() // The *ring* default provider supports TLS 1.3
+        Self::inner_with_provider(cert_chain, key, configured_provider())
+    }
+
+    pub(crate) fn inner_with_provider(
+        cert_chain: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+        provider: Arc<CryptoProvider>,
+    ) -> Result<rustls::ServerConfig, Error> {
+        let mut inner = rustls::ServerConfig::builder(provider)
             .with_no_client_auth()
-            .with_single_cert(cert_chain, key)?;
+            .with_single_cert(Arc::new(Identity::from_cert_chain(cert_chain)?), key)?;
 
         inner.max_early_data_size = u32::MAX;
         Ok(inner)
@@ -517,9 +929,10 @@ impl TryFrom<Arc<rustls::ServerConfig>> for QuicServerConfig {
 
     fn try_from(inner: Arc<rustls::ServerConfig>) -> Result<Self, Self::Error> {
         Ok(Self {
-            initial: initial_suite_from_provider(inner.crypto_provider())
+            initial: initial_suite_from_provider(inner.provider())
                 .ok_or(NoInitialCipherSuite { specific: false })?,
             inner,
+            input_buffer_factory: None,
         })
     }
 }
@@ -536,10 +949,18 @@ impl crypto::ServerConfig for QuicServerConfig {
             version,
             got_handshake_data: false,
             next_secrets: None,
-            inner: Connection::Server(
-                rustls::quic::ServerConnection::new(self.inner.clone(), version, to_vec(params))
-                    .unwrap(),
-            ),
+            exporter: None,
+            inner: QuicConnection::Server {
+                state: Some(ServerHandshake::NeedsInput(ServerHandshake::start(version))),
+                config: self.inner.clone(),
+                params: to_vec(params),
+            },
+            input: self
+                .input_buffer_factory
+                .as_ref()
+                .map(|factory| HandshakeInput::Custom(factory()))
+                .unwrap_or_default(),
+            pending_events: VecDeque::new(),
             suite: self.initial,
         })
     }
@@ -556,22 +977,13 @@ impl crypto::ServerConfig for QuicServerConfig {
     fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
         let version = interpret_version(version).unwrap();
-        let (nonce, key) = match version {
-            Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
-            Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
-            _ => unreachable!(),
-        };
-
         let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
         pseudo_packet.push(orig_dst_cid.len() as u8);
         pseudo_packet.extend_from_slice(&orig_dst_cid);
         pseudo_packet.extend_from_slice(packet);
 
-        let nonce = aead::Nonce::assume_unique_for_key(nonce);
-        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
-
-        let tag = key
-            .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
+        let tag = retry_key_for_version(version, &self.initial)
+            .encrypt_in_place(0, &pseudo_packet, &mut [], None)
             .unwrap();
         let mut result = [0; 16];
         result.copy_from_slice(tag.as_ref());
@@ -579,24 +991,39 @@ impl crypto::ServerConfig for QuicServerConfig {
     }
 }
 
-pub(crate) fn initial_suite_from_provider(
-    provider: &Arc<rustls::crypto::CryptoProvider>,
-) -> Option<Suite> {
-    provider
-        .cipher_suites
-        .iter()
-        .find_map(|cs| match (cs.suite(), cs.tls13()) {
-            (CipherSuite::TLS13_AES_128_GCM_SHA256, Some(suite)) => Some(suite.quic_suite()),
-            _ => None,
-        })
-        .flatten()
+fn retry_key_for_version(version: Version, initial_suite: &Suite) -> Box<dyn PacketKey> {
+    let (nonce, key) = match version {
+        Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
+        _ => unreachable!(),
+    };
+
+    initial_suite
+        .quic
+        .packet_key(AeadKey::from(key), Iv::from(nonce))
 }
 
-pub(crate) fn configured_provider() -> Arc<rustls::crypto::CryptoProvider> {
+const RETRY_INTEGRITY_KEY_V1: [u8; 16] = [
+    0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e,
+];
+const RETRY_INTEGRITY_NONCE_V1: [u8; 12] = [
+    0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb,
+];
+
+pub(crate) fn initial_suite_from_provider(provider: &Arc<CryptoProvider>) -> Option<Suite> {
+    provider
+        .tls13_cipher_suites
+        .iter()
+        .find_map(|&suite| match suite.common.suite {
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Suite::try_from(suite).ok(),
+            _ => None,
+        })
+}
+
+pub(crate) fn configured_provider() -> Arc<CryptoProvider> {
     #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    let provider = rustls_aws_lc_rs::DEFAULT_PROVIDER;
     #[cfg(feature = "rustls-ring")]
-    let provider = rustls::crypto::ring::default_provider();
+    let provider = rustls_ring::DEFAULT_PROVIDER;
     Arc::new(provider)
 }
 
@@ -629,7 +1056,9 @@ impl crypto::PacketKey for Box<dyn PacketKey> {
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
         let (header, payload_tag) = buf.split_at_mut(header_len);
         let (payload, tag_storage) = payload_tag.split_at_mut(payload_tag.len() - self.tag_len());
-        let tag = self.encrypt_in_place(packet, &*header, payload).unwrap();
+        let tag = self
+            .encrypt_in_place(packet, &*header, payload, None)
+            .unwrap();
         tag_storage.copy_from_slice(tag.as_ref());
     }
 
@@ -640,7 +1069,7 @@ impl crypto::PacketKey for Box<dyn PacketKey> {
         payload: &mut BytesMut,
     ) -> Result<(), CryptoError> {
         let plain = self
-            .decrypt_in_place(packet, header, payload.as_mut())
+            .decrypt_in_place(packet, header, payload.as_mut(), None)
             .map_err(|_| CryptoError)?;
         let plain_len = plain.len();
         payload.truncate(plain_len);
@@ -662,7 +1091,6 @@ impl crypto::PacketKey for Box<dyn PacketKey> {
 
 fn interpret_version(version: u32) -> Result<Version, UnsupportedVersion> {
     match version {
-        0xff00_001d..=0xff00_0020 => Ok(Version::V1Draft),
         0x0000_0001 | 0xff00_0021..=0xff00_0022 => Ok(Version::V1),
         _ => Err(UnsupportedVersion),
     }
