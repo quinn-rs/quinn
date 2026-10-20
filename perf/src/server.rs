@@ -4,7 +4,11 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
 use quinn::{crypto::rustls::QuicServerConfig, TokioRuntime};
-use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::{
+    crypto::Identity,
+    enums::ApplicationProtocol,
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+};
 use tracing::{debug, error, info};
 
 use crate::{noprotection::NoProtectionServerConfig, CommonOpt, PERF_CIPHER_SUITES};
@@ -44,22 +48,16 @@ pub async fn run(opt: Opt) -> Result<()> {
         }
     };
 
-    let default_provider = rustls::crypto::ring::default_provider();
-    let provider = rustls::crypto::CryptoProvider {
-        cipher_suites: PERF_CIPHER_SUITES.into(),
-        ..default_provider
-    };
+    let mut provider = rustls_aws_lc_rs::DEFAULT_PROVIDER;
+    provider.tls13_cipher_suites = PERF_CIPHER_SUITES.into();
 
-    let mut crypto = rustls::ServerConfig::builder_with_provider(provider.into())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
+    let mut crypto = rustls::ServerConfig::builder(Arc::new(provider))
         .with_no_client_auth()
-        .with_single_cert(cert, key)
-        .unwrap();
-    crypto.alpn_protocols = vec![b"perf".to_vec()];
+        .with_single_cert(Arc::new(Identity::from_cert_chain(cert)?), key)?;
+    crypto.alpn_protocols = vec![ApplicationProtocol::from(b"perf")];
 
     if opt.common.keylog {
-        crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        crypto.key_log = Arc::new(rustls_util::KeyLogFile::new());
     }
 
     let transport = opt.common.build_transport_config(
