@@ -1885,6 +1885,42 @@ mod tests {
     }
 
     #[test]
+    fn stop_after_reset_flow_control() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let initial_max = client.local_max_data;
+        let _ = client
+            .received(
+                frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: false,
+                    data: Bytes::from_static(&[0; 32]),
+                },
+                32,
+            )
+            .unwrap();
+        let _ = client
+            .received_reset(frame::ResetStream {
+                id,
+                error_code: 0u32.into(),
+                final_offset: 48u32.into(),
+            })
+            .unwrap();
+        assert_eq!(client.local_max_data - initial_max, 48);
+
+        let mut pending = Retransmits::default();
+        RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        }
+        .stop(0u32.into())
+        .unwrap();
+        assert_eq!(client.local_max_data - initial_max, 48);
+    }
+
+    #[test]
     fn stream_limit_fixed() {
         let mut client = make(Side::Client);
         // Open streams 0-127
