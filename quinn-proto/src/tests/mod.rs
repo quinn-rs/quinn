@@ -2,7 +2,10 @@ use std::{
     convert::TryInto,
     iter, mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use assert_matches::assert_matches;
@@ -14,7 +17,7 @@ use rand::Rng;
 #[cfg(feature = "ring")]
 use ring::hmac;
 use rustls::{
-    RootCertStore,
+    RootCertStore, TlsInputBuffer,
     crypto::Identity,
     enums::{ApplicationProtocol, ProtocolVersion},
     error::AlertDescription,
@@ -27,7 +30,7 @@ use super::*;
 use crate::{
     Duration, Instant,
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
-    crypto::rustls::QuicServerConfig,
+    crypto::rustls::{QuicInputBuffer, QuicServerConfig},
     frame::FrameStruct,
     packet::{Header, InitialHeader, PacketNumber},
     transport_parameters::TransportParameters,
@@ -210,6 +213,62 @@ fn lifecycle() {
     assert_eq!(pair.client.known_cids(), 0);
     assert_eq!(pair.server.known_connections(), 0);
     assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[test]
+fn custom_tls_input_buffer() {
+    struct TestInput {
+        inner: rustls::VecInput,
+        received: Arc<AtomicUsize>,
+    }
+
+    impl QuicInputBuffer for TestInput {
+        fn extend_from_slice(&mut self, mut bytes: &[u8]) {
+            self.received.fetch_add(bytes.len(), Ordering::Relaxed);
+            while !bytes.is_empty() {
+                self.inner.read(&mut bytes).unwrap();
+            }
+        }
+    }
+
+    impl TlsInputBuffer for TestInput {
+        fn slice_mut(&mut self) -> &mut [u8] {
+            self.inner.slice_mut()
+        }
+
+        fn discard(&mut self, num_bytes: usize) {
+            self.inner.discard(num_bytes);
+        }
+
+        fn received_close_notify(&mut self) {
+            self.inner.received_close_notify();
+        }
+
+        fn has_seen_eof(&self) -> bool {
+            self.inner.has_seen_eof()
+        }
+    }
+
+    let received = Arc::new(AtomicUsize::new(0));
+    let factory_received = received.clone();
+    let created = Arc::new(AtomicUsize::new(0));
+    let factory_created = created.clone();
+    let mut crypto = server_crypto();
+    crypto.tls_input_buffer_factory(move || {
+        factory_created.fetch_add(1, Ordering::Relaxed);
+        TestInput {
+            inner: rustls::VecInput::default(),
+            received: factory_received.clone(),
+        }
+    });
+    let config = ServerConfig::with_crypto(Arc::new(crypto));
+    for _ in 0..2 {
+        let mut pair = Pair::new(Default::default(), config.clone());
+        pair.connect();
+    }
+
+    assert_eq!(created.load(Ordering::Relaxed), 2);
+    assert_ne!(received.load(Ordering::Relaxed), 0);
 }
 
 #[test]
