@@ -442,6 +442,7 @@ impl std::error::Error for NoInitialCipherSuite {}
 pub struct QuicServerConfig {
     inner: Arc<rustls::ServerConfig>,
     initial: Suite,
+    input_buffer_factory: Option<Arc<dyn Fn() -> Box<dyn QuicInputBuffer> + Send + Sync + 'static>>,
 }
 
 impl QuicServerConfig {
@@ -455,6 +456,7 @@ impl QuicServerConfig {
             initial: initial_suite_from_provider(inner.provider())
                 .expect("no initial cipher suite found"),
             inner: Arc::new(inner),
+            input_buffer_factory: None,
         })
     }
 
@@ -466,9 +468,22 @@ impl QuicServerConfig {
         initial: Suite,
     ) -> Result<Self, NoInitialCipherSuite> {
         match initial.inner.common.suite {
-            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial }),
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self {
+                inner,
+                initial,
+                input_buffer_factory: None,
+            }),
             _ => Err(NoInitialCipherSuite { specific: true }),
         }
+    }
+
+    /// Use `factory` to construct the TLS input buffer for each incoming connection
+    pub fn tls_input_buffer_factory<B: QuicInputBuffer>(
+        &mut self,
+        factory: impl Fn() -> B + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.input_buffer_factory = Some(Arc::new(move || Box::new(factory())));
+        self
     }
 
     /// Initialize a sane QUIC-compatible TLS server configuration
@@ -513,6 +528,7 @@ impl TryFrom<Arc<rustls::ServerConfig>> for QuicServerConfig {
             initial: initial_suite_from_provider(inner.provider())
                 .ok_or(NoInitialCipherSuite { specific: false })?,
             inner,
+            input_buffer_factory: None,
         })
     }
 }
@@ -535,7 +551,11 @@ impl crypto::ServerConfig for QuicServerConfig {
                 config: self.inner.clone(),
                 params: to_vec(params),
             },
-            input: HandshakeInput::default(),
+            input: self
+                .input_buffer_factory
+                .as_ref()
+                .map(|factory| HandshakeInput::Custom(factory()))
+                .unwrap_or_default(),
             pending_events: VecDeque::new(),
             suite: self.initial,
         })
@@ -565,6 +585,12 @@ impl crypto::ServerConfig for QuicServerConfig {
         result.copy_from_slice(tag.as_ref());
         result
     }
+}
+
+/// A rustls input buffer that Quinn can append ordered QUIC CRYPTO data to
+pub trait QuicInputBuffer: TlsInputBuffer + Send + Sync + 'static {
+    /// Append newly received data to the end of the buffer
+    fn extend_from_slice(&mut self, bytes: &[u8]);
 }
 
 enum QuicConnection {
@@ -791,12 +817,18 @@ impl HeaderKey for Box<dyn HeaderProtectionKey> {
 }
 
 #[derive(Default)]
-struct HandshakeInput {
+struct VecInput {
     bytes: Vec<u8>,
     offset: usize,
 }
 
-impl HandshakeInput {
+impl VecInput {
+    fn len(&self) -> usize {
+        self.bytes.len() - self.offset
+    }
+}
+
+impl QuicInputBuffer for VecInput {
     fn extend_from_slice(&mut self, bytes: &[u8]) {
         if self.offset != 0 {
             self.bytes.drain(..self.offset);
@@ -804,17 +836,9 @@ impl HandshakeInput {
         }
         self.bytes.extend_from_slice(bytes);
     }
-
-    fn len(&self) -> usize {
-        self.bytes.len() - self.offset
-    }
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
-impl TlsInputBuffer for HandshakeInput {
+impl TlsInputBuffer for VecInput {
     fn slice_mut(&mut self) -> &mut [u8] {
         &mut self.bytes[self.offset..]
     }
@@ -832,6 +856,67 @@ impl TlsInputBuffer for HandshakeInput {
 
     fn has_seen_eof(&self) -> bool {
         false
+    }
+}
+
+enum HandshakeInput {
+    Custom(Box<dyn QuicInputBuffer>),
+    Default(VecInput),
+}
+
+impl HandshakeInput {
+    fn extend_from_slice(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Custom(input) => input.extend_from_slice(bytes),
+            Self::Default(input) => input.extend_from_slice(bytes),
+        }
+    }
+
+    fn len(&mut self) -> usize {
+        match self {
+            Self::Custom(input) => input.slice_mut().len(),
+            Self::Default(input) => input.len(),
+        }
+    }
+
+    fn is_empty(&mut self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl TlsInputBuffer for HandshakeInput {
+    fn slice_mut(&mut self) -> &mut [u8] {
+        match self {
+            Self::Custom(input) => input.slice_mut(),
+            Self::Default(input) => input.slice_mut(),
+        }
+    }
+
+    fn discard(&mut self, num_bytes: usize) {
+        match self {
+            Self::Custom(input) => input.discard(num_bytes),
+            Self::Default(input) => input.discard(num_bytes),
+        }
+    }
+
+    fn received_close_notify(&mut self) {
+        match self {
+            Self::Custom(input) => input.received_close_notify(),
+            Self::Default(input) => input.received_close_notify(),
+        }
+    }
+
+    fn has_seen_eof(&self) -> bool {
+        match self {
+            Self::Custom(input) => input.has_seen_eof(),
+            Self::Default(input) => input.has_seen_eof(),
+        }
+    }
+}
+
+impl Default for HandshakeInput {
+    fn default() -> Self {
+        Self::Default(VecInput::default())
     }
 }
 
