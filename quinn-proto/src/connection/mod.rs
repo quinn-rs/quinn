@@ -720,6 +720,13 @@ impl Connection {
                         // overrun
                         buf_capacity = buf.len();
 
+                        // Every later segment is capped at the first one's size. If that is
+                        // too small to be worth sending, end the batch so the rest goes out
+                        // at full size.
+                        if segment_size < MIN_PACKET_SPACE {
+                            break;
+                        }
+
                         // Check whether the data we planned to send will fit in the reduced segment
                         // size. If not, bail out and leave it for the next GSO batch so we don't
                         // end up trying to send an empty packet. We can't easily compute the right
