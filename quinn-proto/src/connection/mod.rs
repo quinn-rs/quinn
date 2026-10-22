@@ -720,6 +720,15 @@ impl Connection {
                         // overrun
                         buf_capacity = buf.len();
 
+                        // A GSO batch cannot have a datagram larger than its first, so a small
+                        // first packet caps every later one. End the batch when that cap cannot
+                        // even hold a packet header and frames; a control-only packet (a loss
+                        // probe, say) should not drag the data queued behind it into tiny
+                        // segments.
+                        if segment_size < MIN_PACKET_SPACE {
+                            break;
+                        }
+
                         // Check whether the data we planned to send will fit in the reduced segment
                         // size. If not, bail out and leave it for the next GSO batch so we don't
                         // end up trying to send an empty packet. We can't easily compute the right
