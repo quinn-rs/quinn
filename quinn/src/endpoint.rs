@@ -1028,7 +1028,7 @@ struct PollProgress {
 mod tests {
     use std::net::UdpSocket;
 
-    use udp::Transmit;
+    use udp::{SendCount, Transmit};
 
     use super::*;
     use crate::runtime::TokioRuntime;
@@ -1119,7 +1119,7 @@ mod tests {
             self: Pin<&mut Self>,
             _transmit: &Transmit<'_>,
             _cx: &mut Context<'_>,
-        ) -> Poll<io::Result<()>> {
+        ) -> Poll<io::Result<SendCount>> {
             unreachable!("ignored receive errors must not produce responses")
         }
     }
