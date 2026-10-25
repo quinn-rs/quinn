@@ -44,8 +44,8 @@ impl SendBuffer {
     pub(super) fn ack(&mut self, mut range: Range<u64>) {
         // Clamp the range to data which is still tracked
         let base_offset = self.offset - self.unacked_len as u64;
-        range.start = base_offset.max(range.start);
-        range.end = base_offset.max(range.end);
+        range.start = base_offset.max(range.start).min(self.offset);
+        range.end = base_offset.max(range.end).min(self.offset);
 
         self.acks.insert(range);
 
@@ -168,8 +168,50 @@ impl SendBuffer {
         };
     }
 
+    /// Release data at or past `end`, preserving the data before it for RESET_STREAM_AT
+    ///
+    /// The caller tracks the final size of the stream, which may exceed `end`.
+    pub(super) fn truncate(&mut self, end: u64) {
+        debug_assert!(end <= self.offset);
+        let base_offset = self.offset - self.unacked_len as u64;
+        if end <= base_offset {
+            // Everything we must still deliver has been acknowledged
+            *self = Self {
+                offset: end,
+                unsent: end,
+                ..Self::default()
+            };
+            return;
+        }
+
+        let mut keep = (end - base_offset) as usize;
+        let mut segments = 0;
+        for (i, segment) in self.unacked_segments.iter_mut().enumerate() {
+            segments = i + 1;
+            if segment.len() >= keep {
+                if segment.len() > keep {
+                    // Copy the retained prefix so the abandoned suffix's allocation is released
+                    *segment = Bytes::copy_from_slice(&segment[..keep]);
+                    if i == 0 {
+                        self.front_trimmed = 0;
+                    }
+                }
+                break;
+            }
+            keep -= segment.len();
+        }
+        self.unacked_segments.truncate(segments);
+        self.unacked_len = (end - base_offset) as usize;
+        self.offset = end;
+        self.unsent = self.unsent.min(end);
+        self.acks.remove(end..u64::MAX);
+        self.retransmits.remove(end..u64::MAX);
+    }
+
     /// Queue a range of sent but unacknowledged data to be retransmitted
-    pub(super) fn retransmit(&mut self, range: Range<u64>) {
+    pub(super) fn retransmit(&mut self, mut range: Range<u64>) {
+        // Data truncated by RESET_STREAM_AT is never retransmitted
+        range.end = range.end.min(self.offset);
         debug_assert!(range.end <= self.unsent, "unsent data can't be lost");
         self.retransmits.insert(range);
     }
@@ -395,6 +437,47 @@ mod tests {
         buf.ack(0..16);
         assert_eq!(aggregate_unacked(&buf), &MSG[23..]);
         assert!(buf.acks.is_empty());
+    }
+
+    #[test]
+    fn truncate() {
+        let mut buf = SendBuffer::new();
+        buf.write(Bytes::from_static(b"Hello, "));
+        buf.write(Bytes::from_static(b"world with extra data!"));
+        assert_eq!(buf.poll_transmit(16), (0..16, false));
+        assert_eq!(buf.poll_transmit(16), (16..23, true));
+        buf.ack(16..23);
+
+        // Keep "Hello, wor"
+        buf.truncate(10);
+        assert_eq!(buf.offset(), 10);
+        assert_eq!(aggregate_unacked(&buf), b"Hello, wor");
+        assert_eq!(buf.unacked_segments.len(), 2);
+        assert!(buf.acks.is_empty());
+        assert!(!buf.has_unsent_data());
+
+        // Data past the truncation point is neither retransmitted nor acknowledged
+        buf.retransmit(0..16);
+        assert_eq!(buf.poll_transmit(32), (0..10, true));
+        assert!(!buf.has_unsent_data());
+        buf.ack(4..16);
+        assert!(!buf.is_fully_acked());
+        buf.ack(0..4);
+        assert!(buf.is_fully_acked());
+        assert_eq!(buf.buffered(), 0);
+    }
+
+    #[test]
+    fn truncate_acknowledged() {
+        let mut buf = SendBuffer::new();
+        const MSG: &[u8] = b"Hello, world!";
+        buf.write(MSG.into());
+        assert_eq!(buf.poll_transmit(16), (0..8, true));
+        buf.ack(0..8);
+        buf.truncate(5);
+        assert!(buf.is_fully_acked());
+        assert!(!buf.has_unsent_data());
+        assert_eq!(buf.buffered(), 0);
     }
 
     fn aggregate_unacked(buf: &SendBuffer) -> Vec<u8> {

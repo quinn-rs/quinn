@@ -326,7 +326,11 @@ pub struct Retransmits {
     pub(super) data_blocked: bool,
     pub(super) max_stream_id: [bool; 2],
     pub(super) streams_blocked: [bool; 2],
-    pub(super) reset_stream: Vec<(StreamId, VarInt)>,
+    /// Streams to reset, with the error code and, for RESET_STREAM_AT, the reliable size
+    ///
+    /// Frames are written with the stream's latest reliable size. For sent frames, the reliable
+    /// size tells which RESET_STREAM_AT an acknowledgement covers.
+    pub(super) reset_stream: Vec<(StreamId, VarInt, Option<u64>)>,
     pub(super) stop_sending: Vec<frame::StopSending>,
     pub(super) max_stream_data: FxHashSet<StreamId>,
     pub(super) stream_data_blocked: FxHashSet<StreamId>,

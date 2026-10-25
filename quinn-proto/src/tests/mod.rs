@@ -654,6 +654,58 @@ fn reset_stream() {
 }
 
 #[test]
+fn reset_stream_at() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .peer_supports_reset_stream_at()
+    );
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .peer_supports_reset_stream_at()
+    );
+
+    const MSG: &[u8] = b"header and body";
+    const RELIABLE_SIZE: usize = 6;
+    const ERROR: VarInt = VarInt(42);
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, s).write(MSG).unwrap();
+    pair.client_send(client_ch, s)
+        .reset_at(ERROR, RELIABLE_SIZE as u64)
+        .unwrap();
+    pair.drive();
+
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
+    );
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(true).unwrap();
+    assert_matches!(
+        chunks.next(usize::MAX),
+        Ok(Some(chunk)) if chunk.bytes == MSG[..RELIABLE_SIZE]
+    );
+    assert_matches!(chunks.next(usize::MAX), Err(ReadError::Reset(ERROR)));
+    let _ = chunks.finalize();
+    pair.drive();
+
+    let stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(stats.frame_tx.reset_stream_at, 1);
+    assert_eq!(stats.frame_tx.reset_stream, 0);
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .reset_stream_at,
+        1
+    );
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+}
+
+#[test]
 fn stop_stream() {
     let _guard = subscribe();
     let mut pair = Pair::default();
