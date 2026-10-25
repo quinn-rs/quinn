@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
+use proto::{ClosedStream, ConnectionError, FinishError, ResetAtError, StreamId, Written};
 use thiserror::Error;
 
 use crate::{
@@ -201,6 +201,9 @@ impl SendStream {
     /// previously transmitted data will no longer be retransmitted if lost. If an attempt has
     /// already been made to finish the stream, the peer may still receive all written data.
     ///
+    /// After [`reset_at()`](Self::reset_at), this abandons the remaining reliable data too, and
+    /// fails if `error_code` differs.
+    ///
     /// May fail if [`finish()`](Self::finish) or [`reset()`](Self::reset) was previously
     /// called. This error is harmless and serves only to indicate that the caller may have
     /// incorrect assumptions about the stream's state.
@@ -210,6 +213,38 @@ impl SendStream {
             return Ok(());
         }
         conn.inner.send_stream(self.stream).reset(error_code)?;
+        conn.wake();
+        Ok(())
+    }
+
+    /// Close the send stream immediately, except for the first `reliable_size` bytes
+    ///
+    /// Like [`reset()`](Self::reset), but data before `reliable_size` is still delivered. This uses
+    /// the RESET_STREAM_AT frame defined by [draft-ietf-quic-reliable-stream-reset].
+    ///
+    /// This is useful when a stream starts with data the peer needs even if the rest of the stream
+    /// is abandoned, such as a header saying what the stream is for. After a plain
+    /// [`reset()`](Self::reset), the peer may never receive that header, and so can't tell which
+    /// stream was reset. For example, WebTransport over HTTP/3 uses this to deliver the session ID
+    /// at the start of each stream.
+    ///
+    /// May be called again to shrink the reliable size. The error code must stay the same.
+    ///
+    /// Requires the peer to accept reliable stream resets, see
+    /// [`Connection::peer_supports_reset_stream_at()`]. Fails if `reliable_size` exceeds the data
+    /// written so far or an earlier reliable size, if `error_code` differs from an earlier call,
+    /// or if [`reset()`](Self::reset) was called first.
+    ///
+    /// [draft-ietf-quic-reliable-stream-reset]: https://datatracker.ietf.org/doc/draft-ietf-quic-reliable-stream-reset/
+    /// [`Connection::peer_supports_reset_stream_at()`]: crate::Connection::peer_supports_reset_stream_at
+    pub fn reset_at(&mut self, error_code: VarInt, reliable_size: u64) -> Result<(), ResetAtError> {
+        let mut conn = self.conn.state.lock("SendStream::reset_at");
+        if self.is_0rtt && conn.check_0rtt().is_err() {
+            return Ok(());
+        }
+        conn.inner
+            .send_stream(self.stream)
+            .reset_at(error_code, reliable_size)?;
         conn.wake();
         Ok(())
     }
