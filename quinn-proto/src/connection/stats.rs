@@ -49,6 +49,7 @@ pub struct FrameStats {
     pub path_response: u64,
     pub ping: u64,
     pub reset_stream: u64,
+    pub reset_stream_at: u64,
     pub retire_connection_id: u64,
     pub stream_data_blocked: u64,
     pub streams_blocked_bidi: u64,
@@ -63,7 +64,10 @@ impl FrameStats {
             Frame::Padding => {}
             Frame::Ping => self.ping += 1,
             Frame::Ack(_) => self.acks += 1,
-            Frame::ResetStream(_) => self.reset_stream += 1,
+            Frame::ResetStream(x) => match x.reliable_size {
+                Some(_) => self.reset_stream_at += 1,
+                None => self.reset_stream += 1,
+            },
             Frame::StopSending(_) => self.stop_sending += 1,
             Frame::Crypto(_) => self.crypto += 1,
             Frame::Datagram(_) => self.datagram += 1,
@@ -120,6 +124,7 @@ impl std::fmt::Debug for FrameStats {
             .field("PATH_RESPONSE", &self.path_response)
             .field("PING", &self.ping)
             .field("RESET_STREAM", &self.reset_stream)
+            .field("RESET_STREAM_AT", &self.reset_stream_at)
             .field("RETIRE_CONNECTION_ID", &self.retire_connection_id)
             .field("STREAM_DATA_BLOCKED", &self.stream_data_blocked)
             .field("STREAMS_BLOCKED_BIDI", &self.streams_blocked_bidi)

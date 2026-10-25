@@ -295,7 +295,7 @@ impl StreamsState {
         Ok(self.add_read_credits(new_bytes))
     }
 
-    /// Process incoming RESET_STREAM frame
+    /// Process incoming RESET_STREAM or RESET_STREAM_AT frame
     ///
     /// If successful, returns whether a `MAX_DATA` frame needs to be transmitted
     #[allow(unreachable_pub)] // fuzzing only
@@ -307,6 +307,7 @@ impl StreamsState {
             id,
             error_code,
             final_offset,
+            reliable_size,
         } = frame;
         self.validate_receive_id(id).inspect_err(|_| {
             debug!("received illegal RESET_STREAM frame");
@@ -324,13 +325,20 @@ impl StreamsState {
         };
 
         // State transition
+        let was_reset = rs.state.is_reset();
         if !rs.reset(
             error_code,
             final_offset,
+            reliable_size,
             self.data_recvd,
             self.local_max_data,
         )? {
             // Redundant reset
+            return Ok(ShouldTransmit(false));
+        }
+        if was_reset {
+            // The reliable size shrank, which may unblock a reader
+            self.events.push_back(StreamEvent::Readable { id });
             return Ok(ShouldTransmit(false));
         }
         let bytes_read = rs.assembler.bytes_read();
@@ -448,6 +456,7 @@ impl StreamsState {
                 id,
                 error_code,
                 final_offset: VarInt::try_from(stream.offset()).expect("impossibly large offset"),
+                reliable_size: None,
             }
             .encode(buf);
             stats.reset_stream += 1;
@@ -1053,6 +1062,7 @@ mod tests {
         connection::State as ConnState, connection::Streams,
     };
     use bytes::Bytes;
+    use std::ops::Range;
 
     fn make(side: Side) -> StreamsState {
         StreamsState::new(
@@ -1287,6 +1297,7 @@ mod tests {
                     id,
                     error_code: 0u32.into(),
                     final_offset: 4096u32.into(),
+                    reliable_size: None,
                 })
                 .unwrap(),
             ShouldTransmit(false)
@@ -1338,6 +1349,7 @@ mod tests {
                     id,
                     error_code: 0u32.into(),
                     final_offset: 4096u32.into(),
+                    reliable_size: None,
                 })
                 .unwrap(),
             ShouldTransmit(false)
@@ -1356,6 +1368,7 @@ mod tests {
                     id,
                     error_code: 0u32.into(),
                     final_offset: 4096u32.into(),
+                    reliable_size: None,
                 })
                 .unwrap(),
             ShouldTransmit(false)
@@ -1367,6 +1380,7 @@ mod tests {
                     id,
                     error_code: 0u32.into(),
                     final_offset: 4096u32.into(),
+                    reliable_size: None,
                 })
                 .unwrap(),
             ShouldTransmit(false)
@@ -1471,6 +1485,7 @@ mod tests {
                         id,
                         error_code: 0u32.into(),
                         final_offset: final_offset.into(),
+                        reliable_size: None,
                     })
                     .unwrap(),
                 ShouldTransmit(false)
@@ -1539,6 +1554,7 @@ mod tests {
                     id: StreamId::new(Side::Server, Dir::Uni, 0),
                     error_code: 0u32.into(),
                     final_offset: VarInt::MAX,
+                    reliable_size: None,
                 })
                 .unwrap_err()
                 .code,
@@ -1884,6 +1900,246 @@ mod tests {
         assert!(!server.can_send_stream_data());
     }
 
+    /// Data written to RESET_STREAM_AT test streams
+    const MSG: &[u8] = b"hello world";
+    const FINAL_SIZE: u64 = MSG.len() as u64;
+    /// Reliable size used by RESET_STREAM_AT tests, covering "hello"
+    const RELIABLE_SIZE: u64 = 5;
+    const ERROR: VarInt = VarInt(7);
+
+    /// A RESET_STREAM_AT frame for a stream carrying `MSG`
+    fn reset_at_frame(error_code: VarInt, reliable_size: u64) -> frame::ResetStream {
+        frame::ResetStream {
+            id: StreamId::new(Side::Server, Dir::Uni, 0),
+            error_code,
+            final_offset: VarInt(FINAL_SIZE),
+            reliable_size: Some(VarInt(reliable_size)),
+        }
+    }
+
+    fn msg(range: Range<u64>) -> &'static [u8] {
+        &MSG[range.start as usize..range.end as usize]
+    }
+
+    /// Receive `range` of `MSG`
+    fn receive_msg(client: &mut StreamsState, range: Range<u64>) {
+        let data = msg(range.clone());
+        let frame = frame::Stream {
+            id: StreamId::new(Side::Server, Dir::Uni, 0),
+            offset: range.start,
+            fin: false,
+            data: Bytes::from_static(data),
+        };
+        let _ = client.received(frame, data.len()).unwrap();
+    }
+
+    #[test]
+    fn reset_at_delivers_reliable_data_after_reordering() {
+        const SPLIT: u64 = 3;
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let initial_max = client.local_max_data;
+        let _ = client
+            .received_reset(reset_at_frame(ERROR, RELIABLE_SIZE))
+            .unwrap();
+        assert_eq!(client.data_recvd, FINAL_SIZE);
+        assert_eq!(client.local_max_data - initial_max, FINAL_SIZE);
+
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(chunks.next(16), Err(crate::ReadError::Blocked));
+        let _ = chunks.finalize();
+        assert_eq!(recv.received_reset(), Ok(None));
+
+        receive_msg(&mut client, SPLIT..RELIABLE_SIZE);
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(chunks.next(16), Err(crate::ReadError::Blocked));
+        let _ = chunks.finalize();
+
+        receive_msg(&mut client, 0..SPLIT);
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(chunks.next(16).unwrap().unwrap().bytes, msg(0..SPLIT));
+        assert_eq!(
+            chunks.next(16).unwrap().unwrap().bytes,
+            msg(SPLIT..RELIABLE_SIZE)
+        );
+        assert_eq!(chunks.next(16), Err(crate::ReadError::Reset(ERROR)));
+        let _ = chunks.finalize();
+
+        // The reset credited the whole stream, so neither data nor reads add credit
+        assert_eq!(client.data_recvd, FINAL_SIZE);
+        assert_eq!(client.local_max_data - initial_max, FINAL_SIZE);
+    }
+
+    #[test]
+    fn reset_at_unordered_read_waits_for_reliable_data() {
+        const SPLIT: u64 = 3;
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let _ = client
+            .received_reset(reset_at_frame(ERROR, RELIABLE_SIZE))
+            .unwrap();
+        receive_msg(&mut client, SPLIT..RELIABLE_SIZE);
+
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(false).unwrap();
+        assert_eq!(
+            chunks.next(16).unwrap().unwrap().bytes,
+            msg(SPLIT..RELIABLE_SIZE)
+        );
+        assert_eq!(chunks.next(16), Err(crate::ReadError::Blocked));
+        let _ = chunks.finalize();
+
+        receive_msg(&mut client, 0..SPLIT);
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(false).unwrap();
+        assert_eq!(chunks.next(16).unwrap().unwrap().bytes, msg(0..SPLIT));
+        assert_eq!(chunks.next(16), Err(crate::ReadError::Reset(ERROR)));
+        let _ = chunks.finalize();
+    }
+
+    #[test]
+    fn reset_at_discards_data_past_reliable_size() {
+        for reset_first in [false, true] {
+            let mut client = make(Side::Client);
+            let id = StreamId::new(Side::Server, Dir::Uni, 0);
+            let reset = reset_at_frame(ERROR, RELIABLE_SIZE);
+            if reset_first {
+                let _ = client.received_reset(reset).unwrap();
+                receive_msg(&mut client, 0..FINAL_SIZE);
+            } else {
+                receive_msg(&mut client, 0..FINAL_SIZE);
+                let _ = client.received_reset(reset).unwrap();
+            }
+
+            let mut pending = Retransmits::default();
+            let mut recv = RecvStream {
+                id,
+                state: &mut client,
+                pending: &mut pending,
+            };
+            let mut chunks = recv.read(true).unwrap();
+            assert_eq!(
+                chunks.next(usize::MAX).unwrap().unwrap().bytes,
+                msg(0..RELIABLE_SIZE)
+            );
+            assert_eq!(chunks.next(usize::MAX), Err(crate::ReadError::Reset(ERROR)));
+            let _ = chunks.finalize();
+        }
+    }
+
+    #[test]
+    fn reset_at_validation() {
+        const OTHER_ERROR: VarInt = VarInt(8);
+        let mut client = make(Side::Client);
+        let _ = client
+            .received_reset(reset_at_frame(ERROR, RELIABLE_SIZE))
+            .unwrap();
+        assert_eq!(
+            client
+                .received_reset(reset_at_frame(OTHER_ERROR, RELIABLE_SIZE - 1))
+                .unwrap_err()
+                .code,
+            TransportErrorCode::STREAM_STATE_ERROR
+        );
+        assert_eq!(
+            client
+                .received_reset(frame::ResetStream {
+                    final_offset: VarInt(FINAL_SIZE - 1),
+                    ..reset_at_frame(ERROR, RELIABLE_SIZE - 1)
+                })
+                .unwrap_err()
+                .code,
+            TransportErrorCode::FINAL_SIZE_ERROR
+        );
+    }
+
+    #[test]
+    fn reset_at_smaller_reliable_size_unblocks_reader() {
+        const SPLIT: u64 = 3;
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let _ = client
+            .received_reset(reset_at_frame(ERROR, RELIABLE_SIZE))
+            .unwrap();
+        receive_msg(&mut client, 0..SPLIT);
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(chunks.next(16).unwrap().unwrap().bytes, msg(0..SPLIT));
+        assert_eq!(chunks.next(16), Err(crate::ReadError::Blocked));
+        let _ = chunks.finalize();
+        while client.poll().is_some() {}
+
+        // A larger reliable size is ignored
+        let _ = client
+            .received_reset(reset_at_frame(ERROR, RELIABLE_SIZE + 1))
+            .unwrap();
+        assert!(client.poll().is_none());
+
+        let _ = client.received_reset(reset_at_frame(ERROR, SPLIT)).unwrap();
+        assert_eq!(client.poll(), Some(StreamEvent::Readable { id }));
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(chunks.next(16), Err(crate::ReadError::Reset(ERROR)));
+        let _ = chunks.finalize();
+    }
+
+    #[test]
+    fn stop_after_reset_at_flow_control() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let initial_max = client.local_max_data;
+        receive_msg(&mut client, 0..RELIABLE_SIZE - 1);
+        let _ = client
+            .received_reset(reset_at_frame(ERROR, RELIABLE_SIZE))
+            .unwrap();
+        assert_eq!(client.local_max_data - initial_max, FINAL_SIZE);
+
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        recv.stop(0u32.into()).unwrap();
+        assert_eq!(pending.stop_sending.len(), 1, "reliable data is pending");
+        assert_eq!(client.local_max_data - initial_max, FINAL_SIZE);
+        assert!(!client.recv.contains_key(&id));
+    }
+
     #[test]
     fn stop_after_reset_flow_control() {
         let mut client = make(Side::Client);
@@ -1905,6 +2161,7 @@ mod tests {
                 id,
                 error_code: 0u32.into(),
                 final_offset: 48u32.into(),
+                reliable_size: None,
             })
             .unwrap();
         assert_eq!(client.local_max_data - initial_max, 48);
@@ -2080,6 +2337,7 @@ mod tests {
                 id: StreamId::new(Side::Server, Dir::Uni, 126),
                 error_code: 0u32.into(),
                 final_offset: 0u32.into(),
+                reliable_size: None,
             }),
             Ok(ShouldTransmit(false))
         );
