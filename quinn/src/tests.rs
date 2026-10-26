@@ -848,6 +848,44 @@ fn echo_dualstack() {
     });
 }
 
+#[cfg_attr(
+    any(target_os = "solaris", target_os = "illumos"),
+    ignore = "Fails on Solaris and Illumos"
+)]
+#[tokio::test]
+async fn specific_v6_addr() {
+    let _guard = subscribe();
+    let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0);
+
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let server = Endpoint::server(
+        crate::ServerConfig::with_single_cert(
+            vec![cert.cert.der().clone()],
+            PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into()),
+        )
+        .unwrap(),
+        addr,
+    )
+    .unwrap();
+
+    let mut roots = RootCertStore::empty();
+    roots.add(cert.cert.der().clone()).unwrap();
+    let client = Endpoint::client(addr).unwrap();
+    client
+        .set_default_client_config(ClientConfig::with_root_certificates(Arc::new(roots)).unwrap());
+
+    join!(
+        async { server.accept().await.unwrap().await.unwrap() },
+        async {
+            client
+                .connect(server.local_addr().unwrap(), "localhost")
+                .unwrap()
+                .await
+                .unwrap()
+        },
+    );
+}
+
 #[test]
 #[ignore]
 #[cfg_attr(target_os = "solaris", ignore = "Hangs in poll() on Solaris")]

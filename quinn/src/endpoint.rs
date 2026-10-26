@@ -66,7 +66,7 @@ impl Endpoint {
     /// address like `0.0.0.0:0` or `[::]:0`, which allow communication with any reachable IPv4 or
     /// IPv6 address respectively from an OS-assigned port.
     ///
-    /// If an IPv6 address is provided, attempts to make the socket dual-stack so as to allow
+    /// If an IPv6 wildcard is provided, attempts to make the socket dual-stack so as to allow
     /// communication with both IPv4 and IPv6 addresses. As such, calling `Endpoint::client` with
     /// the address `[::]:0` is a reasonable default to maximize the ability to connect to other
     /// address. For example:
@@ -84,7 +84,8 @@ impl Endpoint {
     ))]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
-        if addr.is_ipv6()
+        if let SocketAddr::V6(v6) = addr
+            && (v6.ip().is_unspecified() || v6.ip().to_ipv4_mapped().is_some())
             && let Err(e) = socket.set_only_v6(false)
         {
             tracing::debug!(%e, "unable to make socket dual-stack");
@@ -111,7 +112,7 @@ impl Endpoint {
     /// address like `0.0.0.0:0` or `[::]:0`, which allow communication with any reachable IPv4 or
     /// IPv6 address respectively from an OS-assigned port.
     ///
-    /// If an IPv6 address is provided, attempts to make the socket dual-stack so as to allow
+    /// If an IPv6 wildcard is provided, attempts to make the socket dual-stack so as to allow
     /// communication with both IPv4 and IPv6 clients. As such, calling `Endpoint::server` with
     /// the address `[::]:0` is a reasonable default to maximize the ability to accept connections
     /// from any address.
@@ -126,7 +127,8 @@ impl Endpoint {
     ))]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
-        if addr.is_ipv6()
+        if let SocketAddr::V6(v6) = addr
+            && (v6.ip().is_unspecified() || v6.ip().to_ipv4_mapped().is_some())
             && let Err(e) = socket.set_only_v6(false)
         {
             tracing::debug!(%e, "unable to make socket dual-stack");
