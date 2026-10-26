@@ -337,8 +337,14 @@ impl<'a> Chunks<'a> {
     pub fn next(&mut self, max_length: usize) -> Result<Option<Chunk>, ReadError> {
         let rs = match &mut self.state {
             ChunksState::Readable(rs) => rs,
-            ChunksState::Reset(error_code) => {
-                return Err(ReadError::Reset(*error_code));
+            ChunksState::Reset {
+                error_code,
+                final_size,
+            } => {
+                return Err(ReadError::Reset {
+                    error_code: *error_code,
+                    final_size: *final_size,
+                });
             }
             ChunksState::Finished => {
                 return Ok(None);
@@ -353,9 +359,9 @@ impl<'a> Chunks<'a> {
 
         match rs.state {
             RecvState::ResetRecvd {
+                size: final_size,
                 error_code,
                 reliable_size,
-                ..
             } => {
                 if !rs.assembler.has_read_prefix(reliable_size) {
                     // Wait for the rest of the data before the reliable size
@@ -365,14 +371,23 @@ impl<'a> Chunks<'a> {
                     reliable_size > 0 || self.read == 0,
                     "reset streams have empty buffers"
                 );
-                let state = mem::replace(&mut self.state, ChunksState::Reset(error_code));
+                let state = mem::replace(
+                    &mut self.state,
+                    ChunksState::Reset {
+                        error_code,
+                        final_size,
+                    },
+                );
                 // At this point if we have `rs` self.state must be `ChunksState::Readable`
                 let recv = match state {
                     ChunksState::Readable(recv) => StreamRecv::Open(recv),
                     _ => unreachable!("state must be ChunkState::Readable"),
                 };
                 self.streams.stream_recv_freed(self.id, recv);
-                Err(ReadError::Reset(error_code))
+                Err(ReadError::Reset {
+                    error_code,
+                    final_size,
+                })
             }
             RecvState::Recv { size } => {
                 if size == Some(rs.end) && rs.assembler.bytes_read() == rs.end {
@@ -451,7 +466,7 @@ impl Drop for Chunks<'_> {
 
 enum ChunksState {
     Readable(Box<Recv>),
-    Reset(VarInt),
+    Reset { error_code: VarInt, final_size: u64 },
     Finished,
     Finalized,
 }
@@ -466,10 +481,16 @@ pub enum ReadError {
     #[error("blocked")]
     Blocked,
     /// The peer abandoned transmitting data on this stream.
-    ///
-    /// Carries an application-defined error code.
-    #[error("reset by peer: code {0}")]
-    Reset(VarInt),
+    #[error("reset by peer: code {error_code}")]
+    Reset {
+        /// Application-defined error code supplied by the peer
+        error_code: VarInt,
+        /// Final size of the stream, including data that will never be read
+        ///
+        /// Protocols with their own flow control, such as WebTransport over HTTP/3, need this to
+        /// account for data abandoned by the reset.
+        final_size: u64,
+    },
 }
 
 /// Errors triggered when opening a recv stream for reading

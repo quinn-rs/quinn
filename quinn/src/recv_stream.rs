@@ -54,7 +54,8 @@ pub struct RecvStream {
     stream: StreamId,
     is_0rtt: bool,
     all_data_read: bool,
-    reset: Option<VarInt>,
+    /// Error code and final size of a reset observed while reading
+    reset: Option<(VarInt, u64)>,
 }
 
 impl RecvStream {
@@ -317,7 +318,7 @@ impl RecvStream {
                 return Poll::Ready(Err(ResetError::ZeroRttRejected));
             }
 
-            if let Some(code) = self.reset {
+            if let Some((code, _)) = self.reset {
                 return Poll::Ready(Ok(Some(code)));
             }
 
@@ -375,7 +376,13 @@ impl RecvStream {
         // If we stored an error during a previous call, return it now. This can happen if a
         // `read_fn` both wants to return data and also returns an error in its final stream status.
         let status = match self.reset {
-            Some(code) => ReadStatus::Failed(None, Reset(code)),
+            Some((error_code, final_size)) => ReadStatus::Failed(
+                None,
+                Reset {
+                    error_code,
+                    final_size,
+                },
+            ),
             None => {
                 let mut recv = conn.inner.recv_stream(self.stream);
                 let mut chunks = recv.read(ordered)?;
@@ -412,16 +419,25 @@ impl RecvStream {
                     Poll::Pending
                 }
             },
-            ReadStatus::Failed(read, Reset(error_code)) => match read {
+            ReadStatus::Failed(
+                read,
+                Reset {
+                    error_code,
+                    final_size,
+                },
+            ) => match read {
                 None => {
                     self.all_data_read = true;
-                    self.reset = Some(error_code);
+                    self.reset = Some((error_code, final_size));
                     // Stream is dead, cleanup stale waker
                     conn.blocked_readers.remove(&self.stream);
-                    Poll::Ready(Err(ReadError::Reset(error_code)))
+                    Poll::Ready(Err(ReadError::Reset {
+                        error_code,
+                        final_size,
+                    }))
                 }
                 done => {
-                    self.reset = Some(error_code);
+                    self.reset = Some((error_code, final_size));
                     Poll::Ready(Ok(done))
                 }
             },
@@ -573,10 +589,16 @@ impl Drop for RecvStream {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadError {
     /// The peer abandoned transmitting data on this stream
-    ///
-    /// Carries an application-defined error code.
-    #[error("stream reset by peer: error {0}")]
-    Reset(VarInt),
+    #[error("stream reset by peer: error {error_code}")]
+    Reset {
+        /// Application-defined error code supplied by the peer
+        error_code: VarInt,
+        /// Final size of the stream, including data that will never be read
+        ///
+        /// Protocols with their own flow control, such as WebTransport over HTTP/3, need this to
+        /// account for data abandoned by the reset.
+        final_size: u64,
+    },
     /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),

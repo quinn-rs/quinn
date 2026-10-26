@@ -1515,9 +1515,12 @@ async fn reset_at_delivers_reliable_data() {
         }
     };
     assert!(MSG[RELIABLE_SIZE..].starts_with(&rest));
-    assert!(
-        matches!(result, Err(crate::ReadError::Reset(code)) if code == ERROR),
-        "{result:?}"
+    assert_eq!(
+        result,
+        Err(crate::ReadError::Reset {
+            error_code: ERROR,
+            final_size: MSG.len() as u64,
+        })
     );
 }
 

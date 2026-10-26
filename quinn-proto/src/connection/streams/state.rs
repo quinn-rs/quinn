@@ -1363,7 +1363,10 @@ mod tests {
         let mut chunks = recv.read(true).unwrap();
         assert_eq!(
             chunks.next(1024).unwrap_err(),
-            crate::ReadError::Reset(0u32.into())
+            crate::ReadError::Reset {
+                error_code: 0u32.into(),
+                final_size: 4096,
+            }
         );
         let _ = chunks.finalize();
         assert_eq!(client.data_recvd, 4096);
@@ -1955,6 +1958,11 @@ mod tests {
     const RELIABLE_SIZE: u64 = 5;
     const ERROR: VarInt = VarInt(7);
     const OTHER_ERROR: VarInt = VarInt(8);
+    /// How reading a RESET_STREAM_AT test stream ends
+    const RESET: crate::ReadError = crate::ReadError::Reset {
+        error_code: ERROR,
+        final_size: FINAL_SIZE,
+    };
 
     /// Open a stream to a peer that accepts RESET_STREAM_AT, and write `data` to it
     fn reset_at_sender(data: &[u8]) -> (StreamsState, StreamId, Retransmits) {
@@ -2306,7 +2314,7 @@ mod tests {
             chunks.next(16).unwrap().unwrap().bytes,
             msg(SPLIT..RELIABLE_SIZE)
         );
-        assert_eq!(chunks.next(16), Err(crate::ReadError::Reset(ERROR)));
+        assert_eq!(chunks.next(16), Err(RESET));
         let _ = chunks.finalize();
 
         // The reset credited the whole stream, so neither data nor reads add credit
@@ -2346,7 +2354,7 @@ mod tests {
         };
         let mut chunks = recv.read(false).unwrap();
         assert_eq!(chunks.next(16).unwrap().unwrap().bytes, msg(0..SPLIT));
-        assert_eq!(chunks.next(16), Err(crate::ReadError::Reset(ERROR)));
+        assert_eq!(chunks.next(16), Err(RESET));
         let _ = chunks.finalize();
     }
 
@@ -2375,7 +2383,7 @@ mod tests {
                 chunks.next(usize::MAX).unwrap().unwrap().bytes,
                 msg(0..RELIABLE_SIZE)
             );
-            assert_eq!(chunks.next(usize::MAX), Err(crate::ReadError::Reset(ERROR)));
+            assert_eq!(chunks.next(usize::MAX), Err(RESET));
             let _ = chunks.finalize();
         }
     }
@@ -2440,7 +2448,7 @@ mod tests {
             pending: &mut pending,
         };
         let mut chunks = recv.read(true).unwrap();
-        assert_eq!(chunks.next(16), Err(crate::ReadError::Reset(ERROR)));
+        assert_eq!(chunks.next(16), Err(RESET));
         let _ = chunks.finalize();
     }
 

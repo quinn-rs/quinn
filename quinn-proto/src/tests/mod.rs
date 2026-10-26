@@ -648,7 +648,13 @@ fn reset_stream() {
     assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     let mut recv = pair.server_recv(server_ch, s);
     let mut chunks = recv.read(false).unwrap();
-    assert_matches!(chunks.next(usize::MAX), Err(ReadError::Reset(ERROR)));
+    assert_eq!(
+        chunks.next(usize::MAX),
+        Err(ReadError::Reset {
+            error_code: ERROR,
+            final_size: MSG.len() as u64,
+        })
+    );
     let _ = chunks.finalize();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
 }
@@ -688,7 +694,13 @@ fn reset_stream_at() {
         chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.bytes == MSG[..RELIABLE_SIZE]
     );
-    assert_matches!(chunks.next(usize::MAX), Err(ReadError::Reset(ERROR)));
+    assert_eq!(
+        chunks.next(usize::MAX),
+        Err(ReadError::Reset {
+            error_code: ERROR,
+            final_size: MSG.len() as u64,
+        })
+    );
     let _ = chunks.finalize();
     pair.drive();
 
@@ -2311,7 +2323,10 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     let mut chunks = recv.read(true).unwrap();
     assert_eq!(
         chunks.next(usize::MAX).err(),
-        Some(ReadError::Reset(VarInt(42)))
+        Some(ReadError::Reset {
+            error_code: VarInt(42),
+            final_size: window_size as u64,
+        })
     );
     let _ = chunks.finalize();
 
