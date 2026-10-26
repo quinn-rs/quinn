@@ -1754,6 +1754,13 @@ async fn connection_handles_drop_after_driver_panic() {
         );
         let connection = connection.unwrap();
         let (send, recv) = connection.open_bi().await.unwrap();
+        let mut stopped = Box::pin(send.stopped());
+        assert!(
+            stopped
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
         let (finished_send, mut stopped_recv) = connection.open_bi().await.unwrap();
         stopped_recv.stop(0u32.into()).unwrap();
         drop(finished_send);
@@ -1770,7 +1777,7 @@ async fn connection_handles_drop_after_driver_panic() {
             .unwrap()
             .unwrap();
 
-        drop_after_poison((send, recv, stopped_recv, connection), unwinding);
+        drop_after_poison((stopped, send, recv, stopped_recv, connection), unwinding);
         drop(peer);
     }
 }

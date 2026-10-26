@@ -1,13 +1,16 @@
 use std::{
+    collections::hash_map::Entry,
     future::{Future, poll_fn},
     io,
     pin::{Pin, pin},
+    sync::Arc,
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
 use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
+use tokio::sync::Notify;
 
 use crate::{
     VarInt,
@@ -251,19 +254,24 @@ impl SendStream {
                 // otherwise a wakeup could be missed if triggered inbetween releasing the lock
                 // and creating the future.
                 // The lock may only be held in a block without `await`s, otherwise the future
-                // becomes `!Send`. `Notify::notified` is lifetime-bound to `Notify`, therefore
-                // we need to declare `notify` outside of the block, and initialize it inside.
-                let notify;
-                {
-                    let mut conn = conn.state.lock("SendStream::stopped");
-                    if let Some(output) = send_stream_stopped(&mut conn, stream, is_0rtt) {
+                // becomes `!Send`. The registration owns the waiter's only Arc; `Notified`
+                // borrows it and is dropped before the registration on completion or cancellation.
+                let registration;
+                let notified = {
+                    let mut state = conn.state.lock("SendStream::stopped");
+                    if let Some(output) = send_stream_stopped(&mut state, stream, is_0rtt) {
                         return output;
                     }
 
-                    notify = conn.stopped.entry(stream).or_default().clone();
-                    notify.notified()
-                }
-                .await
+                    registration = StoppedRegistration {
+                        conn: &conn,
+                        stream,
+                        notify: Some(state.stopped.entry(stream).or_default().clone()),
+                    };
+                    // Every live registration has a notifier; only `Drop` takes it.
+                    registration.notify.as_ref().unwrap().notified()
+                };
+                notified.await;
             }
         }
     }
@@ -286,6 +294,39 @@ impl SendStream {
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
         pin!(self.get_mut().write(buf)).as_mut().poll(cx)
+    }
+}
+
+/// Owns a single waiter's registration, independently of the stream handle.
+struct StoppedRegistration<'a> {
+    conn: &'a ConnectionRef,
+    stream: StreamId,
+    notify: Option<Arc<Notify>>,
+}
+
+impl Drop for StoppedRegistration<'_> {
+    fn drop(&mut self) {
+        let Some(mut state) = self.conn.state.lock_for_drop("StoppedRegistration::drop") else {
+            return;
+        };
+        let Some(notify) = self.notify.take() else {
+            return;
+        };
+        // Event delivery can remove an entry before its waiters are dropped.
+        // Only clean up the notifier this waiter actually registered with.
+        let Entry::Occupied(entry) = state.stopped.entry(self.stream) else {
+            return;
+        };
+        if !Arc::ptr_eq(entry.get(), &notify) {
+            return;
+        }
+
+        // Release our Arc under the registration lock so concurrent cancellations
+        // cannot both leave the entry for the other waiter to clean up.
+        drop(notify);
+        if Arc::strong_count(entry.get()) == 1 {
+            entry.remove();
+        }
     }
 }
 
@@ -441,5 +482,231 @@ impl From<StoppedError> for io::Error {
             ConnectionLost(_) => io::ErrorKind::NotConnected,
         };
         Self::new(kind, x)
+    }
+}
+
+#[cfg(all(test, any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+mod tests {
+    use std::{
+        net::UdpSocket,
+        sync::{Arc, Barrier},
+        task::Waker,
+        thread,
+        time::Duration,
+    };
+
+    use super::*;
+    use crate::{ClientConfig, Connection, Endpoint, EndpointConfig, ServerConfig};
+
+    #[tokio::test]
+    async fn cancelled_stopped_does_not_retain_notifications() {
+        let (_endpoint, connection, _peer) = pair().await;
+        cancel_stopped_repeatedly(&connection).await;
+    }
+
+    #[tokio::test]
+    async fn repeated_wakeup_does_not_duplicate_registration() {
+        let (_endpoint, connection, _peer) = pair().await;
+        let send = connection.open_uni().await.unwrap();
+        let mut stopped = Box::pin(send.stopped());
+        let mut cx = Context::from_waker(Waker::noop());
+        for _ in 0..16 {
+            assert!(stopped.as_mut().poll(&mut cx).is_pending());
+            let state = send.conn.state.lock("test");
+            assert_eq!(Arc::strong_count(&state.stopped[&send.stream]), 2);
+            state.stopped[&send.stream].notify_waiters();
+        }
+        drop(stopped);
+        assert!(send.conn.state.lock("test").stopped.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_stopped_waiter_preserves_another() {
+        let (_endpoint, connection, peer) = pair().await;
+        let mut send = connection.open_uni().await.unwrap();
+        send.write_all(b"request").await.unwrap();
+        let mut recv = peer.accept_uni().await.unwrap();
+        let mut first = Box::pin(send.stopped());
+        let mut second = Box::pin(send.stopped());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+        assert!(second.as_mut().poll(&mut cx).is_pending());
+        drop(first);
+        assert_eq!(send.conn.state.lock("test").stopped.len(), 1);
+        recv.stop(42u32.into()).unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), second)
+                .await
+                .unwrap()
+                .unwrap(),
+            Some(42u32.into())
+        );
+        assert!(send.conn.state.lock("test").stopped.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_cancellations_remove_last_notification() {
+        let (_endpoint, connection, _peer) = pair().await;
+        cancel_stopped_concurrently(&connection).await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_racing_registration_preserves_notification() {
+        let (_endpoint, connection, peer) = pair().await;
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            race_cancellation_with_registration(&connection, &peer),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn old_stopped_registration_does_not_remove_replacement() {
+        let (_endpoint, connection, _peer) = pair().await;
+        let send = connection.open_uni().await.unwrap();
+        let mut old = Box::pin(send.stopped());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(old.as_mut().poll(&mut cx).is_pending());
+        // Model event delivery removing an entry before its old waiter is dropped.
+        // A new registration must have independent ownership, even for the same ID.
+        send.conn.state.lock("test").stopped.clear();
+        let mut replacement = Box::pin(send.stopped());
+        assert!(replacement.as_mut().poll(&mut cx).is_pending());
+        drop(old);
+        assert_eq!(send.conn.state.lock("test").stopped.len(), 1);
+        drop(replacement);
+        assert!(send.conn.state.lock("test").stopped.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stopped_can_register_and_cancel_after_stream_is_dropped() {
+        let (_endpoint, connection, _peer) = pair().await;
+        let send = connection.open_uni().await.unwrap();
+        let conn = send.conn.clone();
+        let mut stopped = Box::pin(send.stopped());
+        drop(send);
+        assert!(
+            stopped
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        assert_eq!(conn.state.lock("test").stopped.len(), 1);
+        drop(stopped);
+        assert!(conn.state.lock("test").stopped.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unpolled_stopped_does_not_register() {
+        let (_endpoint, connection, _peer) = pair().await;
+        let send = connection.open_uni().await.unwrap();
+        let stopped = send.stopped();
+        assert!(send.conn.state.lock("test").stopped.is_empty());
+        drop(stopped);
+        assert!(send.conn.state.lock("test").stopped.is_empty());
+    }
+
+    async fn pair() -> (Endpoint, Connection, Connection) {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let key = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
+        let server = ServerConfig::with_single_cert(vec![cert.cert.der().clone()], key).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert.cert.der().clone()).unwrap();
+        let mut endpoint = Endpoint::new(
+            EndpointConfig::default(),
+            Some(server),
+            UdpSocket::bind("127.0.0.1:0").unwrap(),
+            Arc::new(crate::runtime::TokioRuntime),
+        )
+        .unwrap();
+        endpoint.set_default_client_config(
+            ClientConfig::with_root_certificates(Arc::new(roots)).unwrap(),
+        );
+        let (client, server) = tokio::join!(
+            endpoint
+                .connect(endpoint.local_addr().unwrap(), "localhost")
+                .unwrap(),
+            async { endpoint.accept().await.unwrap().await }
+        );
+        (endpoint, client.unwrap(), server.unwrap())
+    }
+
+    async fn cancel_stopped_repeatedly(connection: &Connection) {
+        for _ in 0..64 {
+            let mut send = connection.open_uni().await.unwrap();
+            let mut stopped = Box::pin(send.stopped());
+            assert!(
+                stopped
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+            assert_eq!(send.conn.state.lock("test").stopped.len(), 1);
+            send.reset(0u32.into()).unwrap();
+            drop(stopped);
+            assert!(send.conn.state.lock("test").stopped.is_empty());
+        }
+    }
+
+    async fn cancel_stopped_concurrently(connection: &Connection) {
+        for _ in 0..32 {
+            let send = connection.open_uni().await.unwrap();
+            let mut first = Box::pin(send.stopped());
+            let mut second = Box::pin(send.stopped());
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(first.as_mut().poll(&mut cx).is_pending());
+            assert!(second.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(
+                Arc::strong_count(&send.conn.state.lock("test").stopped[&send.stream]),
+                3
+            );
+
+            let start = Barrier::new(3);
+            thread::scope(|scope| {
+                for waiter in [first, second] {
+                    let start = &start;
+                    scope.spawn(move || {
+                        start.wait();
+                        drop(waiter);
+                    });
+                }
+                start.wait();
+            });
+            assert!(send.conn.state.lock("test").stopped.is_empty());
+        }
+    }
+
+    async fn race_cancellation_with_registration(connection: &Connection, peer: &Connection) {
+        let mut send = connection.open_uni().await.unwrap();
+        send.write_all(b"request").await.unwrap();
+        let mut recv = peer.accept_uni().await.unwrap();
+        let mut stopped = Box::pin(send.stopped());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(stopped.as_mut().poll(&mut cx).is_pending());
+
+        for _ in 0..32 {
+            let previous = stopped;
+            let mut replacement = Box::pin(send.stopped());
+            let start = Barrier::new(2);
+            thread::scope(|scope| {
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    drop(previous);
+                });
+                start.wait();
+                assert!(replacement.as_mut().poll(&mut cx).is_pending());
+            });
+            assert_eq!(
+                Arc::strong_count(&send.conn.state.lock("test").stopped[&send.stream]),
+                2
+            );
+            stopped = replacement;
+        }
+
+        recv.stop(42u32.into()).unwrap();
+        assert_eq!(stopped.await.unwrap(), Some(42u32.into()));
+        assert!(send.conn.state.lock("test").stopped.is_empty());
     }
 }
