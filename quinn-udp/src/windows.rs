@@ -12,6 +12,7 @@ use std::{
 };
 
 use libc::{c_int, c_uint};
+use windows_sys::Win32::NetworkManagement::IpHelper;
 use windows_sys::Win32::Networking::WinSock;
 
 use crate::{
@@ -391,6 +392,76 @@ fn send(
     ecn_v4_supported: bool,
     ecn_v6_supported: bool,
 ) -> io::Result<()> {
+    match send_msg(&socket, transmit, ecn_v4_supported, ecn_v6_supported) {
+        Err(error)
+            if error.raw_os_error() == Some(WinSock::WSAEINVAL)
+                && default_source_matches(&socket, transmit) =>
+        {
+            // Some Windows network stacks reject IP_PKTINFO on wildcard-bound
+            // sockets even when its source is the route's own local address.
+            // Omit the source hint only when the socket or current route selects
+            // the same source, preserving ECN and segmentation metadata.
+            let mut packet = transmit.clone();
+            packet.src_ip = None;
+            send_msg(&socket, &packet, ecn_v4_supported, ecn_v6_supported)
+        }
+        result => result,
+    }
+}
+
+fn default_source_matches(socket: &UdpSockRef<'_>, transmit: &Transmit<'_>) -> bool {
+    let Some(IpAddr::V4(requested)) = transmit.src_ip else {
+        return false;
+    };
+    if !transmit.destination.is_ipv4() {
+        return false;
+    }
+    let Ok(local) = socket.0.local_addr() else {
+        return false;
+    };
+    let Some(local) = local.as_socket_ipv4() else {
+        return false;
+    };
+    if !local.ip().is_unspecified() {
+        return *local.ip() == requested;
+    }
+    // SAFETY: every bit pattern is valid for u32.
+    let Ok(interface) = (unsafe {
+        get_socket_option::<u32>(&*socket.0, WinSock::IPPROTO_IP, WinSock::IP_UNICAST_IF)
+    }) else {
+        return false;
+    };
+    let destination = socket2::SockAddr::from(transmit.destination);
+    // SAFETY: the destination is IPv4; all output pointers refer to writable,
+    // correctly sized storage. The socket's interface selection constrains the
+    // route lookup just as it constrains the retry's send.
+    unsafe {
+        let mut route = mem::zeroed();
+        let mut source: WinSock::SOCKADDR_INET = mem::zeroed();
+        // Unlike setsockopt, getsockopt returns IP_UNICAST_IF in host order.
+        if IpHelper::GetBestRoute2(
+            ptr::null(),
+            interface,
+            ptr::null(),
+            destination.as_ptr().cast(),
+            0,
+            &mut route,
+            &mut source,
+        ) != 0
+        {
+            return false;
+        }
+        source.si_family == WinSock::AF_INET
+            && Ipv4Addr::from(u32::from_be(source.Ipv4.sin_addr.S_un.S_addr)) == requested
+    }
+}
+
+fn send_msg(
+    socket: &UdpSockRef<'_>,
+    transmit: &Transmit<'_>,
+    ecn_v4_supported: bool,
+    ecn_v6_supported: bool,
+) -> io::Result<()> {
     // we cannot use [`socket2::sendmsg()`] and [`socket2::MsgHdr`] as we do not have access
     // to the inner field which holds the WSAMSG
     let mut ctrl_buf = cmsg::Aligned([0; CMSG_LEN]);
@@ -612,5 +683,61 @@ fn max_gso_segments(socket: &impl AsRawSocket) -> usize {
             512
         }
         Err(_) => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_matches_binding() {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let mut packet = Transmit {
+            destination: "127.0.0.1:4433".parse().unwrap(),
+            src_ip: Some(Ipv4Addr::LOCALHOST.into()),
+            ecn: None,
+            segment_size: None,
+            contents: b"hello",
+        };
+        assert!(default_source_matches(&(&socket).into(), &packet));
+        packet.src_ip = Some("192.0.2.1".parse().unwrap());
+        assert!(!default_source_matches(&(&socket).into(), &packet));
+    }
+
+    #[test]
+    fn source_matches_route() {
+        let packet = Transmit {
+            destination: "127.0.0.1:4433".parse().unwrap(),
+            src_ip: Some(Ipv4Addr::LOCALHOST.into()),
+            ecn: None,
+            segment_size: None,
+            contents: b"hello",
+        };
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+        assert!(default_source_matches(&(&socket).into(), &packet));
+        let destination = socket2::SockAddr::from(packet.destination);
+        let mut interface = 0_u32;
+        // SAFETY: destination is a valid IPv4 socket address and the output
+        // points to a writable interface index.
+        assert_eq!(
+            unsafe { IpHelper::GetBestInterfaceEx(destination.as_ptr().cast(), &mut interface) },
+            0
+        );
+        assert_ne!(interface, 0);
+        set_socket_option(
+            &socket,
+            WinSock::IPPROTO_IP,
+            WinSock::IP_UNICAST_IF,
+            interface.to_be(),
+        )
+        .unwrap();
+        assert!(default_source_matches(&(&socket).into(), &packet));
+        let mut different_source = packet.clone();
+        different_source.src_ip = Some("192.0.2.1".parse().unwrap());
+        assert!(!default_source_matches(
+            &(&socket).into(),
+            &different_source
+        ));
     }
 }

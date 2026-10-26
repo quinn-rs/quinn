@@ -79,6 +79,25 @@ fn basic_src_ip() {
     );
 }
 
+#[test]
+#[cfg(windows)]
+fn src_ip_v4_wildcard() {
+    let send = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+    let recv = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let dst_addr = recv.local_addr().unwrap();
+    test_send_recv(
+        &send.into(),
+        &recv.into(),
+        Transmit {
+            destination: dst_addr,
+            ecn: Some(EcnCodepoint::Ect0),
+            contents: b"hello",
+            segment_size: None,
+            src_ip: Some(Ipv4Addr::LOCALHOST.into()),
+        },
+    );
+}
+
 // The WASI backend sets no ECN codepoint and always reports `None`.
 #[test]
 #[cfg(not(target_os = "wasi"))]
