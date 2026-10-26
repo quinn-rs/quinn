@@ -2,17 +2,22 @@ use std::{
     future::{Future, poll_fn},
     io,
     pin::{Pin, pin},
+    sync::Arc,
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
 use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
+use tokio::sync::Notify;
 
 use crate::{
     VarInt,
     connection::{ConnectionRef, State},
 };
+
+#[cfg(all(test, any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+mod tests;
 
 /// A stream that can only be used to send data
 ///
@@ -246,6 +251,11 @@ impl SendStream {
         let stream = self.stream;
         let is_0rtt = self.is_0rtt;
         async move {
+            let mut registration = StoppedRegistration {
+                conn: &conn,
+                stream,
+                notify: None,
+            };
             loop {
                 // The `Notify::notified` future needs to be created while the lock is being held,
                 // otherwise a wakeup could be missed if triggered inbetween releasing the lock
@@ -260,7 +270,7 @@ impl SendStream {
                         return output;
                     }
 
-                    notify = conn.stopped.entry(stream).or_default().clone();
+                    notify = registration.register(&mut conn);
                     notify.notified()
                 }
                 .await
@@ -286,6 +296,45 @@ impl SendStream {
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
         pin!(self.get_mut().write(buf)).as_mut().poll(cx)
+    }
+}
+
+/// Owns a single waiter's registration, independently of the stream handle.
+struct StoppedRegistration<'a> {
+    conn: &'a ConnectionRef,
+    stream: StreamId,
+    notify: Option<Arc<Notify>>,
+}
+
+impl StoppedRegistration<'_> {
+    fn register(&mut self, state: &mut State) -> Arc<Notify> {
+        let entry = state.stopped.entry(self.stream).or_default();
+        if !self
+            .notify
+            .as_ref()
+            .is_some_and(|notify| Arc::ptr_eq(notify, &entry.notify))
+        {
+            entry.waiters += 1;
+            self.notify = Some(entry.notify.clone());
+        }
+        entry.notify.clone()
+    }
+}
+
+impl Drop for StoppedRegistration<'_> {
+    fn drop(&mut self) {
+        let Some(notify) = &self.notify else { return };
+        let mut state = self.conn.state.lock("StoppedRegistration::drop");
+        if let Some(entry) = state.stopped.get_mut(&self.stream) {
+            // Event delivery removes the old registration. Its cancelled waiters
+            // must not remove a new registration for the same stream.
+            if Arc::ptr_eq(notify, &entry.notify) {
+                entry.waiters -= 1;
+                if entry.waiters == 0 {
+                    state.stopped.remove(&self.stream);
+                }
+            }
+        }
     }
 }
 

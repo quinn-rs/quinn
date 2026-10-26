@@ -1010,7 +1010,7 @@ pub(crate) struct State {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
-    pub(crate) stopped: FxHashMap<StreamId, Arc<Notify>>,
+    pub(crate) stopped: FxHashMap<StreamId, StoppedNotify>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     socket: Arc<dyn AsyncUdpSocket>,
@@ -1304,16 +1304,22 @@ fn wake_all(wakers: &mut FxHashMap<StreamId, Waker>) {
     wakers.drain().for_each(|(_, waker)| waker.wake())
 }
 
-fn wake_stream_notify(stream_id: StreamId, wakers: &mut FxHashMap<StreamId, Arc<Notify>>) {
+#[derive(Default)]
+pub(crate) struct StoppedNotify {
+    pub(crate) notify: Arc<Notify>,
+    pub(crate) waiters: usize,
+}
+
+fn wake_stream_notify(stream_id: StreamId, wakers: &mut FxHashMap<StreamId, StoppedNotify>) {
     if let Some(notify) = wakers.remove(&stream_id) {
-        notify.notify_waiters()
+        notify.notify.notify_waiters()
     }
 }
 
-fn wake_all_notify(wakers: &mut FxHashMap<StreamId, Arc<Notify>>) {
+fn wake_all_notify(wakers: &mut FxHashMap<StreamId, StoppedNotify>) {
     wakers
         .drain()
-        .for_each(|(_, notify)| notify.notify_waiters())
+        .for_each(|(_, notify)| notify.notify.notify_waiters())
 }
 
 /// Errors that can arise when sending a datagram
