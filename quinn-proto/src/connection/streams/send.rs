@@ -13,6 +13,8 @@ pub(super) struct Send {
     pub(super) fin_pending: bool,
     /// Whether this stream is in the `connection_blocked` list of `Streams`
     pub(super) connection_blocked: bool,
+    /// Whether this stream is in the pending queue, including its nonfair next slot
+    pub(super) pending_queue: bool,
     /// Value of `max_data` for which a `STREAM_DATA_BLOCKED` frame was most recently queued
     ///
     /// A new frame is only queued once the peer has raised the limit.
@@ -30,6 +32,7 @@ impl Send {
             priority: 0,
             fin_pending: false,
             connection_blocked: false,
+            pending_queue: false,
             data_blocked_limit: None,
             stop_reason: None,
         })
