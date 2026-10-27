@@ -1316,6 +1316,7 @@ fn alpn_success() {
 #[test]
 fn alpn_after_hello_retry() {
     let _guard = subscribe();
+    const ALPN: &[u8] = b"foo";
     // A server without the group the client sent a key share for asks for a new
     // ClientHello, and picks the protocol only from that one
     let mut provider = default_provider();
@@ -1330,12 +1331,12 @@ fn alpn_after_hello_retry() {
         .with_no_client_auth()
         .with_single_cert(vec![cert], PrivateKeyDer::from(key))
         .unwrap();
-    crypto.alpn_protocols = vec!["foo".into()];
+    crypto.alpn_protocols = vec![ALPN.into()];
     let server_config =
         ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(crypto).unwrap()));
 
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let client_config = ClientConfig::new(Arc::new(client_crypto_with_alpn(vec!["foo".into()])));
+    let client_config = ClientConfig::new(Arc::new(client_crypto_with_alpn(vec![ALPN.into()])));
     pair.begin_connect(client_config);
 
     let mut ready = false;
@@ -1349,7 +1350,7 @@ fn alpn_after_hello_retry() {
                         .unwrap()
                         .downcast::<crypto::rustls::HandshakeData>()
                         .unwrap();
-                    assert_eq!(hd.protocol.as_deref(), Some(&b"foo"[..]));
+                    assert_eq!(hd.protocol.as_deref(), Some(ALPN));
                     ready = true;
                 }
             }

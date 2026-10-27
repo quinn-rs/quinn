@@ -134,11 +134,14 @@ impl crypto::Session for TlsSession {
             // connections.
             let have_server_name = match &self.inner {
                 Connection::Client(_) => false,
-                // After a HelloRetryRequest, the server knows the name but has yet to pick
-                // a protocol, which it only does on the client's next ClientHello
-                Connection::Server(session) => session.server_name().is_some() && !self.server_alpn,
+                Connection::Server(session) => session.server_name().is_some(),
             };
-            if self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
+            // After a HelloRetryRequest, the server knows the name but has yet to pick a
+            // protocol, which it only does on the client's next ClientHello
+            if self.inner.alpn_protocol().is_some()
+                || (have_server_name && !self.server_alpn)
+                || !self.is_handshaking()
+            {
                 self.got_handshake_data = true;
                 return Ok(true);
             }
