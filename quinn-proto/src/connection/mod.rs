@@ -111,10 +111,12 @@ use timer::{Timer, TimerTable};
 ///   take, named `poll_*`.
 ///
 /// The simplest way to use this API correctly is to call (B) and (C) whenever
-/// appropriate, then after each of those calls, as soon as feasible call all
-/// polling methods (D) and deal with their outputs appropriately, e.g. by
-/// passing it to the application or by making a system-level I/O call. You
-/// should call the polling functions in this order:
+/// appropriate, then after each call, or after a batch of calls for events that
+/// are already available, call all polling methods (D) as soon as feasible and
+/// deal with their outputs appropriately, e.g. by passing them to the
+/// application or by making a system-level I/O call. Polling after every call
+/// remains valid. Callers should not wait for future network input solely to
+/// form a batch. You should call the polling functions in this order:
 ///
 /// 1. [`poll_transmit`](Self::poll_transmit)
 /// 2. [`poll_timeout`](Self::poll_timeout)
@@ -395,9 +397,15 @@ impl Connection {
 
     /// Returns application-facing events
     ///
-    /// Connections should be polled for events after:
-    /// - a call was made to `handle_event`
-    /// - a call was made to `handle_timeout`
+    /// Connections should be polled for events after one or more calls to:
+    /// - [`handle_event`](Self::handle_event)
+    /// - [`handle_timeout`](Self::handle_timeout)
+    ///
+    /// Call repeatedly until `None` is returned. Processing a batch of
+    /// already-available input events before draining application events lets
+    /// deferred bookkeeping be coalesced. Polling after each input call remains
+    /// valid; do not wait for future input solely to form a batch. See the
+    /// [`Connection`] documentation for polling order and input timestamp requirements.
     #[must_use]
     pub fn poll(&mut self) -> Option<Event> {
         if let Some(x) = self.events.pop_front() {
