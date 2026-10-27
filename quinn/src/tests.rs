@@ -1451,6 +1451,42 @@ async fn two_datagram_readers() {
 }
 
 #[tokio::test]
+async fn read_datagrams() {
+    let _guard = subscribe();
+    let endpoint = endpoint();
+
+    let (client, server) = tokio::join!(
+        endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap(),
+        async { endpoint.accept().await.unwrap().await }
+    );
+    let client = client.unwrap();
+    let server = server.unwrap();
+
+    assert_eq!(client.read_datagrams(&mut []).await.unwrap(), 0);
+
+    let sent = [&b"one"[..], b"two", b"three"];
+    for x in sent {
+        server.send_datagram(Bytes::from_static(x)).unwrap();
+    }
+    let mut bufs = [Bytes::new(), Bytes::new()];
+    let mut received = Vec::new();
+    while received.len() < sent.len() {
+        let n = client.read_datagrams(&mut bufs).await.unwrap();
+        assert!((1..=bufs.len()).contains(&n));
+        received.extend_from_slice(&bufs[..n]);
+    }
+    assert_eq!(received, sent);
+
+    server.close(0u32.into(), b"done");
+    assert!(matches!(
+        client.read_datagrams(&mut bufs).await,
+        Err(crate::ConnectionError::ApplicationClosed(_))
+    ));
+}
+
+#[tokio::test]
 async fn multiple_conns_with_zero_length_cids() {
     let _guard = subscribe();
     let mut factory = EndpointFactory::new();
