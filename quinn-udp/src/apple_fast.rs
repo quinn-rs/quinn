@@ -107,12 +107,14 @@ fn prepare_msg_x(
     if let Some(ip) = &transmit.src_ip {
         match ip {
             IpAddr::V4(v4) => {
-                if encode_src_ip {
-                    let addr = libc::in_addr {
+                let pktinfo = libc::in_pktinfo {
+                    ipi_ifindex: 0,
+                    ipi_spec_dst: libc::in_addr {
                         s_addr: u32::from_ne_bytes(v4.octets()),
-                    };
-                    encoder.push(libc::IPPROTO_IP, libc::IP_RECVDSTADDR, addr);
-                }
+                    },
+                    ipi_addr: libc::in_addr { s_addr: 0 },
+                };
+                encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
             }
             IpAddr::V6(v6) => {
                 let pktinfo = libc::in6_pktinfo {
