@@ -5016,6 +5016,110 @@ fn application_close_in_initial_is_rejected() {
     );
 }
 
+#[test]
+fn min_loss_delay_prevents_time_based_loss() {
+    let mut transport = TransportConfig::default();
+    transport
+        .deterministic_packet_numbers(true)
+        .min_loss_delay(Duration::from_millis(10));
+
+    let mut config = client_config();
+    config.transport_config(Arc::new(transport));
+
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect_with(config);
+
+    // Send a packet and drop it.
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    assert_eq!(pair.client.outbound.len(), 1);
+    pair.client.outbound.clear();
+
+    // Send a later packet and deliver it before the loss timer expires.
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    pair.server.drive(pair.time, pair.client.addr);
+    pair.client.drive(pair.time, pair.server.addr);
+
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+}
+
+#[test]
+fn min_loss_delay_allows_loss_after_delay() {
+    let min_loss_delay = Duration::from_millis(10);
+
+    let mut transport = TransportConfig::default();
+    transport
+        .deterministic_packet_numbers(true)
+        .min_loss_delay(min_loss_delay);
+
+    let mut config = client_config();
+    config.transport_config(Arc::new(transport));
+
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect_with(config);
+    pair.drive();
+
+    // Drop a packet.
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    assert_eq!(pair.client.outbound.len(), 1);
+    pair.client.outbound.clear();
+
+    // Send one later packet. This is fewer than the packet threshold,
+    // so the dropped packet can only be declared lost by time-based
+    // loss detection.
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    pair.server.drive(pair.time, pair.client.addr);
+    pair.client.drive(pair.time, pair.server.addr);
+
+    // The minimum loss delay prevents the dropped packet from being
+    // declared lost before the configured delay expires.
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+
+    // Let the test harness advance time and process the loss timer.
+    pair.drive();
+
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 1);
+}
+
+#[test]
+fn min_loss_delay_does_not_override_rtt_loss_delay() {
+    let min_loss_delay = Duration::from_millis(10);
+
+    let mut transport = TransportConfig::default();
+    transport
+        .deterministic_packet_numbers(true)
+        .min_loss_delay(min_loss_delay);
+
+    let mut config = client_config();
+    config.transport_config(Arc::new(transport));
+
+    let mut pair = Pair::default();
+    pair.latency = Duration::from_millis(10);
+
+    let (client_ch, _) = pair.connect_with(config);
+    pair.drive();
+
+    // Drop a packet.
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    assert_eq!(pair.client.outbound.len(), 1);
+    pair.client.outbound.clear();
+
+    // Send one later packet. Fewer than the packet threshold means
+    // only time-based loss detection can declare the dropped packet lost.
+    pair.client_conn_mut(client_ch).ping();
+    pair.client.drive(pair.time, pair.server.addr);
+    pair.server.drive(pair.time, pair.client.addr);
+    pair.client.drive(pair.time, pair.server.addr);
+
+    // The packet should still be in flight because the RTT-derived
+    // loss delay is greater than min_loss_delay.
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+}
+
 #[cfg(feature = "qlog")]
 #[test]
 fn qlog_packet_lost_trigger() {
