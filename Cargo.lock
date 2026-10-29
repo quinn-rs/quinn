@@ -2008,7 +2008,6 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
- "thiserror 2.0.21",
  "tinyvec",
  "tracing",
  "tracing-subscriber",
