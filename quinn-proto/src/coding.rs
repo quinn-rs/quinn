@@ -1,16 +1,25 @@
 //! Coding related traits.
 
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::{
+    fmt,
+    net::{Ipv4Addr, Ipv6Addr},
+};
 
 use bytes::{Buf, BufMut};
-use thiserror::Error;
 
 use crate::VarInt;
 
 /// Error indicating that the provided buffer was too small
-#[derive(Error, Debug, Copy, Clone, Eq, PartialEq)]
-#[error("unexpected end of buffer")]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct UnexpectedEnd;
+
+impl fmt::Display for UnexpectedEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("unexpected end of buffer")
+    }
+}
+
+impl std::error::Error for UnexpectedEnd {}
 
 /// Coding result type
 pub type Result<T> = ::std::result::Result<T, UnexpectedEnd>;

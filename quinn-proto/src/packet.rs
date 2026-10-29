@@ -1,7 +1,6 @@
-use std::{cmp::Ordering, io, ops::Range, str};
+use std::{cmp::Ordering, fmt, io, ops::Range, str};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use thiserror::Error;
 
 use crate::{
     ConnectionId,
@@ -849,10 +848,9 @@ pub enum LongType {
 }
 
 /// Packet decode error
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum PacketDecodeError {
     /// Packet uses a QUIC version that is not supported
-    #[error("unsupported version {version:x}")]
     UnsupportedVersion {
         /// Source Connection ID
         src_cid: ConnectionId,
@@ -862,9 +860,21 @@ pub enum PacketDecodeError {
         version: u32,
     },
     /// The packet header is invalid
-    #[error("invalid header: {0}")]
     InvalidHeader(&'static str),
 }
+
+impl fmt::Display for PacketDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedVersion { version, .. } => {
+                write!(f, "unsupported version {version:x}")
+            }
+            Self::InvalidHeader(reason) => write!(f, "invalid header: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for PacketDecodeError {}
 
 impl From<coding::UnexpectedEnd> for PacketDecodeError {
     fn from(_: coding::UnexpectedEnd) -> Self {

@@ -8,12 +8,12 @@
 
 use std::{
     convert::TryFrom,
+    fmt,
     net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
 };
 
 use bytes::{Buf, BufMut};
 use rand::{Rng, RngExt, seq::SliceRandom as _};
-use thiserror::Error;
 
 use crate::{
     LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT, RESET_TOKEN_SIZE, ResetToken, Side,
@@ -279,15 +279,24 @@ impl PreferredAddress {
 }
 
 /// Errors encountered while decoding `TransportParameters`
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Error {
     /// Parameters that are semantically invalid
-    #[error("parameter had illegal value")]
     IllegalValue,
     /// Catch-all error for problems while decoding transport parameters
-    #[error("parameters were malformed")]
     Malformed,
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::IllegalValue => "parameter had illegal value",
+            Self::Malformed => "parameters were malformed",
+        })
+    }
+}
+
+impl std::error::Error for Error {}
 
 impl From<Error> for TransportError {
     fn from(e: Error) -> Self {

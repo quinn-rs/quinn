@@ -1,10 +1,9 @@
 use std::{
     collections::{BinaryHeap, hash_map},
-    io,
+    fmt, io,
 };
 
 use bytes::Bytes;
-use thiserror::Error;
 use tracing::trace;
 
 use super::spaces::{Retransmits, ThinRetransmits};
@@ -524,11 +523,18 @@ impl ShouldTransmit {
 }
 
 /// Error indicating that a stream has not been opened or has already been finished or reset
-#[derive(Debug, Default, Error, Clone, PartialEq, Eq)]
-#[error("closed stream")]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ClosedStream {
     _private: (),
 }
+
+impl fmt::Display for ClosedStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("closed stream")
+    }
+}
+
+impl std::error::Error for ClosedStream {}
 
 impl From<ClosedStream> for io::Error {
     fn from(x: ClosedStream) -> Self {

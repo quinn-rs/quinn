@@ -1,7 +1,6 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt};
 
 use bytes::Bytes;
-use thiserror::Error;
 use tracing::{debug, trace};
 
 use super::{Connection, Event};
@@ -325,21 +324,30 @@ mod tests {
 }
 
 /// Errors that can arise when sending a datagram
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum SendDatagramError {
     /// The peer does not support receiving datagram frames
-    #[error("datagrams not supported by peer")]
     UnsupportedByPeer,
     /// Datagram support is disabled locally
-    #[error("datagram support disabled")]
     Disabled,
     /// The datagram is larger than the connection can currently accommodate
     ///
     /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
     /// exceeded.
-    #[error("datagram too large")]
     TooLarge,
     /// Send would block
-    #[error("datagram send blocked")]
     Blocked(Bytes),
 }
+
+impl fmt::Display for SendDatagramError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::UnsupportedByPeer => "datagrams not supported by peer",
+            Self::Disabled => "datagram support disabled",
+            Self::TooLarge => "datagram too large",
+            Self::Blocked(_) => "datagram send blocked",
+        })
+    }
+}
+
+impl std::error::Error for SendDatagramError {}

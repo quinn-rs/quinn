@@ -1,7 +1,6 @@
 use std::{convert::TryInto, fmt};
 
 use bytes::{Buf, BufMut};
-use thiserror::Error;
 
 use crate::coding::{self, Codec, UnexpectedEnd};
 
@@ -135,9 +134,16 @@ impl<'arbitrary> Arbitrary<'arbitrary> for VarInt {
 }
 
 /// Error returned when constructing a `VarInt` from a value >= 2^62
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
-#[error("value too large for varint encoding")]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct VarIntBoundsExceeded;
+
+impl fmt::Display for VarIntBoundsExceeded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("value too large for varint encoding")
+    }
+}
+
+impl std::error::Error for VarIntBoundsExceeded {}
 
 impl Codec for VarInt {
     fn decode<B: Buf>(r: &mut B) -> coding::Result<Self> {
