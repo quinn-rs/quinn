@@ -436,6 +436,7 @@ impl Header {
         )
     }
 
+    #[cfg_attr(not(feature = "tracing"), allow(dead_code))]
     pub(crate) fn dst_cid(&self) -> ConnectionId {
         use Header::*;
         match *self {

@@ -14,6 +14,7 @@
 
 #![cfg_attr(not(fuzzing), warn(missing_docs))]
 #![cfg_attr(test, allow(dead_code))]
+#![cfg_attr(not(feature = "tracing"), allow(unused_variables))]
 // Fixes welcome:
 #![warn(unreachable_pub)]
 #![allow(clippy::cognitive_complexity)]
