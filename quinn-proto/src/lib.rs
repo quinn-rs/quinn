@@ -60,7 +60,7 @@ mod config;
 pub use config::QlogConfig;
 pub use config::{
     AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
-    ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
+    RngFactory, ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
 };
 
 pub mod crypto;
@@ -90,9 +90,9 @@ pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportE
 pub mod congestion;
 
 mod cid_generator;
-pub use crate::cid_generator::{
-    ConnectionIdGenerator, HashedConnectionIdGenerator, InvalidCid, RandomConnectionIdGenerator,
-};
+#[cfg(feature = "system-rng")]
+pub use crate::cid_generator::RandomConnectionIdGenerator;
+pub use crate::cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator, InvalidCid};
 
 mod token;
 use token::ResetToken;

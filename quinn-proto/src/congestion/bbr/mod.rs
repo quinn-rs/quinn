@@ -2,7 +2,7 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use rand::{RngExt, SeedableRng};
+use rand::{Rng, RngExt, SeedableRng};
 use rand_pcg::Pcg32;
 
 use crate::congestion::ControllerMetrics;
@@ -62,7 +62,7 @@ pub struct Bbr {
 
 impl Bbr {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<BbrConfig>, current_mtu: u16) -> Self {
+    pub fn new(config: Arc<BbrConfig>, current_mtu: u16, rng: &mut dyn Rng) -> Self {
         let initial_window = config.initial_window;
         Self {
             config,
@@ -98,7 +98,7 @@ impl Bbr {
             bw_at_last_round: 0,
             round_wo_bw_gain: 0,
             ack_aggregation: AckAggregationState::default(),
-            random_number_generator: Pcg32::from_rng(&mut rand::rng()),
+            random_number_generator: Pcg32::from_rng(rng),
         }
     }
 
@@ -541,8 +541,13 @@ impl Default for BbrConfig {
 }
 
 impl ControllerFactory for BbrConfig {
-    fn build(self: Arc<Self>, _now: Instant, current_mtu: u16) -> Box<dyn Controller> {
-        Box::new(Bbr::new(self, current_mtu))
+    fn build(
+        self: Arc<Self>,
+        _now: Instant,
+        current_mtu: u16,
+        rng: &mut dyn Rng,
+    ) -> Box<dyn Controller> {
+        Box::new(Bbr::new(self, current_mtu, rng))
     }
 }
 
@@ -660,7 +665,8 @@ mod tests {
 
     #[test]
     fn metrics_report_bandwidth_estimate() {
-        let mut bbr = Bbr::new(Arc::new(BbrConfig::default()), 1200);
+        let rng = &mut Pcg32::new(0xcafef00dd15ea5e5, 0xa02bdbf7bb3c0a7);
+        let mut bbr = Bbr::new(Arc::new(BbrConfig::default()), 1200, rng);
         assert_eq!(bbr.metrics().bandwidth_estimate, None);
 
         let start = Instant::now();

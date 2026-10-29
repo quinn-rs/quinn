@@ -300,7 +300,12 @@ impl Default for CubicConfig {
 }
 
 impl ControllerFactory for CubicConfig {
-    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+    fn build(
+        self: Arc<Self>,
+        now: Instant,
+        current_mtu: u16,
+        _rng: &mut dyn rand::Rng,
+    ) -> Box<dyn Controller> {
         Box::new(Cubic::new(self, now, current_mtu))
     }
 }

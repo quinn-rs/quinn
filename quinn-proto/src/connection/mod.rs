@@ -10,7 +10,7 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
 
-use rand::{RngExt, SeedableRng, rngs::StdRng};
+use rand::{CryptoRng, RngExt};
 use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
@@ -134,7 +134,7 @@ use timer::{Timer, TimerTable};
 pub struct Connection {
     endpoint_config: Arc<EndpointConfig>,
     config: Arc<TransportConfig>,
-    rng: StdRng,
+    rng: Box<dyn CryptoRng + Send + Sync>,
     crypto: Box<dyn crypto::Session>,
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
@@ -266,7 +266,7 @@ impl Connection {
             now,
             version,
             allow_mtud,
-            rng_seed,
+            mut rng,
             side_args,
         } = args;
         let pref_addr_cid = side_args.pref_addr_cid();
@@ -282,7 +282,6 @@ impl Connection {
             expected_token: Bytes::new(),
             client_hello: None,
         });
-        let mut rng = StdRng::from_seed(rng_seed);
         let mut this = Self {
             endpoint_config,
             crypto,
@@ -294,7 +293,7 @@ impl Connection {
                 now,
                 if pref_addr_cid.is_some() { 2 } else { 1 },
             ),
-            path: PathData::new(remote, allow_mtud, None, 0, now, &config),
+            path: PathData::new(remote, allow_mtud, None, 0, now, &config, &mut *rng),
             path_counter: 0,
             allow_mtud,
             local_ip,
@@ -1453,7 +1452,7 @@ impl Connection {
     /// faster or reduce loss to settle on optimal values by restarting from the initial
     /// configuration in the [`TransportConfig`].
     pub fn path_changed(&mut self, now: Instant) {
-        self.path.reset(now, &self.config);
+        self.path.reset(now, &self.config, &mut *self.rng);
         self.datagrams().drop_oversized();
     }
 
@@ -3239,6 +3238,7 @@ impl Connection {
                 self.path_counter,
                 now,
                 &self.config,
+                &mut *self.rng,
             )
         };
         new_path.challenge = Some(self.rng.random());
@@ -4045,7 +4045,7 @@ pub(crate) struct ConnectionArgs {
     pub(crate) now: Instant,
     pub(crate) version: u32,
     pub(crate) allow_mtud: bool,
-    pub(crate) rng_seed: [u8; 32],
+    pub(crate) rng: Box<dyn CryptoRng + Send + Sync>,
     pub(crate) side_args: SideArgs,
 }
 
