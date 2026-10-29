@@ -602,7 +602,7 @@ impl QlogConfig {
 
     /// Construct the [`QlogStream`] described by this configuration
     pub fn into_stream(self) -> Option<QlogStream> {
-        use tracing::warn;
+        use crate::log::warn;
 
         let writer = self.writer?;
         let trace = qlog::TraceSeq::new(

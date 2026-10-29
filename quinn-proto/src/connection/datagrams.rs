@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 use thiserror::Error;
-use tracing::{debug, trace};
 
 use super::{Connection, Event};
+use crate::log::{debug, trace};
 use crate::{
     TransportError,
     frame::{Datagram, FrameStruct},

@@ -65,6 +65,8 @@ pub use config::{
 
 pub mod crypto;
 
+mod log;
+
 mod frame;
 use crate::frame::Frame;
 pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram, FrameType};

@@ -2,12 +2,12 @@ use std::collections::hash_map::Entry;
 use std::mem;
 
 use thiserror::Error;
-use tracing::debug;
 
 use super::state::get_or_insert_recv;
 use super::{ClosedStream, Retransmits, ShouldTransmit, StreamId, StreamsState};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
 use crate::connection::streams::state::StreamRecv;
+use crate::log::debug;
 use crate::{TransportError, VarInt, frame};
 
 #[derive(Debug, Default)]

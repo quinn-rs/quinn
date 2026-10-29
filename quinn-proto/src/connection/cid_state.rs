@@ -2,8 +2,8 @@
 use std::collections::VecDeque;
 
 use rustc_hash::FxHashSet;
-use tracing::{debug, trace};
 
+use crate::log::{debug, trace};
 use crate::{Duration, Instant, TransportError, shared::IssuedCid};
 
 /// Local connection ID management

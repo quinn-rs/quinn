@@ -1,8 +1,7 @@
 //! Pacing of packet transmissions.
 
+use crate::log::warn;
 use crate::{Duration, Instant};
-
-use tracing::warn;
 
 /// A simple token-bucket pacer
 ///
