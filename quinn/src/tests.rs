@@ -1509,6 +1509,60 @@ async fn remote_address_monitoring() {
 }
 
 #[tokio::test]
+async fn reset_at_delivers_reliable_data() {
+    let _guard = subscribe();
+    let endpoint = endpoint();
+
+    let (client, server) = tokio::join!(
+        endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap(),
+        async { endpoint.accept().await.unwrap().await }
+    );
+    let client = client.unwrap();
+    let server = server.unwrap();
+    assert!(client.peer_supports_reset_stream_at());
+
+    const MSG: &[u8] = b"header and body";
+    const RELIABLE_SIZE: usize = 6;
+    const ERROR: crate::VarInt = crate::VarInt::from_u32(7);
+    let mut send = client.open_uni().await.unwrap();
+    send.write_all(MSG).await.unwrap();
+    send.reset_at(ERROR, RELIABLE_SIZE as u64).unwrap();
+
+    let mut recv = timeout(Duration::from_secs(5), server.accept_uni())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut header = [0; RELIABLE_SIZE];
+    timeout(Duration::from_secs(5), recv.read_exact(&mut header))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(header, MSG[..RELIABLE_SIZE]);
+    // Data past the reliable size may still arrive if it was sent before the reset
+    let mut rest = Vec::new();
+    let result = loop {
+        let mut buf = [0; 16];
+        match timeout(Duration::from_secs(5), recv.read(&mut buf))
+            .await
+            .unwrap()
+        {
+            Ok(Some(n)) => rest.extend_from_slice(&buf[..n]),
+            result => break result,
+        }
+    };
+    assert!(MSG[RELIABLE_SIZE..].starts_with(&rest));
+    assert_eq!(
+        result,
+        Err(crate::ReadError::Reset {
+            error_code: ERROR,
+            final_size: MSG.len() as u64,
+        })
+    );
+}
+
+#[tokio::test]
 async fn stream_id_flow_control() {
     let _guard = subscribe();
     let mut cfg = TransportConfig::default();

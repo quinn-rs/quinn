@@ -84,8 +84,8 @@ pub use streams::StreamsState;
 #[cfg(not(fuzzing))]
 use streams::StreamsState;
 pub use streams::{
-    Chunks, ClosedStream, FinishError, ReadError, ReadableError, RecvStream, SendStream,
-    ShouldTransmit, StreamEvent, Streams, WriteError, Written,
+    Chunks, ClosedStream, FinishError, ReadError, ReadableError, RecvStream, ResetAtError,
+    SendStream, ShouldTransmit, StreamEvent, Streams, WriteError, Written,
 };
 
 mod timer;
@@ -1314,6 +1314,13 @@ impl Connection {
         Datagrams { conn: self }
     }
 
+    /// Whether the peer accepts reliable stream resets
+    ///
+    /// When `true`, [`SendStream::reset_at()`] may be used.
+    pub fn peer_supports_reset_stream_at(&self) -> bool {
+        self.peer_params.reset_stream_at
+    }
+
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
         let mut stats = self.stats;
@@ -1696,8 +1703,8 @@ impl Connection {
 
         // Update state for confirmed delivery of frames
         if let Some(retransmits) = info.retransmits.get() {
-            for (id, _) in retransmits.reset_stream.iter() {
-                self.streams.reset_acked(*id);
+            for &(id, _, reliable_size) in retransmits.reset_stream.iter() {
+                self.streams.reset_acked(id, reliable_size);
             }
         }
 

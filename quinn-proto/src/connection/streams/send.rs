@@ -98,6 +98,27 @@ impl Send {
         }
     }
 
+    /// Update stream state due to a reliable reset sent by the local application
+    ///
+    /// Data before `reliable_size` is still delivered; the rest is released. Repeating a reliable
+    /// reset shrinks the reliable size and keeps the final size.
+    pub(super) fn reset_at(&mut self, error_code: VarInt, reliable_size: u64) {
+        use SendState::*;
+        let final_size = match self.state {
+            DataSent { .. } | Ready => self.pending.offset(),
+            ResetAtSent { final_size, .. } => final_size,
+            ResetSent => return,
+        };
+        self.state = ResetAtSent {
+            error_code,
+            final_size,
+            reliable_size,
+            reset_acked: false,
+        };
+        self.pending.truncate(reliable_size);
+        self.fin_pending = false;
+    }
+
     /// Handle STOP_SENDING
     ///
     /// Returns true if the stream was stopped due to this frame, and false
@@ -111,13 +132,17 @@ impl Send {
         }
     }
 
-    /// Returns whether the stream has been finished and all data has been acknowledged by the peer
+    /// Returns whether the stream has been finished or reliably reset, and all data that must be
+    /// delivered has been acknowledged by the peer
     pub(super) fn ack(&mut self, frame: frame::StreamMeta) -> bool {
         self.pending.ack(frame.offsets);
         match &mut self.state {
             SendState::DataSent { finish_acked } => {
                 *finish_acked |= frame.fin;
                 *finish_acked && self.pending.is_fully_acked()
+            }
+            SendState::ResetAtSent { reset_acked, .. } => {
+                *reset_acked && self.pending.is_fully_acked()
             }
             _ => false,
         }
@@ -291,6 +316,14 @@ pub(super) enum SendState {
     DataSent { finish_acked: bool },
     /// Sent RESET
     ResetSent,
+    /// Sent RESET_STREAM_AT; now sending retransmits of data before `reliable_size` only
+    ResetAtSent {
+        error_code: VarInt,
+        final_size: u64,
+        reliable_size: u64,
+        /// Whether the peer acknowledged a RESET_STREAM_AT frame carrying `reliable_size`
+        reset_acked: bool,
+    },
 }
 
 /// Reasons why attempting to finish a stream might fail
@@ -305,6 +338,25 @@ pub enum FinishError {
     #[error("stopped by peer: code {0}")]
     Stopped(VarInt),
     /// The stream has not been opened or was already finished or reset
+    #[error("closed stream")]
+    ClosedStream,
+}
+
+/// Reasons why attempting to reliably reset a stream might fail
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ResetAtError {
+    /// The peer did not advertise support for RESET_STREAM_AT
+    #[error("peer does not support RESET_STREAM_AT")]
+    Unsupported,
+    /// The reliable size exceeds the amount of data written to the stream, or the reliable size of
+    /// an earlier reliable reset
+    #[error("reliable size exceeds written data or earlier reliable size")]
+    ReliableSizeTooLarge,
+    /// The error code differs from that of an earlier reliable reset
+    #[error("error code differs from earlier reset")]
+    ErrorCodeChanged,
+    /// The stream has not been opened, was already reset without a reliable size, or has been
+    /// fully acknowledged
     #[error("closed stream")]
     ClosedStream,
 }

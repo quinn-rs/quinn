@@ -587,6 +587,19 @@ impl Connection {
             .max_size()
     }
 
+    /// Whether the peer accepts reliable stream resets
+    ///
+    /// When `true`, [`SendStream::reset_at()`] may be used.
+    ///
+    /// [`SendStream::reset_at()`]: crate::SendStream::reset_at
+    pub fn peer_supports_reset_stream_at(&self) -> bool {
+        self.0
+            .state
+            .lock("peer_supports_reset_stream_at")
+            .inner
+            .peer_supports_reset_stream_at()
+    }
+
     /// Bytes available in the outgoing datagram buffer
     ///
     /// When greater than zero, calling [`send_datagram()`](Self::send_datagram) with a datagram of
