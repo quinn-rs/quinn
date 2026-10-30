@@ -25,6 +25,9 @@ use crate::{
     shared::ConnectionId,
 };
 
+mod initial;
+pub use initial::{InitialDecision, InitialFilter, InitialMetadata, TokenCheck};
+
 mod transport;
 #[cfg(feature = "qlog")]
 pub use transport::QlogConfig;
@@ -209,6 +212,8 @@ pub struct ServerConfig {
     /// Used to generate one-time AEAD keys to protect handshake tokens
     pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
 
+    pub(crate) initial_filter: Option<Arc<dyn InitialFilter>>,
+
     /// Duration after a retry token was issued for which it's considered valid
     pub(crate) retry_token_lifetime: Duration,
 
@@ -239,6 +244,7 @@ impl ServerConfig {
             crypto,
 
             token_key,
+            initial_filter: None,
             retry_token_lifetime: Duration::from_secs(15),
 
             migration: true,
@@ -254,6 +260,14 @@ impl ServerConfig {
 
             time_source: Arc::new(StdSystemTime),
         }
+    }
+
+    /// Set a policy for new Initial packets
+    ///
+    /// None by default. Packets for existing connections never reach it.
+    pub fn initial_filter(&mut self, filter: Arc<dyn InitialFilter>) -> &mut Self {
+        self.initial_filter = Some(filter);
+        self
     }
 
     /// Set a custom [`TransportConfig`]
@@ -410,6 +424,10 @@ impl fmt::Debug for ServerConfig {
         fmt.debug_struct("ServerConfig")
             .field("transport", &self.transport)
             // crypto not debug
+            .field(
+                "initial_filter",
+                &self.initial_filter.as_ref().map(|_| "configured"),
+            )
             // token not debug
             .field("retry_token_lifetime", &self.retry_token_lifetime)
             .field("validation_token", &self.validation_token)

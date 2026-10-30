@@ -126,9 +126,19 @@ pub trait ServerConfig: Send + Sync {
     fn initial_keys(&self, version: u32, dst_cid: ConnectionId)
     -> Result<Keys, UnsupportedVersion>;
 
+    /// Whether this provider supports the QUIC `version`
+    ///
+    /// Lets a caller check the version without deriving Initial keys. Must return true exactly
+    /// when [`Self::initial_keys`] accepts `version`. The default calls `initial_keys`, so override
+    /// it to avoid that cost.
+    fn supports_version(&self, version: u32) -> bool {
+        self.initial_keys(version, ConnectionId::new(&[0; 8]))
+            .is_ok()
+    }
+
     /// Generate the integrity tag for a retry packet
     ///
-    /// Never called if `initial_keys` rejected `version`.
+    /// Called only after `initial_keys` or `supports_version` accepted `version`.
     fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16];
 
     /// Start a server session with this configuration
