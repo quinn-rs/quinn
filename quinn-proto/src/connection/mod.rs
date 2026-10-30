@@ -67,6 +67,8 @@ pub(crate) mod qlog;
 
 mod send_buffer;
 
+#[cfg(feature = "__bench")]
+pub mod bench;
 mod sent_packets;
 mod spaces;
 #[cfg(fuzzing)]
