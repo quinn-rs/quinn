@@ -654,6 +654,100 @@ fn reset_stream() {
 }
 
 #[test]
+fn batched_retirements_preserve_stream_events() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            receive_window: 1u32.into(),
+            max_concurrent_uni_streams: 32u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    let live = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    let mut finished = Vec::new();
+    let mut reset_streams = Vec::new();
+    let mut incoming = Vec::new();
+    let acks = pair.client_conn_mut(client_ch).stats().frame_rx.acks;
+
+    for round in 0..2 {
+        let fin = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+        if round == 0 {
+            // Exhaust connection credit; the peer will leave this byte unread.
+            assert_eq!(pair.client_send(client_ch, fin).write(b"x"), Ok(1));
+        }
+        pair.client_send(client_ch, fin).finish().unwrap();
+        finished.push(fin);
+        assert_eq!(
+            pair.client_send(client_ch, live).write(b"x"),
+            Err(WriteError::Blocked)
+        );
+
+        let reset = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+        assert_eq!(
+            pair.client_send(client_ch, reset).write(b"x"),
+            Err(WriteError::Blocked)
+        );
+        pair.client_send(client_ch, reset)
+            .reset(0u32.into())
+            .unwrap();
+        reset_streams.push(reset);
+
+        // Collect a separate encrypted ACK for each flight, without processing
+        // either ACK or polling application events at the client yet.
+        pair.client_conn_mut(client_ch).immediate_ack();
+        pair.drive_client();
+        pair.drive_server();
+        assert!(!pair.client.inbound.is_empty());
+        incoming.extend(pair.client.inbound.drain(..));
+    }
+
+    assert_eq!(pair.client_conn_mut(client_ch).stats().frame_rx.acks, acks);
+    assert_eq!(pair.client_streams(client_ch).send_streams(), 5);
+    // Process the already-available input batch through handle_event. This drives
+    // transmits and timers too, but does not call Connection::poll.
+    pair.client.inbound.extend(incoming);
+    pair.drive_client();
+    assert!(pair.client_conn_mut(client_ch).stats().frame_rx.acks >= acks + 2);
+    assert_eq!(pair.client_streams(client_ch).send_streams(), 1);
+    for &id in finished.iter().chain(&reset_streams) {
+        assert!(pair.client_send(client_ch, id).stopped().is_err());
+    }
+
+    // Drain the entire batch. Each finished stream must be reported exactly once;
+    // neither the reset streams nor the live blocked writer should produce events.
+    let mut reported = Vec::new();
+    while let Some(event) = pair.client_conn_mut(client_ch).poll() {
+        let Event::Stream(StreamEvent::Finished { id }) = event else {
+            panic!("unexpected event: {event:?}");
+        };
+        reported.push(id);
+    }
+    reported.sort_unstable();
+    assert_eq!(reported, finished);
+
+    // Restoring credit must still wake the surviving writer exactly once.
+    for &id in &finished {
+        let mut recv = pair.server_recv(server_ch, id);
+        let mut chunks = recv.read(true).unwrap();
+        if id == finished[0] {
+            assert_matches!(chunks.next(usize::MAX), Ok(Some(chunk)) if chunk.bytes == b"x"[..]);
+        }
+        assert_matches!(chunks.next(usize::MAX), Ok(None));
+        let _ = chunks.finalize();
+    }
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Stream(StreamEvent::Writable { id })) if id == live
+    );
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_eq!(pair.client_send(client_ch, live).write(b"x"), Ok(1));
+}
+
+#[test]
 fn stop_stream() {
     let _guard = subscribe();
     let mut pair = Pair::default();

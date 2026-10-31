@@ -266,7 +266,6 @@ impl<'a> SendStream<'a> {
             return Err(WriteError::Blocked);
         }
 
-        let was_pending = stream.is_pending();
         let written = match stream.write(source, limit) {
             Ok(written) => written,
             Err(WriteError::Blocked) => {
@@ -281,8 +280,9 @@ impl<'a> SendStream<'a> {
         self.state.data_sent += written.bytes as u64;
         self.state.buffered_data += written.bytes as u64;
         trace!(stream = %self.id, "wrote {} bytes", written.bytes);
-        if !was_pending {
+        if !stream.pending_queue {
             self.state.pending.push_pending(self.id, stream.priority);
+            stream.pending_queue = true;
         }
         Ok(written)
     }
@@ -310,10 +310,10 @@ impl<'a> SendStream<'a> {
             .ok_or(FinishError::ClosedStream)?
             .get_or_insert_with(|| Send::new(max_send_data));
 
-        let was_pending = stream.is_pending();
         stream.finish()?;
-        if !was_pending {
+        if !stream.pending_queue {
             self.state.pending.push_pending(self.id, stream.priority);
+            stream.pending_queue = true;
         }
 
         Ok(())
