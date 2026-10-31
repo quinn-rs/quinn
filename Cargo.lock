@@ -2267,7 +2267,7 @@ dependencies = [
 [[package]]
 name = "rustls-platform-verifier"
 version = "0.8.0"
-source = "git+https://github.com/iadev09/rustls-platform-verifier.git?rev=09e964410fbd8b1bfd2f70cbcdb604a5b7ffb572#09e964410fbd8b1bfd2f70cbcdb604a5b7ffb572"
+source = "git+https://github.com/iadev09/rustls-platform-verifier.git?rev=d4b254f084857bb4451c3b33c5f5a38475e5e860#d4b254f084857bb4451c3b33c5f5a38475e5e860"
 dependencies = [
  "core-foundation",
  "core-foundation-sys",
@@ -2276,7 +2276,6 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
- "rustls-webpki",
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
@@ -2286,7 +2285,7 @@ dependencies = [
 [[package]]
 name = "rustls-platform-verifier-android"
 version = "0.2.0"
-source = "git+https://github.com/iadev09/rustls-platform-verifier.git?rev=09e964410fbd8b1bfd2f70cbcdb604a5b7ffb572#09e964410fbd8b1bfd2f70cbcdb604a5b7ffb572"
+source = "git+https://github.com/iadev09/rustls-platform-verifier.git?rev=d4b254f084857bb4451c3b33c5f5a38475e5e860#d4b254f084857bb4451c3b33c5f5a38475e5e860"
 
 [[package]]
 name = "rustls-ring"
