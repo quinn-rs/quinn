@@ -1,18 +1,24 @@
 use std::{
+    collections::hash_map::Entry,
     future::{Future, poll_fn},
     io,
     pin::{Pin, pin},
+    sync::Arc,
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
 use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
+use tokio::sync::Notify;
 
 use crate::{
     VarInt,
     connection::{ConnectionRef, State},
 };
+
+#[cfg(all(test, any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+mod tests;
 
 /// A stream that can only be used to send data
 ///
@@ -258,19 +264,24 @@ impl SendStream {
                 // otherwise a wakeup could be missed if triggered inbetween releasing the lock
                 // and creating the future.
                 // The lock may only be held in a block without `await`s, otherwise the future
-                // becomes `!Send`. `Notify::notified` is lifetime-bound to `Notify`, therefore
-                // we need to declare `notify` outside of the block, and initialize it inside.
-                let notify;
-                {
-                    let mut conn = conn.state.lock("SendStream::stopped");
-                    if let Some(output) = send_stream_stopped(&mut conn, stream, is_0rtt) {
+                // becomes `!Send`. The registration owns the waiter's only Arc; `Notified`
+                // borrows it and is dropped before the registration on completion or cancellation.
+                let registration;
+                let notified = {
+                    let mut state = conn.state.lock("SendStream::stopped");
+                    if let Some(output) = send_stream_stopped(&mut state, stream, is_0rtt) {
                         return output;
                     }
 
-                    notify = conn.stopped.entry(stream).or_default().clone();
-                    notify.notified()
-                }
-                .await
+                    registration = StoppedRegistration {
+                        conn: &conn,
+                        stream,
+                        notify: Some(state.stopped.entry(stream).or_default().clone()),
+                    };
+                    // Every live registration has a notifier; only `Drop` takes it.
+                    registration.notify.as_ref().unwrap().notified()
+                };
+                notified.await;
             }
         }
     }
@@ -293,6 +304,34 @@ impl SendStream {
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
         pin!(self.get_mut().write(buf)).as_mut().poll(cx)
+    }
+}
+
+/// Owns a single waiter's registration, independently of the stream handle.
+struct StoppedRegistration<'a> {
+    conn: &'a ConnectionRef,
+    stream: StreamId,
+    notify: Option<Arc<Notify>>,
+}
+
+impl Drop for StoppedRegistration<'_> {
+    fn drop(&mut self) {
+        let mut state = self.conn.state.lock("StoppedRegistration::drop");
+        let Some(notify) = self.notify.take() else {
+            return;
+        };
+        // Event delivery can remove an entry before its waiters are dropped.
+        // Only clean up the notifier this waiter actually registered with.
+        if let Entry::Occupied(entry) = state.stopped.entry(self.stream)
+            && Arc::ptr_eq(entry.get(), &notify)
+        {
+            // Release our Arc under the registration lock so concurrent cancellations
+            // cannot both leave the entry for the other waiter to clean up.
+            drop(notify);
+            if Arc::strong_count(entry.get()) == 1 {
+                entry.remove();
+            }
+        }
     }
 }
 
