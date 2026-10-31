@@ -14,7 +14,6 @@ use rand::{
 };
 use rustc_hash::FxHashMap;
 use slab::Slab;
-use thiserror::Error;
 use tracing::{debug, error, trace, warn};
 
 use crate::{
@@ -1404,35 +1403,44 @@ impl Drop for AcceptDropGuard {
 /// Errors in the parameters being used to create a new connection
 ///
 /// These arise before any I/O has been performed.
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectError {
     /// The endpoint can no longer create new connections
     ///
     /// Indicates that a necessary component of the endpoint has been dropped or otherwise disabled.
-    #[error("endpoint stopping")]
     EndpointStopping,
     /// The connection could not be created because not enough of the CID space is available
     ///
     /// Try using longer connection IDs
-    #[error("CIDs exhausted")]
     CidsExhausted,
     /// The given server name was malformed
-    #[error("invalid server name: {0}")]
     InvalidServerName(String),
     /// The remote [`SocketAddr`] supplied was malformed
     ///
     /// Examples include attempting to connect to port 0, or using an inappropriate address family.
-    #[error("invalid remote address: {0}")]
     InvalidRemoteAddress(SocketAddr),
     /// No default client configuration was set up
     ///
     /// Use `Endpoint::connect_with` to specify a client configuration.
-    #[error("no default client config")]
     NoDefaultClientConfig,
     /// The local endpoint does not support the QUIC version specified in the client configuration
-    #[error("unsupported QUIC version")]
     UnsupportedVersion,
 }
+
+impl fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EndpointStopping => f.write_str("endpoint stopping"),
+            Self::CidsExhausted => f.write_str("CIDs exhausted"),
+            Self::InvalidServerName(name) => write!(f, "invalid server name: {name}"),
+            Self::InvalidRemoteAddress(addr) => write!(f, "invalid remote address: {addr}"),
+            Self::NoDefaultClientConfig => f.write_str("no default client config"),
+            Self::UnsupportedVersion => f.write_str("unsupported QUIC version"),
+        }
+    }
+}
+
+impl std::error::Error for ConnectError {}
 
 /// Error type for attempting to accept an [`Incoming`]
 #[derive(Debug)]
@@ -1561,9 +1569,16 @@ impl fmt::Debug for Accepted {
 }
 
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
-#[derive(Debug, Error)]
-#[error("retry() with validated Incoming")]
+#[derive(Debug)]
 pub struct RetryError(Box<Incoming>);
+
+impl fmt::Display for RetryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("retry() with validated Incoming")
+    }
+}
+
+impl std::error::Error for RetryError {}
 
 impl RetryError {
     /// Get the [`Incoming`]

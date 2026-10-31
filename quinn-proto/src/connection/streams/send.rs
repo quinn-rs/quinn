@@ -1,5 +1,6 @@
+use std::fmt;
+
 use bytes::Bytes;
-use thiserror::Error;
 
 use crate::{VarInt, connection::send_buffer::SendBuffer, frame};
 
@@ -260,7 +261,7 @@ pub struct Written {
 }
 
 /// Errors triggered while writing to a send stream
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum WriteError {
     /// The peer is not able to accept additional data, or the connection is congested.
     ///
@@ -268,7 +269,6 @@ pub enum WriteError {
     /// be generated, indicating that retrying the write might succeed.
     ///
     /// [`StreamEvent::Writable`]: crate::StreamEvent::Writable
-    #[error("unable to accept further writes")]
     Blocked,
     /// The peer is no longer accepting data on this stream, and it has been implicitly reset. The
     /// stream cannot be finished or further written to.
@@ -276,12 +276,22 @@ pub enum WriteError {
     /// Carries an application-defined error code.
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
-    #[error("stopped by peer: code {0}")]
     Stopped(VarInt),
     /// The stream has not been opened or has already been finished or reset
-    #[error("closed stream")]
     ClosedStream,
 }
+
+impl fmt::Display for WriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Blocked => f.write_str("unable to accept further writes"),
+            Self::Stopped(code) => write!(f, "stopped by peer: code {code}"),
+            Self::ClosedStream => f.write_str("closed stream"),
+        }
+    }
+}
+
+impl std::error::Error for WriteError {}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(super) enum SendState {
@@ -294,7 +304,7 @@ pub(super) enum SendState {
 }
 
 /// Reasons why attempting to finish a stream might fail
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FinishError {
     /// The peer is no longer accepting data on this stream. No
     /// [`StreamEvent::Finished`] event will be emitted for this stream.
@@ -302,12 +312,21 @@ pub enum FinishError {
     /// Carries an application-defined error code.
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
-    #[error("stopped by peer: code {0}")]
     Stopped(VarInt),
     /// The stream has not been opened or was already finished or reset
-    #[error("closed stream")]
     ClosedStream,
 }
+
+impl fmt::Display for FinishError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stopped(code) => write!(f, "stopped by peer: code {code}"),
+            Self::ClosedStream => f.write_str("closed stream"),
+        }
+    }
+}
+
+impl std::error::Error for FinishError {}
 
 #[cfg(test)]
 mod tests {

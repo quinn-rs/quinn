@@ -1,7 +1,6 @@
 use std::collections::hash_map::Entry;
-use std::mem;
+use std::{fmt, mem};
 
-use thiserror::Error;
 use tracing::debug;
 
 use super::state::get_or_insert_recv;
@@ -398,34 +397,52 @@ enum ChunksState {
 }
 
 /// Errors triggered when reading from a recv stream
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadError {
     /// No more data is currently available on this stream.
     ///
     /// If more data on this stream is received from the peer, an `Event::StreamReadable` will be
     /// generated for this stream, indicating that retrying the read might succeed.
-    #[error("blocked")]
     Blocked,
     /// The peer abandoned transmitting data on this stream.
     ///
     /// Carries an application-defined error code.
-    #[error("reset by peer: code {0}")]
     Reset(VarInt),
 }
 
+impl fmt::Display for ReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Blocked => f.write_str("blocked"),
+            Self::Reset(code) => write!(f, "reset by peer: code {code}"),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
+
 /// Errors triggered when opening a recv stream for reading
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadableError {
     /// The stream has not been opened or was already stopped, finished, or reset
-    #[error("closed stream")]
     ClosedStream,
     /// Attempted an ordered read following an unordered read
     ///
     /// Performing an unordered read allows discontinuities to arise in the receive buffer of a
     /// stream which cannot be recovered, making further ordered reads impossible.
-    #[error("ordered read after unordered read")]
     IllegalOrderedRead,
 }
+
+impl fmt::Display for ReadableError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::ClosedStream => "closed stream",
+            Self::IllegalOrderedRead => "ordered read after unordered read",
+        })
+    }
+}
+
+impl std::error::Error for ReadableError {}
 
 impl From<IllegalOrderedRead> for ReadableError {
     fn from(_: IllegalOrderedRead) -> Self {

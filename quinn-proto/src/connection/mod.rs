@@ -11,7 +11,6 @@ use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
 
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
@@ -4093,38 +4092,53 @@ impl SideArgs {
 }
 
 /// Reasons why a connection might be lost
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionError {
     /// The peer doesn't implement any supported version
-    #[error("peer doesn't implement any supported version")]
     VersionMismatch,
     /// The peer violated the QUIC specification as understood by this implementation
-    #[error(transparent)]
-    TransportError(#[from] TransportError),
+    TransportError(TransportError),
     /// The peer's QUIC stack aborted the connection automatically
-    #[error("aborted by peer: {0}")]
     ConnectionClosed(frame::ConnectionClose),
     /// The peer closed the connection
-    #[error("closed by peer: {0}")]
     ApplicationClosed(frame::ApplicationClose),
     /// The peer is unable to continue processing this connection, usually due to having restarted
-    #[error("reset by peer")]
     Reset,
     /// Communication with the peer has lapsed for longer than the negotiated idle timeout
     ///
     /// If neither side is sending keep-alives, a connection will time out after a long enough idle
     /// period even if the peer is still reachable. See also [`TransportConfig::max_idle_timeout()`]
     /// and [`TransportConfig::keep_alive_interval()`].
-    #[error("timed out")]
     TimedOut,
     /// The local application closed the connection
-    #[error("closed")]
     LocallyClosed,
     /// The connection could not be created because not enough of the CID space is available
     ///
     /// Try using longer connection IDs.
-    #[error("CIDs exhausted")]
     CidsExhausted,
+}
+
+impl fmt::Display for ConnectionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::VersionMismatch => f.write_str("peer doesn't implement any supported version"),
+            Self::TransportError(e) => fmt::Display::fmt(e, f),
+            Self::ConnectionClosed(reason) => write!(f, "aborted by peer: {reason}"),
+            Self::ApplicationClosed(reason) => write!(f, "closed by peer: {reason}"),
+            Self::Reset => f.write_str("reset by peer"),
+            Self::TimedOut => f.write_str("timed out"),
+            Self::LocallyClosed => f.write_str("closed"),
+            Self::CidsExhausted => f.write_str("CIDs exhausted"),
+        }
+    }
+}
+
+impl std::error::Error for ConnectionError {}
+
+impl From<TransportError> for ConnectionError {
+    fn from(e: TransportError) -> Self {
+        Self::TransportError(e)
+    }
 }
 
 impl From<Close> for ConnectionError {

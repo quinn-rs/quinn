@@ -9,7 +9,6 @@ use std::{
 use rustls::client::WebPkiServerVerifier;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use thiserror::Error;
 
 #[cfg(feature = "bloom")]
 use crate::BloomTokenLog;
@@ -646,13 +645,22 @@ impl fmt::Debug for ClientConfig {
 }
 
 /// Errors in the configuration of an endpoint
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConfigError {
     /// Value exceeds supported bounds
-    #[error("value exceeds supported bounds")]
     OutOfBounds,
 }
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OutOfBounds => f.write_str("value exceeds supported bounds"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
 
 impl From<TryFromIntError> for ConfigError {
     fn from(_: TryFromIntError) -> Self {
