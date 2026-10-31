@@ -37,7 +37,7 @@ ring = "0.17"
 rustc-hash = "2"
 rustls = { version = "0.24.0-dev.2", git = "https://github.com/rustls/rustls.git", branch = "main", default-features = false, features = ["webpki"] }
 rustls-aws-lc-rs = { version = "0.24.0-dev.2", git = "https://github.com/rustls/rustls.git", branch = "main", default-features = false, features = ["aws-lc-sys", "std"] }
-rustls-platform-verifier = { version = "0.8.0", git = "https://github.com/iadev09/rustls-platform-verifier.git", rev = "09e964410fbd8b1bfd2f70cbcdb604a5b7ffb572", default-features = false }
+rustls-platform-verifier = { version = "0.8.0", git = "https://github.com/iadev09/rustls-platform-verifier.git", rev = "d4b254f084857bb4451c3b33c5f5a38475e5e860", default-features = false }
 rustls-ring = { version = "0.24.0-dev.2", git = "https://github.com/rustls/rustls.git", branch = "main", default-features = false, features = ["std"] }
 rustls-util = { version = "0.24.0-dev.2", git = "https://github.com/rustls/rustls.git", branch = "main" }
 rustls-pki-types = "1.7"
