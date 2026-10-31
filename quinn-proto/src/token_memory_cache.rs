@@ -7,8 +7,8 @@ use std::{
 
 use bytes::Bytes;
 use lru_slab::LruSlab;
-use tracing::trace;
 
+use crate::log::trace;
 use crate::token::TokenStore;
 
 /// `TokenStore` implementation that stores up to `N` tokens per server name for up to a

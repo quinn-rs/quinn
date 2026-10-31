@@ -8,8 +8,8 @@ use std::{
 
 use fastbloom::BloomFilter;
 use rustc_hash::FxBuildHasher;
-use tracing::{trace, warn};
 
+use crate::log::{trace, warn};
 use crate::{Duration, SystemTime, TokenLog, TokenReuseError, UNIX_EPOCH};
 
 /// Bloom filter-based [`TokenLog`]

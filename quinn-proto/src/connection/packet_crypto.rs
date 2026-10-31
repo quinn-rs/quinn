@@ -1,8 +1,7 @@
-use tracing::{debug, trace};
-
 use crate::Instant;
 use crate::connection::spaces::PacketSpace;
 use crate::crypto::{HeaderKey, KeyPair, PacketKey};
+use crate::log::{debug, trace};
 use crate::packet::{Packet, PartialDecode, SpaceId};
 use crate::token::ResetToken;
 use crate::{RESET_TOKEN_SIZE, TransportError};

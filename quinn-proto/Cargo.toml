@@ -13,7 +13,7 @@ workspace = ".."
 [features]
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.
-default = ["rustls-ring", "tracing-log", "bloom"]
+default = ["rustls-ring", "tracing", "tracing-log", "bloom"]
 aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
 aws-lc-rs-fips = ["aws-lc-rs", "aws-lc-rs?/fips"]
 # Enables BloomTokenLog, and uses it by default
@@ -29,8 +29,10 @@ ring = ["dep:ring"]
 # Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["dep:rustls-platform-verifier"]
+# Emit diagnostics through `tracing`
+tracing = ["dep:tracing"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
-tracing-log = ["tracing/log"]
+tracing-log = ["tracing", "tracing/log"]
 # Enable rustls logging
 rustls-log = ["rustls?/logging"]
 # Enable qlog support
@@ -57,7 +59,7 @@ rustls-platform-verifier = { workspace = true, optional = true }
 slab = { workspace = true }
 thiserror = { workspace = true }
 tinyvec = { workspace = true, features = ["alloc"] }
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 
 # Feature flags & dependencies for wasm
 # wasm-bindgen is assumed for a wasm*-*-unknown target
@@ -71,6 +73,7 @@ web-time = { workspace = true }
 assert_matches = { workspace = true }
 hex-literal = { workspace = true  }
 rcgen = { workspace = true }
+tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 wasm-bindgen-test = { workspace = true }
 

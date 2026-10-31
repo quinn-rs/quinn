@@ -7,10 +7,10 @@ use std::{
 
 use rand::{Rng, RngExt};
 use rustc_hash::FxHashSet;
-use tracing::trace;
 
 use super::assembler::Assembler;
 use super::sent_packets::SentPackets;
+use crate::log::trace;
 use crate::{
     Dir, Duration, Instant, SocketAddr, StreamId, TransportError, VarInt, cid_queue::CidQueue,
     connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,

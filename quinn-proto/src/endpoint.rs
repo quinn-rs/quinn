@@ -15,8 +15,8 @@ use rand::{
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
-use tracing::{debug, error, trace, warn};
 
+use crate::log::{debug, error, trace, warn};
 use crate::{
     Duration, INITIAL_MTU, Instant, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, ResetToken,
     Side, Transmit, TransportConfig, TransportError,

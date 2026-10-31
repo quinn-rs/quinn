@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use rand::RngExt;
-use tracing::{debug, trace, trace_span};
 
 use super::{Connection, SentFrames, spaces::SentPacket};
+use crate::log::{debug, trace, trace_span};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
@@ -24,7 +24,7 @@ pub(super) struct PacketBuilder {
     /// frames
     pub(super) max_size: usize,
     pub(super) tag_len: usize,
-    pub(super) _span: tracing::span::EnteredSpan,
+    pub(super) _span: crate::log::EnteredSpan,
 }
 
 impl PacketBuilder {

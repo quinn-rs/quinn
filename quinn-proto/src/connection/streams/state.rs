@@ -6,12 +6,12 @@ use std::{
 
 use bytes::BufMut;
 use rustc_hash::FxHashMap;
-use tracing::{debug, trace};
 
 use super::{
     PendingStreamsQueue, Recv, Retransmits, Send, SendState, ShouldTransmit, StreamEvent,
     StreamHalf, ThinRetransmits,
 };
+use crate::log::{debug, trace};
 use crate::{
     Dir, MAX_STREAM_COUNT, Side, StreamId, TransportError, VarInt,
     coding::BufMutExt,

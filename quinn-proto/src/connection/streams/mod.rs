@@ -5,9 +5,9 @@ use std::{
 
 use bytes::Bytes;
 use thiserror::Error;
-use tracing::trace;
 
 use super::spaces::{Retransmits, ThinRetransmits};
+use crate::log::trace;
 use crate::{Dir, StreamId, VarInt, connection::streams::state::get_or_insert_recv, frame};
 
 mod recv;

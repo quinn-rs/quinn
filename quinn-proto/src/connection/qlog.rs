@@ -15,9 +15,9 @@ use qlog::{
     },
     streamer::QlogStreamer,
 };
-#[cfg(feature = "qlog")]
-use tracing::warn;
 
+#[cfg(feature = "qlog")]
+use crate::log::warn;
 use crate::{
     ConnectionId, Instant,
     connection::{PathData, SentPacket},

@@ -12,8 +12,8 @@ use frame::StreamMetaVec;
 
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use thiserror::Error;
-use tracing::{debug, error, trace, trace_span, warn};
 
+use crate::log::{debug, error, trace, trace_span, warn};
 use crate::{
     Dir, Duration, EndpointConfig, Frame, Instant, MAX_CID_SIZE, MAX_STREAM_COUNT,
     MIN_INITIAL_SIZE, Side, StreamId, TIMER_GRANULARITY, TokenStore, Transmit, TransportError,

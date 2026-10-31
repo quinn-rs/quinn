@@ -1,12 +1,11 @@
 use std::{cmp, net::SocketAddr};
 
-use tracing::trace;
-
 use super::{
     mtud::MtuDiscovery,
     pacing::Pacer,
     spaces::{PacketSpace, SentPacket},
 };
+use crate::log::trace;
 use crate::{Duration, Instant, TIMER_GRANULARITY, TransportConfig, congestion, packet::SpaceId};
 
 #[cfg(feature = "qlog")]
