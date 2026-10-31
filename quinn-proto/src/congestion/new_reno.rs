@@ -168,7 +168,12 @@ impl Default for NewRenoConfig {
 }
 
 impl ControllerFactory for NewRenoConfig {
-    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+    fn build(
+        self: Arc<Self>,
+        now: Instant,
+        current_mtu: u16,
+        _rng: &mut dyn rand::Rng,
+    ) -> Box<dyn Controller> {
         Box::new(NewReno::new(self, now, current_mtu))
     }
 }

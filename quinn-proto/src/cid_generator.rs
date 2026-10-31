@@ -1,8 +1,14 @@
 use std::hash::Hasher;
 
-use rand::{Rng, RngExt};
+use rand::{CryptoRng, Rng, RngExt};
+#[cfg(feature = "system-rng")]
+use rand::{
+    SeedableRng,
+    rngs::{StdRng, SysRng},
+};
 
 use crate::Duration;
+#[cfg(feature = "system-rng")]
 use crate::MAX_CID_SIZE;
 use crate::shared::ConnectionId;
 
@@ -40,12 +46,14 @@ pub struct InvalidCid;
 ///
 /// Random CIDs can be smaller than those produced by [`HashedConnectionIdGenerator`], but cannot be
 /// usefully [`validate`](ConnectionIdGenerator::validate)d.
+#[cfg(feature = "system-rng")]
 #[derive(Debug, Clone, Copy)]
 pub struct RandomConnectionIdGenerator {
     cid_len: usize,
     lifetime: Option<Duration>,
 }
 
+#[cfg(feature = "system-rng")]
 impl Default for RandomConnectionIdGenerator {
     fn default() -> Self {
         Self {
@@ -55,6 +63,7 @@ impl Default for RandomConnectionIdGenerator {
     }
 }
 
+#[cfg(feature = "system-rng")]
 impl RandomConnectionIdGenerator {
     /// Initialize Random CID generator with a fixed CID length
     ///
@@ -74,6 +83,7 @@ impl RandomConnectionIdGenerator {
     }
 }
 
+#[cfg(feature = "system-rng")]
 impl ConnectionIdGenerator for RandomConnectionIdGenerator {
     fn generate_cid(&mut self) -> ConnectionId {
         let mut bytes_arr = [0; MAX_CID_SIZE];
@@ -100,10 +110,12 @@ impl ConnectionIdGenerator for RandomConnectionIdGenerator {
 pub struct HashedConnectionIdGenerator {
     key: u64,
     lifetime: Option<Duration>,
+    rng: Box<dyn CryptoRng + Send + Sync>,
 }
 
 impl HashedConnectionIdGenerator {
     /// Create a generator with a random key
+    #[cfg(feature = "system-rng")]
     pub fn new() -> Self {
         Self::from_key(rand::rng().random())
     }
@@ -112,10 +124,24 @@ impl HashedConnectionIdGenerator {
     ///
     /// Allows [`validate`](ConnectionIdGenerator::validate) to recognize a consistent set of
     /// connection IDs across restarts
+    #[cfg(feature = "system-rng")]
     pub fn from_key(key: u64) -> Self {
+        let rng = StdRng::try_from_rng(&mut SysRng)
+            .expect("failed to seed random number generator from system");
+        Self::from_key_and_rng(key, Box::new(rng))
+    }
+
+    /// Create a generator whose key and nonces come from `rng`
+    pub fn from_rng(mut rng: Box<dyn CryptoRng + Send + Sync>) -> Self {
+        Self::from_key_and_rng(rng.random(), rng)
+    }
+
+    /// Create a generator with a specific key whose nonces come from `rng`
+    pub fn from_key_and_rng(key: u64, rng: Box<dyn CryptoRng + Send + Sync>) -> Self {
         Self {
             key,
             lifetime: None,
+            rng,
         }
     }
 
@@ -126,6 +152,7 @@ impl HashedConnectionIdGenerator {
     }
 }
 
+#[cfg(feature = "system-rng")]
 impl Default for HashedConnectionIdGenerator {
     fn default() -> Self {
         Self::new()
@@ -135,7 +162,7 @@ impl Default for HashedConnectionIdGenerator {
 impl ConnectionIdGenerator for HashedConnectionIdGenerator {
     fn generate_cid(&mut self) -> ConnectionId {
         let mut bytes_arr = [0; NONCE_LEN + SIGNATURE_LEN];
-        rand::rng().fill_bytes(&mut bytes_arr[..NONCE_LEN]);
+        self.rng.fill_bytes(&mut bytes_arr[..NONCE_LEN]);
         let mut hasher = rustc_hash::FxHasher::default();
         hasher.write_u64(self.key);
         hasher.write(&bytes_arr[..NONCE_LEN]);
@@ -167,7 +194,7 @@ impl ConnectionIdGenerator for HashedConnectionIdGenerator {
 const NONCE_LEN: usize = 3; // Good for more than 16 million connections
 const SIGNATURE_LEN: usize = 8 - NONCE_LEN; // 8-byte total CID length
 
-#[cfg(test)]
+#[cfg(all(test, feature = "system-rng"))]
 mod tests {
     use super::*;
 

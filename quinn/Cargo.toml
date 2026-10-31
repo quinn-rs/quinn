@@ -76,7 +76,7 @@ anyhow = { workspace = true }
 crc = { workspace = true }
 bencher = { workspace = true }
 directories-next = { workspace = true }
-rand = { workspace = true }
+rand = { workspace = true, features = ["default"] }
 rcgen = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "macros", "test-util"] }

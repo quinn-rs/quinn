@@ -7,6 +7,8 @@ use super::{
     pacing::Pacer,
     spaces::{PacketSpace, SentPacket},
 };
+use rand::Rng;
+
 use crate::{Duration, Instant, TIMER_GRANULARITY, TransportConfig, congestion, packet::SpaceId};
 
 #[cfg(feature = "qlog")]
@@ -62,11 +64,13 @@ impl PathData {
         generation: u64,
         now: Instant,
         config: &TransportConfig,
+        rng: &mut dyn Rng,
     ) -> Self {
-        let congestion = config
-            .congestion_controller_factory
-            .clone()
-            .build(now, config.get_initial_mtu());
+        let congestion =
+            config
+                .congestion_controller_factory
+                .clone()
+                .build(now, config.get_initial_mtu(), rng);
         Self {
             remote,
             rtt: RttEstimator::new(config.initial_rtt),
@@ -146,12 +150,13 @@ impl PathData {
     /// Resets RTT, congestion control, pacing and MTU states.
     ///
     /// This is useful when it is known the underlying path has changed.
-    pub(super) fn reset(&mut self, now: Instant, config: &TransportConfig) {
+    pub(super) fn reset(&mut self, now: Instant, config: &TransportConfig, rng: &mut dyn Rng) {
         self.rtt = RttEstimator::new(config.initial_rtt);
-        self.congestion = config
-            .congestion_controller_factory
-            .clone()
-            .build(now, config.get_initial_mtu());
+        self.congestion =
+            config
+                .congestion_controller_factory
+                .clone()
+                .build(now, config.get_initial_mtu(), rng);
         self.mtud.reset(config.get_initial_mtu(), config.min_mtu);
         self.pacing = Pacer::new(
             self.rtt.get(),
@@ -484,7 +489,8 @@ mod tests {
         let now = Instant::now();
         let config = TransportConfig::default();
         let remote = "203.0.113.1:4433".parse().unwrap();
-        let mut path = PathData::new(remote, true, None, 0, now, &config);
+        let rng = &mut rand_pcg::Pcg32::new(0xcafef00dd15ea5e5, 0xa02bdbf7bb3c0a7);
+        let mut path = PathData::new(remote, true, None, 0, now, &config, rng);
         let mtu = path.current_mtu();
         let window = path.congestion.window();
 
@@ -504,7 +510,7 @@ mod tests {
                 .is_some()
         );
 
-        path.reset(now, &config);
+        path.reset(now, &config, rng);
 
         assert_eq!(
             path.pacing.delay(

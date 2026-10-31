@@ -17,10 +17,17 @@ use crate::BloomTokenLog;
 use crate::NoneTokenLog;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
+use rand::CryptoRng;
+#[cfg(feature = "system-rng")]
+use rand::{
+    SeedableRng,
+    rngs::{StdRng, SysRng},
+};
+
 use crate::{
-    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
-    TokenLog, TokenMemoryCache, TokenStore, VarInt, VarIntBoundsExceeded,
-    cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
+    DEFAULT_SUPPORTED_VERSIONS, Duration, SystemTime, TokenLog, TokenMemoryCache, TokenStore,
+    VarInt, VarIntBoundsExceeded,
+    cid_generator::ConnectionIdGenerator,
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
 };
@@ -41,28 +48,34 @@ pub struct EndpointConfig {
     ///
     /// Create a cid generator for local cid in Endpoint struct
     pub(crate) connection_id_generator_factory:
-        Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
+        Option<Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>>,
     pub(crate) supported_versions: Vec<u32>,
     pub(crate) grease_quic_bit: bool,
     /// Minimum interval between outgoing stateless reset packets
     pub(crate) min_reset_interval: Duration,
     /// Optional seed to be used internally for random number generation
     pub(crate) rng_seed: Option<[u8; 32]>,
+    pub(crate) rng_factory: Arc<dyn RngFactory>,
 }
 
 impl EndpointConfig {
     /// Create a default config with a particular `reset_key`
+    #[cfg(feature = "system-rng")]
     pub fn new(reset_key: Arc<dyn HmacKey>) -> Self {
-        let cid_factory =
-            || -> Box<dyn ConnectionIdGenerator> { Box::<HashedConnectionIdGenerator>::default() };
+        Self::with_rng_factory(reset_key, Arc::new(SystemRngFactory))
+    }
+
+    /// Create a default config with a particular `reset_key` and [`RngFactory`]
+    pub fn with_rng_factory(reset_key: Arc<dyn HmacKey>, rng_factory: Arc<dyn RngFactory>) -> Self {
         Self {
             reset_key,
             max_udp_payload_size: (1500u32 - 28).into(), // Ethernet MTU minus IP + UDP headers
-            connection_id_generator_factory: Arc::new(cid_factory),
+            connection_id_generator_factory: None,
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
             grease_quic_bit: true,
             min_reset_interval: Duration::from_millis(20),
             rng_seed: None,
+            rng_factory,
         }
     }
 
@@ -73,12 +86,12 @@ impl EndpointConfig {
     /// connections involving that  `Endpoint`. A custom CID generator allows applications to embed
     /// information in local connection IDs, e.g. to support stateless packet-level load balancers.
     ///
-    /// Defaults to [`HashedConnectionIdGenerator`].
+    /// Defaults to [`HashedConnectionIdGenerator`](crate::HashedConnectionIdGenerator).
     pub fn cid_generator(
         &mut self,
         factory: Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
     ) -> &mut Self {
-        self.connection_id_generator_factory = factory;
+        self.connection_id_generator_factory = Some(factory);
         self
     }
 
@@ -151,13 +164,48 @@ impl EndpointConfig {
 
     /// Optional seed to be used internally for random number generation
     ///
-    /// By default, quinn will initialize an endpoint's rng using a platform entropy source.
+    /// By default, quinn will initialize an endpoint's rng with [`RngFactory::endpoint_rng`].
     /// However, you can seed the rng yourself through this method (e.g. if you need to run quinn
-    /// deterministically or if you are using quinn in an environment that doesn't have a source of
-    /// entropy available).
+    /// deterministically); the endpoint then uses [`RngFactory::rng_from_seed`].
     pub fn rng_seed(&mut self, seed: Option<[u8; 32]>) -> &mut Self {
         self.rng_seed = seed;
         self
+    }
+
+    /// Set the factory that builds the random number generators of endpoints and connections
+    pub fn rng_factory(&mut self, factory: Arc<dyn RngFactory>) -> &mut Self {
+        self.rng_factory = factory;
+        self
+    }
+}
+
+/// Builds the random number generators of endpoints and connections
+///
+/// quinn-proto draws every random value from generators that this factory builds.
+pub trait RngFactory: Send + Sync {
+    /// Build the generator of a new [`Endpoint`](crate::Endpoint)
+    ///
+    /// Generators returned by separate calls must produce independent streams.
+    fn endpoint_rng(&self) -> Box<dyn CryptoRng + Send + Sync>;
+
+    /// Build a generator from a 32-byte seed
+    fn rng_from_seed(&self, seed: [u8; 32]) -> Box<dyn CryptoRng + Send + Sync>;
+}
+
+#[cfg(feature = "system-rng")]
+struct SystemRngFactory;
+
+#[cfg(feature = "system-rng")]
+impl RngFactory for SystemRngFactory {
+    fn endpoint_rng(&self) -> Box<dyn CryptoRng + Send + Sync> {
+        Box::new(
+            StdRng::try_from_rng(&mut SysRng)
+                .expect("failed to seed random number generator from system"),
+        )
+    }
+
+    fn rng_from_seed(&self, seed: [u8; 32]) -> Box<dyn CryptoRng + Send + Sync> {
+        Box::new(StdRng::from_seed(seed))
     }
 }
 
@@ -557,7 +605,7 @@ pub struct ClientConfig {
     pub(crate) token_store: Arc<dyn TokenStore>,
 
     /// Provider that populates the destination connection ID of Initial Packets
-    pub(crate) initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
+    pub(crate) initial_dst_cid_provider: Option<Arc<dyn Fn() -> ConnectionId + Send + Sync>>,
 
     /// QUIC protocol version to use
     pub(crate) version: u32,
@@ -570,9 +618,7 @@ impl ClientConfig {
             transport: Default::default(),
             crypto,
             token_store: Arc::new(TokenMemoryCache::default()),
-            initial_dst_cid_provider: Arc::new(|| {
-                RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
-            }),
+            initial_dst_cid_provider: None,
             version: 1,
         }
     }
@@ -589,7 +635,7 @@ impl ClientConfig {
         &mut self,
         initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
     ) -> &mut Self {
-        self.initial_dst_cid_provider = initial_dst_cid_provider;
+        self.initial_dst_cid_provider = Some(initial_dst_cid_provider);
         self
     }
 

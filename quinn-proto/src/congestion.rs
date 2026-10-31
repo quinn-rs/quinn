@@ -2,6 +2,7 @@
 
 use crate::Instant;
 use crate::connection::RttEstimator;
+use rand::Rng;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -110,7 +111,14 @@ pub struct ControllerMetrics {
 /// Constructs controllers on demand
 pub trait ControllerFactory {
     /// Construct a fresh `Controller`
-    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller>;
+    ///
+    /// `rng` is the connection's random number generator.
+    fn build(
+        self: Arc<Self>,
+        now: Instant,
+        current_mtu: u16,
+        rng: &mut dyn Rng,
+    ) -> Box<dyn Controller>;
 }
 
 const BASE_DATAGRAM_SIZE: u64 = 1200;

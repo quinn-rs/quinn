@@ -828,7 +828,7 @@ mod test {
     #[test]
     fn reserved_transport_parameter_ignored_when_read() {
         let mut buf = Vec::new();
-        let reserved_parameter = ReservedTransportParameter::random(&mut rand::rng());
+        let reserved_parameter = ReservedTransportParameter::random(&mut StepRng(0x1234_5678));
         assert!(reserved_parameter.payload_len < ReservedTransportParameter::MAX_PAYLOAD_LEN);
         assert!(reserved_parameter.id.0 % 31 == 27);
 

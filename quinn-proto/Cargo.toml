@@ -14,7 +14,7 @@ workspace = ".."
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.
 default = ["rustls-ring", "tracing-log", "bloom"]
-aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
+aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm", "system-rng"]
 aws-lc-rs-fips = ["aws-lc-rs", "aws-lc-rs?/fips"]
 # Enables BloomTokenLog, and uses it by default
 bloom = ["dep:fastbloom"]
@@ -25,10 +25,13 @@ rustls-aws-lc-rs = ["dep:rustls", "rustls?/aws-lc-rs", "aws-lc-rs"]
 rustls-aws-lc-rs-fips = ["rustls-aws-lc-rs", "aws-lc-rs-fips"]
 # Enable rustls with the `ring` crypto provider
 rustls-ring = ["dep:rustls", "rustls?/ring", "ring"]
-ring = ["dep:ring"]
+ring = ["dep:ring", "system-rng"]
 # Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["dep:rustls-platform-verifier"]
+# Seed random number generators from the operating system, and provide the constructors that do so.
+# Without this feature, every random value comes from the `RngFactory` an `EndpointConfig` names.
+system-rng = ["rand/std_rng", "rand/sys_rng", "rand/thread_rng", "dep:getrandom"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 tracing-log = ["tracing/log"]
 # Enable rustls logging
@@ -63,7 +66,7 @@ tracing = { workspace = true }
 # wasm-bindgen is assumed for a wasm*-*-unknown target
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 ring = { workspace = true, features = ["wasm32_unknown_unknown_js"], optional = true }
-getrandom = { workspace = true, features = ["wasm_js"] }
+getrandom = { workspace = true, features = ["wasm_js"], optional = true }
 rustls-pki-types = { workspace = true, features = ["web"] } # only added as dependency to enforce the `web` feature for this target
 web-time = { workspace = true }
 

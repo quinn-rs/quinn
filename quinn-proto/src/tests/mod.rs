@@ -36,6 +36,7 @@ use crate::{
 mod util;
 use util::*;
 
+mod rng;
 mod token;
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
@@ -150,7 +151,7 @@ fn version_negotiate_client() {
         || Box::new(RandomConnectionIdGenerator::new(0));
     let mut client = Endpoint::new(
         Arc::new(EndpointConfig {
-            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            connection_id_generator_factory: Some(Arc::new(cid_generator_factory)),
             ..Default::default()
         }),
         None,
@@ -266,6 +267,7 @@ fn stats_include_congestion_controller_bandwidth_estimate() {
             self: Arc<Self>,
             _now: Instant,
             _current_mtu: u16,
+            _rng: &mut dyn Rng,
         ) -> Box<dyn congestion::Controller> {
             Box::new(TestController)
         }
@@ -2421,7 +2423,7 @@ fn zero_length_cid() {
         || Box::new(RandomConnectionIdGenerator::new(0));
     let mut pair = Pair::new(
         Arc::new(EndpointConfig {
-            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            connection_id_generator_factory: Some(Arc::new(cid_generator_factory)),
             ..EndpointConfig::default()
         }),
         server_config(),
@@ -2481,7 +2483,7 @@ fn cid_rotation() {
     // Only test cid rotation on server side to have a clear output trace
     let server = Endpoint::new(
         Arc::new(EndpointConfig {
-            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            connection_id_generator_factory: Some(Arc::new(cid_generator_factory)),
             ..EndpointConfig::default()
         }),
         Some(Arc::new(server_config())),

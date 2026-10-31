@@ -8,10 +8,7 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::{
-    Rng, RngExt, SeedableRng,
-    rngs::{StdRng, SysRng},
-};
+use rand::{CryptoRng, Rng, RngExt};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
@@ -20,7 +17,7 @@ use tracing::{debug, error, trace, warn};
 use crate::{
     Duration, INITIAL_MTU, Instant, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, ResetToken,
     Side, Transmit, TransportConfig, TransportError,
-    cid_generator::ConnectionIdGenerator,
+    cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionArgs, ConnectionError, SideArgs},
@@ -43,7 +40,7 @@ use crate::{
 /// This object performs no I/O whatsoever. Instead, it consumes incoming packets and
 /// connection-generated events via `handle` and `handle_event`.
 pub struct Endpoint {
-    rng: StdRng,
+    rng: Box<dyn CryptoRng + Send + Sync>,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
@@ -64,22 +61,26 @@ impl Endpoint {
     /// `allow_mtud` enables path MTU detection when requested by `Connection` configuration for
     /// better performance. This requires that outgoing packets are never fragmented, which can be
     /// achieved via e.g. the `IPV6_DONTFRAG` socket option.
-    ///
-    /// Returns an error if the endpoint cannot be seeded from the operating system random source.
     pub fn new(
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
     ) -> Self {
+        let mut rng = match config.rng_seed {
+            Some(seed) => config.rng_factory.rng_from_seed(seed),
+            None => config.rng_factory.endpoint_rng(),
+        };
+        let local_cid_generator = match &config.connection_id_generator_factory {
+            Some(factory) => factory(),
+            None => Box::new(HashedConnectionIdGenerator::from_rng(
+                config.rng_factory.rng_from_seed(seed(&mut rng)),
+            )),
+        };
         Self {
-            rng: match config.rng_seed {
-                Some(seed) => StdRng::from_seed(seed),
-                None => StdRng::try_from_rng(&mut SysRng)
-                    .expect("failed to seed random number generator from system"),
-            },
+            rng,
             index: ConnectionIndex::default(),
             connections: Slab::new(),
-            local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
+            local_cid_generator,
             config,
             server_config,
             allow_mtud,
@@ -348,7 +349,14 @@ impl Endpoint {
             return Err(ConnectError::UnsupportedVersion);
         }
 
-        let remote_id = (config.initial_dst_cid_provider)();
+        let remote_id = match &config.initial_dst_cid_provider {
+            Some(provider) => provider(),
+            None => {
+                let mut bytes = [0; MAX_CID_SIZE];
+                self.rng.fill_bytes(&mut bytes);
+                ConnectionId::new(&bytes)
+            }
+        };
         trace!(initial_dcid = %remote_id);
 
         let ch = ConnectionHandle(self.connections.vacant_key());
@@ -690,8 +698,7 @@ impl Endpoint {
         } = incoming;
         improper_drop_warner.dismiss();
 
-        let mut rng_seed = [0; 32];
-        self.rng.fill_bytes(&mut rng_seed);
+        let rng = self.config.rng_factory.rng_from_seed(seed(&mut self.rng));
         let server_crypto = server_config.crypto.clone();
         let args = ConnectionArgs {
             endpoint_config: self.config.clone(),
@@ -706,7 +713,7 @@ impl Endpoint {
             now: received_at,
             version,
             allow_mtud: self.allow_mtud,
-            rng_seed,
+            rng,
             side_args: SideArgs::Server {
                 server_config,
                 pref_addr_cid,
@@ -927,8 +934,7 @@ impl Endpoint {
         transport_config: Arc<TransportConfig>,
         side_args: SideArgs,
     ) -> Connection {
-        let mut rng_seed = [0; 32];
-        self.rng.fill_bytes(&mut rng_seed);
+        let rng = self.config.rng_factory.rng_from_seed(seed(&mut self.rng));
         let side = side_args.side();
         let pref_addr_cid = side_args.pref_addr_cid();
         let conn = Connection::new(
@@ -946,7 +952,7 @@ impl Endpoint {
                 now,
                 version,
                 allow_mtud: self.allow_mtud,
-                rng_seed,
+                rng,
                 side_args,
             },
         );
@@ -1105,10 +1111,15 @@ impl Endpoint {
     }
 }
 
+fn seed(rng: &mut (impl Rng + ?Sized)) -> [u8; 32] {
+    let mut seed = [0; 32];
+    rng.fill_bytes(&mut seed);
+    seed
+}
+
 impl fmt::Debug for Endpoint {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint")
-            .field("rng", &self.rng)
             .field("index", &self.index)
             .field("connections", &self.connections)
             .field("config", &self.config)
