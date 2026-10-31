@@ -1314,6 +1314,52 @@ fn alpn_success() {
 }
 
 #[test]
+fn alpn_after_hello_retry() {
+    let _guard = subscribe();
+    const ALPN: &[u8] = b"foo";
+    // A server without the group the client sent a key share for asks for a new
+    // ClientHello, and picks the protocol only from that one
+    let mut provider = default_provider();
+    provider
+        .kx_groups
+        .retain(|group| group.name() == rustls::NamedGroup::secp256r1);
+    let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.signing_key.serialize_der());
+    let cert = CERTIFIED_KEY.cert.der().clone();
+    let mut crypto = rustls::ServerConfig::builder_with_provider(Arc::new(provider))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], PrivateKeyDer::from(key))
+        .unwrap();
+    crypto.alpn_protocols = vec![ALPN.into()];
+    let server_config =
+        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(crypto).unwrap()));
+
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    let client_config = ClientConfig::new(Arc::new(client_crypto_with_alpn(vec![ALPN.into()])));
+    pair.begin_connect(client_config);
+
+    let mut ready = false;
+    while pair.step() {
+        for conn in pair.server.connections.values_mut() {
+            while let Some(event) = conn.poll() {
+                if let Event::HandshakeDataReady = event {
+                    let hd = conn
+                        .crypto_session()
+                        .handshake_data()
+                        .unwrap()
+                        .downcast::<crypto::rustls::HandshakeData>()
+                        .unwrap();
+                    assert_eq!(hd.protocol.as_deref(), Some(ALPN));
+                    ready = true;
+                }
+            }
+        }
+    }
+    assert!(ready);
+}
+
+#[test]
 fn server_alpn_unset() {
     let _guard = subscribe();
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config());

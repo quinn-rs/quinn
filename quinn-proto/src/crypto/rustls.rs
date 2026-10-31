@@ -38,6 +38,8 @@ impl From<Side> for rustls::Side {
 pub struct TlsSession {
     version: Version,
     got_handshake_data: bool,
+    /// Whether this is a server with ALPN protocols configured
+    server_alpn: bool,
     next_secrets: Option<Secrets>,
     inner: Connection,
     suite: Suite,
@@ -134,7 +136,12 @@ impl crypto::Session for TlsSession {
                 Connection::Client(_) => false,
                 Connection::Server(session) => session.server_name().is_some(),
             };
-            if self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
+            // After a HelloRetryRequest, the server knows the name but has yet to pick a
+            // protocol, which it only does on the client's next ClientHello
+            if self.inner.alpn_protocol().is_some()
+                || (have_server_name && !self.server_alpn)
+                || !self.is_handshaking()
+            {
                 self.got_handshake_data = true;
                 return Ok(true);
             }
@@ -379,6 +386,7 @@ impl crypto::ClientConfig for QuicClientConfig {
         Ok(Box::new(TlsSession {
             version,
             got_handshake_data: false,
+            server_alpn: false,
             next_secrets: None,
             inner: Connection::Client(
                 rustls::quic::ClientConnection::new(
@@ -535,6 +543,7 @@ impl crypto::ServerConfig for QuicServerConfig {
         Box::new(TlsSession {
             version,
             got_handshake_data: false,
+            server_alpn: !self.inner.alpn_protocols.is_empty(),
             next_secrets: None,
             inner: Connection::Server(
                 rustls::quic::ServerConnection::new(self.inner.clone(), version, to_vec(params))
