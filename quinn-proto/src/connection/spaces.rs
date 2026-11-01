@@ -40,7 +40,7 @@ pub(super) struct PacketSpace {
     pub(super) unacked_non_ack_eliciting_tail: u64,
     /// Transmitted but not acked
     pub(super) sent_packets: SentPackets,
-    /// Packets that were deemed lost
+    /// Packets that were deemed lost while in flight on the current path
     // Older packets are regularly removed in `Connection::drain_lost_packets`.
     pub(super) lost_packets: BTreeMap<u64, LostPacket>,
     /// Number of explicit congestion notification codepoints seen on incoming packets
