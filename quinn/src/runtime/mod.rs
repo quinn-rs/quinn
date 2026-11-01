@@ -191,6 +191,7 @@ where
                 // registers us for a wakeup, or the send succeeds if this really was just a
                 // transient failure.
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => return Poll::Ready(Err(e)),
                 Err(e) => {
                     log_sendmsg_error(this.last_send_error, &e, transmit);
                     return Poll::Ready(Ok(()));
@@ -294,8 +295,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn non_would_block_send_errors_are_logged_and_ignored() {
-        let mut sender = Box::pin(UdpSenderHelper::new(TestSocket, writable));
+    fn nonfatal_send_errors_are_logged_and_ignored() {
+        let mut sender = Box::pin(UdpSenderHelper::new(
+            TestSocket(io::ErrorKind::PermissionDenied),
+            writable,
+        ));
         let transmit = Transmit {
             destination: SocketAddr::from(([127, 0, 0, 1], 4433)),
             ecn: None,
@@ -311,12 +315,34 @@ mod tests {
         assert!(sender.last_send_error.is_some());
     }
 
+    #[test]
+    fn broken_pipe_send_errors_are_propagated() {
+        let mut sender = Box::pin(UdpSenderHelper::new(
+            TestSocket(io::ErrorKind::BrokenPipe),
+            writable,
+        ));
+        let transmit = Transmit {
+            destination: SocketAddr::from(([127, 0, 0, 1], 4433)),
+            ecn: None,
+            contents: &[],
+            segment_size: None,
+            src_ip: None,
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+
+        let result = sender.as_mut().poll_send(&transmit, &mut cx);
+
+        assert!(
+            matches!(result, Poll::Ready(Err(error)) if error.kind() == io::ErrorKind::BrokenPipe)
+        );
+    }
+
     #[derive(Debug)]
-    struct TestSocket;
+    struct TestSocket(io::ErrorKind);
 
     impl UdpSenderHelperSocket for TestSocket {
         fn try_send(&self, _transmit: &Transmit<'_>) -> io::Result<()> {
-            Err(io::ErrorKind::PermissionDenied.into())
+            Err(self.0.into())
         }
 
         fn max_transmit_segments(&self) -> usize {
