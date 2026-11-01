@@ -5077,3 +5077,72 @@ fn qlog_packet_lost_trigger() {
         ]
     );
 }
+
+#[test]
+fn late_ack_only_packet_is_not_a_spurious_congestion_event() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+    pair.drive();
+
+    let s = pair.server_streams(server_ch).open(Dir::Uni).unwrap();
+    pair.server_send(server_ch, s).write(&[0; 4000]).unwrap();
+    pair.drive_server();
+    pair.drive_client();
+    let held: Vec<_> = pair.server.inbound.drain(..).collect();
+    assert!(!held.is_empty());
+
+    let c = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, c).write(&[0; 8000]).unwrap();
+    pair.drive();
+    let stats = pair.client_conn_mut(client_ch).stats();
+    assert!(
+        stats.path.lost_packets > 0,
+        "the held packets are deemed lost"
+    );
+    assert_eq!(
+        stats.path.congestion_events, 0,
+        "ACK-only losses are no congestion event"
+    );
+
+    pair.server.inbound.extend(held);
+    pair.client_send(client_ch, c).write(&[0; 2000]).unwrap();
+    pair.drive();
+    let stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(stats.path.congestion_events, 0, "no congestion event");
+    assert_eq!(
+        stats.path.spurious_congestion_events, 0,
+        "no spurious congestion event"
+    );
+}
+
+#[test]
+fn late_data_packet_is_a_spurious_congestion_event() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+    pair.drive();
+
+    let c = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, c).write(&[0; 1000]).unwrap();
+    pair.drive_client();
+    let held: Vec<_> = pair.server.inbound.drain(..).collect();
+    assert!(!held.is_empty());
+
+    pair.client_send(client_ch, c).write(&[0; 8000]).unwrap();
+    while pair
+        .client_conn_mut(client_ch)
+        .stats()
+        .path
+        .congestion_events
+        == 0
+    {
+        assert!(pair.step());
+    }
+
+    pair.server.inbound.extend(held);
+    pair.client_send(client_ch, c).write(&[0; 2000]).unwrap();
+    pair.drive();
+    let stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(stats.path.spurious_congestion_events, 1);
+}
