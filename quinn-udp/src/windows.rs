@@ -144,10 +144,10 @@ impl UdpSocketState {
 
     /// Sends a [`Transmit`] on the given socket.
     ///
-    /// This function will only ever return errors of kind [`io::ErrorKind::WouldBlock`].
-    /// All other errors will be logged and converted to `Ok`.
+    /// This function will only ever return errors of kind [`io::ErrorKind::WouldBlock`] or
+    /// [`io::ErrorKind::BrokenPipe`]. All other errors will be logged and converted to `Ok`.
     ///
-    /// UDP transmission errors are considered non-fatal because higher-level protocols must
+    /// Most UDP transmission errors are considered non-fatal because higher-level protocols must
     /// employ retransmits and timeouts anyway in order to deal with UDP's unreliable nature.
     /// Thus, logging is most likely the only thing you can do with these errors.
     ///
@@ -157,6 +157,7 @@ impl UdpSocketState {
         match send(socket, transmit) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Err(e),
             Err(e) => {
                 log_sendmsg_error(&self.last_send_error, e, transmit);
 
