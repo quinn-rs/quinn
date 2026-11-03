@@ -162,6 +162,16 @@ impl TransportConfig {
 
     /// Maximum reordering in packet number space before FACK style loss detection considers a
     /// packet lost. Should not be less than 3, per RFC5681.
+    ///
+    /// This is a floor: when a packet declared lost is acknowledged after all, the path reordered
+    /// it further than the thresholds allowed, and the connection widens both thresholds to cover
+    /// the reordering observed (the packet threshold up to 300). The learned values are halved,
+    /// back towards the configured ones, only once 16 congestion events pass with no spurious loss
+    /// proven for the lost-packet horizon (2 PTO, or twice the loss delay in force if that is
+    /// longer), and at most once per horizon, so they hold while proofs keep arriving. Lost
+    /// packets are remembered for the same horizon. Genuine losses on a reordering path are then
+    /// detected later, by up to the observed reordering delay. A path that never proves a loss
+    /// spurious keeps the configured thresholds.
     pub fn packet_threshold(&mut self, value: u32) -> &mut Self {
         self.packet_threshold = value;
         self
@@ -169,6 +179,9 @@ impl TransportConfig {
 
     /// Maximum reordering in time space before time based loss detection considers a packet lost,
     /// as a factor of RTT
+    ///
+    /// Like [`packet_threshold`](Self::packet_threshold), this is a floor that a path proven to
+    /// reorder widens.
     pub fn time_threshold(&mut self, value: f32) -> &mut Self {
         self.time_threshold = value;
         self

@@ -5077,3 +5077,115 @@ fn qlog_packet_lost_trigger() {
         ]
     );
 }
+
+/// One round of reordering on a sub-millisecond path: the client sends `n` packets, the first is
+/// held back by `hold` (or dropped when `hold` is `None`) while the rest are delivered and
+/// acknowledged. Returns how many packets the client declared lost during the round.
+fn reorder_round(
+    pair: &mut Pair,
+    client_ch: ConnectionHandle,
+    n: usize,
+    hold: Option<Duration>,
+) -> u64 {
+    let lost_before = pair.client_conn_mut(client_ch).stats().path.lost_packets;
+    let t0 = pair.time;
+    let mut sent = Vec::new();
+    for _ in 0..n {
+        pair.client_conn_mut(client_ch).ping();
+        pair.client.drive(pair.time, pair.server.addr);
+        sent.extend(pair.client.outbound.drain(..));
+    }
+    assert_eq!(sent.len(), n, "one packet per ping");
+    let (_, held) = sent.remove(0);
+    for (_, buf) in sent {
+        pair.server
+            .inbound
+            .push_back((t0 + pair.latency, None, buf.as_ref().into()));
+    }
+
+    // The later packets arrive and are acknowledged at once (they are out of order)
+    pair.time = t0 + pair.latency;
+    pair.drive_server();
+    pair.time += pair.latency;
+    pair.drive_client();
+
+    if let Some(hold) = hold {
+        // The held packet arrives, and its ACK proves any loss declared for it spurious
+        pair.time = t0 + hold;
+        pair.server
+            .inbound
+            .push_back((pair.time, None, held.as_ref().into()));
+        pair.drive_server();
+        pair.time += pair.latency;
+        pair.drive_client();
+    }
+    pair.drive();
+    pair.client_conn_mut(client_ch).stats().path.lost_packets - lost_before
+}
+
+fn reorder_pair() -> (Pair, ConnectionHandle) {
+    let _guard = subscribe();
+    let mut transport = TransportConfig::default();
+    transport.deterministic_packet_numbers(true);
+    let mut config = client_config();
+    config.transport_config(Arc::new(transport));
+    let mut pair = Pair::default();
+    pair.latency = Duration::from_micros(100);
+    let (client_ch, _) = pair.connect_with(config);
+    pair.drive();
+    (pair, client_ch)
+}
+
+const REORDER_HOLD: Duration = Duration::from_micros(1500);
+
+#[test]
+fn adaptive_reordering_stops_repeated_spurious_loss() {
+    let (mut pair, client_ch) = reorder_pair();
+    assert_eq!(
+        reorder_round(&mut pair, client_ch, 10, Some(REORDER_HOLD)),
+        1,
+        "the first reordering is declared lost: nothing has been learned yet"
+    );
+    for round in 2..=4 {
+        assert_eq!(
+            reorder_round(&mut pair, client_ch, 10, Some(REORDER_HOLD)),
+            0,
+            "round {round}: the same reordering is tolerated once proven spurious"
+        );
+    }
+    assert!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .path
+            .spurious_congestion_events
+            >= 1
+    );
+}
+
+#[test]
+fn adaptive_reordering_still_detects_a_real_loss() {
+    let (mut pair, client_ch) = reorder_pair();
+    reorder_round(&mut pair, client_ch, 10, Some(REORDER_HOLD));
+    assert_eq!(
+        reorder_round(&mut pair, client_ch, 10, Some(REORDER_HOLD)),
+        0
+    );
+    assert_eq!(
+        reorder_round(&mut pair, client_ch, 10, None),
+        1,
+        "a packet that never arrives is still declared lost"
+    );
+}
+
+/// Reordering deeper in packet numbers than the default threshold of 3 widens the packet
+/// threshold, not just the time window
+#[test]
+fn adaptive_reordering_widens_the_packet_threshold() {
+    let (mut pair, client_ch) = reorder_pair();
+    reorder_round(&mut pair, client_ch, 40, Some(REORDER_HOLD));
+    assert_eq!(
+        reorder_round(&mut pair, client_ch, 40, Some(REORDER_HOLD)),
+        0,
+        "39 packets of displacement is tolerated after it was proven spurious once"
+    );
+}
