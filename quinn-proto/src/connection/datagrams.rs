@@ -365,6 +365,112 @@ mod tests {
     use super::*;
 
     #[test]
+    fn expiration_preserves_order_and_accounts_for_memory() {
+        let now = Instant::now();
+        let later = now + crate::Duration::from_secs(1);
+        let mut buffer = DatagramSendBuffer::default();
+        for (data, deadline) in [
+            (&b"later"[..], Some(later)),
+            (&b"past"[..], Some(now - crate::Duration::from_secs(1))),
+            (&b"none"[..], None),
+            (&b"now"[..], Some(now)),
+        ] {
+            buffer.push_back(QueuedDatagram {
+                frame: Datagram {
+                    data: Bytes::from_static(data),
+                },
+                deadline,
+            });
+        }
+
+        assert!(buffer.drop_expired(now));
+        assert_eq!(buffer.queue.len(), 2);
+        assert_eq!(buffer.queue[0].frame.data, &b"later"[..]);
+        assert_eq!(buffer.queue[1].frame.data, &b"none"[..]);
+        assert_eq!(buffer.payload_bytes, 9);
+        assert_eq!(buffer.memory_used(), 9 + 2 * size_of::<QueuedDatagram>());
+        assert_eq!(buffer.next_deadline, Some(later));
+        assert!(!buffer.drop_expired(now));
+        assert!(buffer.drop_expired(later));
+        assert_eq!(buffer.queue.len(), 1);
+        assert_eq!(buffer.queue[0].frame.data, &b"none"[..]);
+        assert_eq!(buffer.payload_bytes, 4);
+        assert_eq!(buffer.next_deadline, None);
+    }
+
+    #[test]
+    fn expiration_tracks_earlier_deadlines() {
+        let now = Instant::now();
+        let later = now + crate::Duration::from_secs(1);
+        let mut buffer = DatagramSendBuffer::default();
+        for deadline in [None, Some(later), Some(now)] {
+            buffer.push_back(QueuedDatagram {
+                frame: Datagram {
+                    data: Bytes::from_static(b"data"),
+                },
+                deadline,
+            });
+            assert_eq!(buffer.next_deadline, deadline);
+        }
+        assert!(buffer.drop_expired(now));
+        assert_eq!(buffer.queue.len(), 2);
+        assert_eq!(buffer.next_deadline, Some(later));
+        assert!(buffer.drop_expired(later));
+        assert_eq!(buffer.queue.len(), 1);
+        assert_eq!(buffer.next_deadline, None);
+    }
+
+    #[test]
+    fn expiration_without_due_deadlines_preserves_queue() {
+        let now = Instant::now();
+        for deadline in [None, Some(now + crate::Duration::from_secs(1))] {
+            let mut buffer = DatagramSendBuffer::default();
+            buffer.push_back(QueuedDatagram {
+                frame: Datagram {
+                    data: Bytes::from_static(b"data"),
+                },
+                deadline,
+            });
+            assert!(!buffer.drop_expired(now));
+            assert_eq!(buffer.next_deadline, deadline);
+            assert_eq!(buffer.queue.len(), 1);
+            assert_eq!(buffer.queue[0].frame.data, &b"data"[..]);
+            assert_eq!(buffer.payload_bytes, 4);
+        }
+    }
+
+    #[test]
+    fn expiration_after_removing_earliest_datagram() {
+        let now = Instant::now();
+        let later = now + crate::Duration::from_secs(1);
+        for removal in ["send", "capacity", "size"] {
+            let mut buffer = DatagramSendBuffer::default();
+            for (data, deadline) in [(&b"first"[..], now), (&b"next"[..], later)] {
+                buffer.push_back(QueuedDatagram {
+                    frame: Datagram {
+                        data: Bytes::from_static(data),
+                    },
+                    deadline: Some(deadline),
+                });
+            }
+            match removal {
+                "send" => assert!(buffer.write(&mut Vec::new(), 1200)),
+                "capacity" => buffer.make_space_for(1, 5 + size_of::<QueuedDatagram>()),
+                "size" => assert!(buffer.drop_oversized(4)),
+                _ => unreachable!(),
+            }
+            assert_eq!(buffer.queue.len(), 1);
+            assert_eq!(buffer.queue[0].frame.data, &b"next"[..]);
+            assert!(!buffer.drop_expired(now));
+            assert_eq!(buffer.next_deadline, Some(later));
+            assert!(buffer.drop_expired(later));
+            assert!(buffer.is_empty());
+            assert_eq!(buffer.memory_used(), 0);
+            assert_eq!(buffer.next_deadline, None);
+        }
+    }
+
+    #[test]
     fn make_space_for_accounts_for_new_datagram() {
         let mut state = DatagramState::default();
         state.outgoing.push_back(QueuedDatagram {

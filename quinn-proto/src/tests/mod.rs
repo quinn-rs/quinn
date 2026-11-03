@@ -2904,6 +2904,107 @@ fn datagram_send_recv() {
 }
 
 #[test]
+fn datagram_expiration_while_congestion_blocked() {
+    let _guard = subscribe();
+    let mut transport = TransportConfig::default();
+    transport.mtu_discovery_config(None);
+    let mut config = client_config();
+    config.transport = Arc::new(transport);
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(config);
+
+    // Fill the congestion window without processing the server's ACKs.
+    let window = pair.client_conn_mut(client_ch).congestion_window();
+    let stream = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    let data = vec![42; 2 * window as usize];
+    assert_eq!(
+        pair.client_send(client_ch, stream).write(&data),
+        Ok(data.len())
+    );
+    pair.drive_client();
+    assert_eq!(pair.client_conn_mut(client_ch).bytes_in_flight(), window);
+
+    let now = pair.time;
+    let before = pair.client_conn_mut(client_ch).stats().frame_tx.datagram;
+    for (data, deadline) in [
+        (&b"future"[..], Some(now + Duration::from_secs(1))),
+        (&b"expired"[..], Some(now + Duration::from_millis(5))),
+        (&b"no deadline"[..], None),
+    ] {
+        pair.client_datagrams(client_ch)
+            .send(Bytes::from_static(data), true, deadline)
+            .unwrap();
+    }
+    pair.drive_client();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).stats().frame_tx.datagram,
+        before
+    );
+
+    pair.time += Duration::from_millis(20);
+    pair.drive_client();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).stats().frame_tx.datagram,
+        before
+    );
+    pair.drive();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).stats().frame_tx.datagram - before,
+        2
+    );
+    assert_eq!(
+        pair.server_datagrams(server_ch).recv().unwrap(),
+        &b"future"[..]
+    );
+    assert_eq!(
+        pair.server_datagrams(server_ch).recv().unwrap(),
+        &b"no deadline"[..]
+    );
+    assert!(pair.server_datagrams(server_ch).recv().is_none());
+}
+
+#[test]
+fn datagram_expiration_unblocks_sender() {
+    let _guard = subscribe();
+    let mut transport = TransportConfig::default();
+    transport.datagram_send_buffer_size(512);
+    let mut config = client_config();
+    config.transport = Arc::new(transport);
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(config);
+    while pair.client_conn_mut(client_ch).poll().is_some() {}
+    let deadline = pair.time + Duration::from_millis(5);
+    let data = Bytes::from(vec![42; 400]);
+    pair.client_datagrams(client_ch)
+        .send(data.clone(), false, Some(deadline))
+        .unwrap();
+    assert_matches!(
+        pair.client_datagrams(client_ch)
+            .send(data.clone(), false, None),
+        Err(SendDatagramError::Blocked(_))
+    );
+
+    let before = pair.client_conn_mut(client_ch).stats().frame_tx.datagram;
+    pair.time = deadline;
+    pair.drive_client();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).stats().frame_tx.datagram,
+        before
+    );
+    assert_eq!(pair.client_datagrams(client_ch).send_buffer_space(), 512);
+    assert!(
+        iter::from_fn(|| pair.client_conn_mut(client_ch).poll())
+            .any(|event| matches!(event, Event::DatagramsUnblocked))
+    );
+    pair.client_datagrams(client_ch)
+        .send(data.clone(), false, None)
+        .unwrap();
+    pair.drive();
+    assert_eq!(pair.server_datagrams(server_ch).recv(), Some(data));
+    assert!(pair.server_datagrams(server_ch).recv().is_none());
+}
+
+#[test]
 fn datagram_recv_buffer_overflow() {
     let _guard = subscribe();
     const PAYLOAD_WINDOW: usize = 100;
