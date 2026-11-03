@@ -6,7 +6,7 @@ use tracing::{debug, trace};
 
 use super::{Connection, Event};
 use crate::{
-    TransportError,
+    Instant, TransportError,
     frame::{Datagram, FrameStruct},
 };
 
@@ -24,8 +24,17 @@ impl Datagrams<'_> {
     /// `SendDatagramError::Blocked`. `Event::DatagramsUnblocked` will be emitted once datagrams
     /// have been sent.
     ///
+    /// The datagram is discarded before packet generation when `deadline <= now`, using the
+    /// time passed to [`Connection::poll_transmit`]. `None` means no expiration. Expiration does
+    /// not schedule a timer or cancel already generated packets.
+    ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent.
-    pub fn send(&mut self, data: Bytes, drop: bool) -> Result<(), SendDatagramError> {
+    pub fn send(
+        &mut self,
+        data: Bytes,
+        drop: bool,
+        deadline: Option<Instant>,
+    ) -> Result<(), SendDatagramError> {
         if self.conn.config.datagram_receive_buffer_size.is_none() {
             return Err(SendDatagramError::Disabled);
         }
@@ -39,16 +48,21 @@ impl Datagrams<'_> {
         if drop {
             self.conn
                 .datagrams
+                .outgoing
                 .make_space_for(data.len(), send_buffer_size);
         } else if !self
             .conn
             .datagrams
+            .outgoing
             .has_send_buffer_space(data.len(), send_buffer_size)
         {
             self.conn.datagrams.send_blocked = true;
             return Err(SendDatagramError::Blocked(data));
         }
-        self.conn.datagrams.outgoing.push_back(Datagram { data });
+        self.conn.datagrams.outgoing.push_back(QueuedDatagram {
+            frame: Datagram { data },
+            deadline,
+        });
         Ok(())
     }
 
@@ -57,7 +71,11 @@ impl Datagrams<'_> {
         let Some(max_datagram_size) = self.max_size() else {
             return;
         };
-        if !self.conn.datagrams.drop_oversized(max_datagram_size)
+        if !self
+            .conn
+            .datagrams
+            .outgoing
+            .drop_oversized(max_datagram_size)
             || !self.conn.datagrams.send_blocked
         {
             return;
@@ -105,15 +123,14 @@ impl Datagrams<'_> {
         self.conn
             .config
             .datagram_send_buffer_size
-            .saturating_sub(self.conn.datagrams.outgoing.payload_bytes)
-            .saturating_sub(size_of::<Datagram>())
+            .saturating_sub(self.conn.datagrams.outgoing.memory_used())
     }
 }
 
 #[derive(Default)]
 pub(super) struct DatagramState {
     pub(super) incoming: DatagramBuffer,
-    pub(super) outgoing: DatagramBuffer,
+    pub(super) outgoing: DatagramSendBuffer,
     pub(super) send_blocked: bool,
 }
 
@@ -150,68 +167,6 @@ impl DatagramState {
         Ok(was_empty)
     }
 
-    fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize) {
-        while !self.has_send_buffer_space(datagram_len, send_buffer_size) {
-            let Some(prev) = self.outgoing.pop_front() else {
-                break;
-            };
-            trace!(len = prev.data.len(), "dropping outgoing datagram");
-        }
-    }
-
-    fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
-        let Some(total) = self.outgoing.memory_used().checked_add(datagram_len) else {
-            return false;
-        };
-
-        total <= send_buffer_size
-    }
-
-    /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
-    ///
-    /// Returns whether any datagrams were dropped.
-    ///
-    /// Used to ensure that reductions in MTU don't get us stuck in a state where we have a datagram
-    /// queued but can't send it.
-    pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
-        let mut dropped_any = false;
-        self.outgoing.queue.retain(|datagram| {
-            let result = datagram.data.len() <= max_payload;
-            if !result {
-                trace!(
-                    "dropping {} byte datagram violating {} byte limit",
-                    datagram.data.len(),
-                    max_payload
-                );
-                self.outgoing.payload_bytes -= datagram.data.len();
-                dropped_any = true;
-            }
-            result
-        });
-        dropped_any
-    }
-
-    /// Attempt to write a datagram frame into `buf`, consuming it from `self.outgoing`
-    ///
-    /// Returns whether a frame was written. At most `max_size` bytes will be written, including
-    /// framing.
-    pub(super) fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
-        let Some(datagram) = self.outgoing.pop_front() else {
-            return false;
-        };
-
-        if buf.len() + datagram.size(true) > max_size {
-            // Future work: we could be more clever about cramming small datagrams into
-            // mostly-full packets when a larger one is queued first
-            self.outgoing.push_front(datagram);
-            return false;
-        }
-
-        trace!(len = datagram.data.len(), "DATAGRAM");
-        datagram.encode(true, buf);
-        true
-    }
-
     pub(super) fn recv(&mut self) -> Option<Bytes> {
         let x = self.incoming.pop_front()?.data;
         Some(x)
@@ -236,23 +191,173 @@ impl DatagramBuffer {
         Some(datagram)
     }
 
-    fn push_front(&mut self, datagram: Datagram) {
-        self.payload_bytes += datagram.data.len();
-        self.queue.push_front(datagram);
-    }
-
     fn memory_used(&self) -> usize {
         self.payload_bytes
             .saturating_add(self.queue.len() * size_of::<Datagram>())
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+}
+
+#[derive(Default)]
+pub(super) struct DatagramSendBuffer {
+    queue: VecDeque<QueuedDatagram>,
+    payload_bytes: usize,
+    /// Lower bound on queued deadlines. Sending or dropping a datagram may leave this stale,
+    /// causing an extra scan at that deadline rather than a scan on every removal.
+    next_deadline: Option<Instant>,
+}
+
+impl DatagramSendBuffer {
+    /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
+    ///
+    /// Returns whether any datagrams were dropped.
+    ///
+    /// Used to ensure that reductions in MTU don't get us stuck in a state where we have a datagram
+    /// queued but can't send it.
+    pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
+        let mut dropped_any = false;
+        self.queue.retain(|datagram| {
+            let result = datagram.frame.data.len() <= max_payload;
+            if !result {
+                trace!(
+                    "dropping {} byte datagram violating {} byte limit",
+                    datagram.frame.data.len(),
+                    max_payload
+                );
+                self.payload_bytes -= datagram.frame.data.len();
+                dropped_any = true;
+            }
+            result
+        });
+        if self.is_empty() {
+            self.next_deadline = None;
+        }
+        dropped_any
+    }
+
+    /// Discard expired outgoing datagrams, preserving the order of the remaining entries.
+    pub(super) fn drop_expired(&mut self, now: Instant) -> bool {
+        // If the next_deadline is in the future, don't scan at all.
+        if !self.next_deadline.is_some_and(|deadline| deadline <= now) {
+            return false;
+        }
+        self.next_deadline = None;
+        let mut dropped_any = false;
+        self.queue.retain(|datagram| {
+            if datagram.deadline.is_some_and(|deadline| deadline <= now) {
+                trace!(len = datagram.frame.data.len(), "dropping expired datagram");
+                self.payload_bytes -= datagram.frame.data.len();
+                dropped_any = true;
+                return false;
+            }
+            if let Some(deadline) = datagram.deadline {
+                self.next_deadline = Some(self.next_deadline.map_or(deadline, |x| x.min(deadline)));
+            }
+            true
+        });
+        dropped_any
+    }
+
+    /// Attempt to write a datagram frame into `buf`, consuming it from this buffer
+    ///
+    /// Returns whether a frame was written. At most `max_size` bytes will be written, including
+    /// framing.
+    pub(super) fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
+        let Some(datagram) = self.pop_front() else {
+            return false;
+        };
+
+        if buf.len() + datagram.frame.size(true) > max_size {
+            // Future work: we could be more clever about cramming small datagrams into
+            // mostly-full packets when a larger one is queued first
+            self.payload_bytes += datagram.frame.data.len();
+            self.queue.push_front(datagram);
+            return false;
+        }
+
+        trace!(len = datagram.frame.data.len(), "DATAGRAM");
+        datagram.frame.encode(true, buf);
+        if self.is_empty() {
+            self.next_deadline = None;
+        }
+        true
+    }
+
     pub(super) fn can_send_1rtt(&self, max_size: usize) -> bool {
-        self.queue.front().is_some_and(|x| x.size(true) <= max_size)
+        self.queue
+            .front()
+            .is_some_and(|x| x.frame.size(true) <= max_size)
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }
+
+    fn push_back(&mut self, datagram: QueuedDatagram) {
+        if self.is_empty() {
+            self.next_deadline = datagram.deadline;
+        } else if let Some(deadline) = datagram.deadline {
+            self.next_deadline = Some(self.next_deadline.map_or(deadline, |x| x.min(deadline)));
+        }
+        self.payload_bytes += datagram.frame.data.len();
+        self.queue.push_back(datagram);
+    }
+
+    fn pop_front(&mut self) -> Option<QueuedDatagram> {
+        let datagram = self.queue.pop_front()?;
+        self.payload_bytes -= datagram.frame.data.len();
+        Some(datagram)
+    }
+
+    fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize) {
+        while !self.has_send_buffer_space(datagram_len, send_buffer_size) {
+            let Some(prev) = self.pop_front() else {
+                break;
+            };
+            trace!(len = prev.frame.data.len(), "dropping outgoing datagram");
+        }
+    }
+
+    fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
+        let Some(total) = self.memory_used().checked_add(datagram_len) else {
+            return false;
+        };
+
+        total <= send_buffer_size
+    }
+
+    fn memory_used(&self) -> usize {
+        self.payload_bytes
+            .saturating_add(self.queue.len() * size_of::<QueuedDatagram>())
+    }
+}
+
+struct QueuedDatagram {
+    frame: Datagram,
+    deadline: Option<Instant>,
+}
+
+/// Errors that can arise when sending a datagram
+#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum SendDatagramError {
+    /// The peer does not support receiving datagram frames
+    #[error("datagrams not supported by peer")]
+    UnsupportedByPeer,
+    /// Datagram support is disabled locally
+    #[error("datagram support disabled")]
+    Disabled,
+    /// The datagram is larger than the connection can currently accommodate
+    ///
+    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
+    /// exceeded.
+    #[error("datagram too large")]
+    TooLarge,
+    /// Send would block
+    #[error("datagram send blocked")]
+    Blocked(Bytes),
 }
 
 #[cfg(test)]
@@ -262,29 +367,40 @@ mod tests {
     #[test]
     fn make_space_for_accounts_for_new_datagram() {
         let mut state = DatagramState::default();
-        state.outgoing.push_back(Datagram {
-            data: Bytes::from_static(&[0; 7]),
+        state.outgoing.push_back(QueuedDatagram {
+            frame: Datagram {
+                data: Bytes::from_static(&[0; 7]),
+            },
+            deadline: None,
         });
-        state.outgoing.push_back(Datagram {
-            data: Bytes::from_static(&[0; 2]),
+        state.outgoing.push_back(QueuedDatagram {
+            frame: Datagram {
+                data: Bytes::from_static(&[0; 2]),
+            },
+            deadline: None,
         });
 
-        state.make_space_for(4, 10 + 2 * size_of::<Datagram>());
+        state
+            .outgoing
+            .make_space_for(4, 10 + 2 * size_of::<QueuedDatagram>());
 
         assert_eq!(state.outgoing.queue.len(), 1);
-        assert_eq!(state.outgoing.queue[0].data.len(), 2);
+        assert_eq!(state.outgoing.queue[0].frame.data.len(), 2);
         assert_eq!(state.outgoing.payload_bytes, 2);
     }
 
     #[test]
     fn make_space_for_handles_overflowing_capacity_check() {
         let mut state = DatagramState::default();
-        state.outgoing.queue.push_back(Datagram {
-            data: Bytes::from_static(&[0]),
+        state.outgoing.queue.push_back(QueuedDatagram {
+            frame: Datagram {
+                data: Bytes::from_static(&[0]),
+            },
+            deadline: None,
         });
         state.outgoing.payload_bytes = usize::MAX - 1;
 
-        state.make_space_for(2, usize::MAX);
+        state.outgoing.make_space_for(2, usize::MAX);
 
         assert!(state.outgoing.is_empty());
         assert_eq!(state.outgoing.payload_bytes, usize::MAX - 2);
@@ -309,37 +425,23 @@ mod tests {
     #[test]
     fn drop_oversized_keeps_datagrams_at_limit() {
         let mut state = DatagramState::default();
-        state.outgoing.push_back(Datagram {
-            data: Bytes::from_static(&[0; 10]),
+        state.outgoing.push_back(QueuedDatagram {
+            frame: Datagram {
+                data: Bytes::from_static(&[0; 10]),
+            },
+            deadline: None,
         });
-        state.outgoing.push_back(Datagram {
-            data: Bytes::from_static(&[0; 11]),
+        state.outgoing.push_back(QueuedDatagram {
+            frame: Datagram {
+                data: Bytes::from_static(&[0; 11]),
+            },
+            deadline: None,
         });
 
-        assert!(state.drop_oversized(10));
+        assert!(state.outgoing.drop_oversized(10));
 
         assert_eq!(state.outgoing.queue.len(), 1);
-        assert_eq!(state.outgoing.queue[0].data.len(), 10);
+        assert_eq!(state.outgoing.queue[0].frame.data.len(), 10);
         assert_eq!(state.outgoing.payload_bytes, 10);
     }
-}
-
-/// Errors that can arise when sending a datagram
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum SendDatagramError {
-    /// The peer does not support receiving datagram frames
-    #[error("datagrams not supported by peer")]
-    UnsupportedByPeer,
-    /// Datagram support is disabled locally
-    #[error("datagram support disabled")]
-    Disabled,
-    /// The datagram is larger than the connection can currently accommodate
-    ///
-    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
-    /// exceeded.
-    #[error("datagram too large")]
-    TooLarge,
-    /// Send would block
-    #[error("datagram send blocked")]
-    Blocked(Bytes),
 }
