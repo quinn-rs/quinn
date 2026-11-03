@@ -1,8 +1,4 @@
-use std::{
-    cmp::{Ordering, max},
-    collections::VecDeque,
-    mem,
-};
+use std::{cmp::Ordering, collections::VecDeque, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 
@@ -18,6 +14,9 @@ pub(super) struct Assembler {
     buffered: usize,
     /// Estimated number of allocated bytes, will never be less than `buffered`.
     allocated: usize,
+    /// Chunks buffered that `defragment` has not copied yet, which may each hold on to the
+    /// larger allocation they arrived in
+    fresh: usize,
     /// Number of bytes read by the application. When only ordered reads have been used, this is the
     /// length of the contiguous prefix of the stream which has been consumed by the application,
     /// aka the stream offset.
@@ -63,6 +62,7 @@ impl Assembler {
             let front = self.data.pop_front().unwrap();
             self.buffered -= front.bytes.len();
             self.allocated -= front.allocation_size;
+            self.fresh -= usize::from(!front.owned);
         }
 
         if ordered && self.data.front()?.offset > self.bytes_read {
@@ -88,6 +88,7 @@ impl Assembler {
         } else {
             // Take the entirety of the front buffer
             self.allocated -= front.allocation_size;
+            self.fresh -= usize::from(!front.owned);
             Chunk::new(front.offset, front.bytes)
         };
 
@@ -96,60 +97,76 @@ impl Assembler {
         Some(chunk)
     }
 
-    /// Copy fragmented chunk data to new chunks backed by a single buffer
+    /// Copy chunk data to buffers of our own, one per run of contiguous data
     ///
-    /// This makes sure we're not unnecessarily holding on to many larger allocations.
-    /// We merge contiguous chunks in the process of doing so. Bytes before `start`
-    /// are treated as already delivered and discarded.
-    fn defragment(&mut self, start: u64) {
-        // Chunks smaller than min_chunk_size are merged regardless of fragmentation
-        let min_chunk_size = max(self.buffered.div_ceil(MAX_CHUNKS), MIN_RETAINED_CHUNK_SIZE);
-        let mut buffers = mem::take(&mut self.data);
+    /// No chunk holds on to the allocation it arrived in afterwards. Owned chunks of at least
+    /// `MIN_RETAINED_CHUNK_SIZE` that still use half of their copy stay as they are, so a
+    /// long run isn't copied again on each call. Bytes before `start` are treated as already delivered and discarded. Returns
+    /// the number of disjoint spans buffered.
+    fn defragment(&mut self, start: u64) -> usize {
+        let buffers = mem::take(&mut self.data);
         self.buffered = 0;
-        let mut fragmented_buffered = 0;
+        self.allocated = 0;
+        self.fresh = 0;
+        let mut spans = 0;
+        // End of the data so far, once there is any
+        let mut end = None;
         let mut offset = start;
-        for chunk in &mut buffers {
-            chunk.try_mark_defragment(offset);
-            let size = chunk.bytes.len();
-            offset = chunk.offset + size as u64;
-            self.buffered += size;
-            if !chunk.defragmented || size < min_chunk_size {
-                fragmented_buffered += size;
-            }
-        }
-        self.allocated = self.buffered;
-        self.data.reserve(buffers.len());
-        let mut buffer = BytesMut::with_capacity(fragmented_buffered);
-        let mut offset = 0;
-        for chunk in buffers {
-            // bytes might be empty after try_mark_defragment
+        // Contiguous chunks to copy into one buffer, and their length
+        let mut pending = Vec::new();
+        let mut pending_len = 0;
+        for mut chunk in buffers {
+            chunk.discard_before(offset);
+            // bytes might be empty after discard_before
             if chunk.bytes.is_empty() {
                 continue;
             }
-            if chunk.defragmented && chunk.bytes.len() >= min_chunk_size {
-                // The accumulated chunk starts before this one, so it goes first
-                if !buffer.is_empty() {
-                    self.data
-                        .push_back(Buffer::new_defragmented(offset, buffer.split().freeze()));
-                }
-                offset = chunk.end();
+            if end != Some(chunk.offset) {
+                self.push_merged(&mut pending);
+                pending_len = 0;
+                spans += 1;
+            }
+            offset = chunk.end();
+            end = Some(offset);
+            self.buffered += chunk.bytes.len();
+            // A small piece before it is copied together with it rather than left alone
+            if chunk.uses_allocation()
+                && chunk.bytes.len() >= MIN_RETAINED_CHUNK_SIZE
+                && (pending.is_empty() || pending_len >= MIN_RETAINED_CHUNK_SIZE)
+            {
+                self.push_merged(&mut pending);
+                pending_len = 0;
+                self.allocated += chunk.allocation_size;
                 self.data.push_back(chunk);
-                continue;
+            } else {
+                pending_len += chunk.bytes.len();
+                pending.push(chunk);
             }
-            // Overlap is resolved by try_mark_defragment
-            if chunk.offset != offset + (buffer.len() as u64) {
-                if !buffer.is_empty() {
-                    self.data
-                        .push_back(Buffer::new_defragmented(offset, buffer.split().freeze()));
-                }
-                offset = chunk.offset;
+        }
+        self.push_merged(&mut pending);
+        spans
+    }
+
+    /// Append `chunks`, contiguous, as one owned chunk
+    fn push_merged(&mut self, chunks: &mut Vec<Buffer>) {
+        match chunks.len() {
+            0 => return,
+            1 if chunks[0].uses_allocation() => {
+                self.allocated += chunks[0].allocation_size;
+                self.data.extend(chunks.pop());
+                return;
             }
+            _ => {}
+        }
+        let len = chunks.iter().map(|chunk| chunk.bytes.len()).sum();
+        let mut buffer = BytesMut::with_capacity(len);
+        for chunk in chunks.iter() {
             buffer.extend_from_slice(&chunk.bytes);
         }
-        if !buffer.is_empty() {
-            self.data
-                .push_back(Buffer::new_defragmented(offset, buffer.split().freeze()));
-        }
+        self.allocated += len;
+        self.data
+            .push_back(Buffer::new_owned(chunks[0].offset, buffer.freeze()));
+        chunks.clear();
     }
 
     // Note: If a packet contains many frames from the same stream, the estimated over-allocation
@@ -178,6 +195,7 @@ impl Assembler {
                     );
                     self.buffered += buffer.bytes.len();
                     self.allocated += buffer.allocation_size;
+                    self.fresh += 1;
                     insert_ordered(&mut self.data, buffer);
                     offset = duplicate.start;
                 }
@@ -199,6 +217,7 @@ impl Assembler {
             let buffer = Buffer::new(offset, bytes, allocation_size);
             self.buffered += buffer.bytes.len();
             self.allocated += buffer.allocation_size;
+            self.fresh += 1;
             insert_ordered(&mut self.data, buffer);
         }
         // `self.buffered` also counts duplicate bytes, therefore we use
@@ -215,11 +234,14 @@ impl Assembler {
         // buffered data. The constants are chosen somewhat arbitrarily and try to
         // balance between defragmentation overhead and over-allocation.
         let threshold = 32768.max(buffered * 3 / 2);
-        // Small gapped frames hold over-allocation below the threshold, so bound the count too.
-        if over_allocation > threshold || self.data.len() > COMPACT_THRESHOLD {
-            self.defragment(0);
-            // ngtcp2 uses a threshold of 4000 -- try to be a little more conservative?
-            if self.data.len() > MAX_CHUNKS {
+        // A chunk may hold on to a larger allocation than `allocation_size` (the datagrams
+        // received at once), so bound the number not yet copied too.
+        if over_allocation > threshold || self.fresh > COMPACT_THRESHOLD {
+            let start = match self.state {
+                State::Ordered => self.bytes_read,
+                State::Unordered { .. } => 0,
+            };
+            if self.defragment(start) > max_spans(self.buffered) {
                 return Err(TooManyChunks);
             }
         }
@@ -237,6 +259,7 @@ impl Assembler {
         self.data.clear();
         self.buffered = 0;
         self.allocated = 0;
+        self.fresh = 0;
     }
 }
 
@@ -259,32 +282,32 @@ impl Chunk {
 struct Buffer {
     offset: u64,
     bytes: Bytes,
-    /// Size of the allocation behind `bytes`, if `defragmented == false`.
-    /// Otherwise this will be set to `bytes.len()` by `try_mark_defragment`.
+    /// Size of the allocation behind `bytes`, as received or copied (if `owned`).
     /// Will never be less than `bytes.len()`.
     allocation_size: usize,
-    defragmented: bool,
+    /// Whether `bytes` is a copy made by `Assembler::defragment`, holding on to nothing else
+    owned: bool,
 }
 
 impl Buffer {
-    /// Constructs a new fragmented Buffer
+    /// Constructs a Buffer of received data
     fn new(offset: u64, bytes: Bytes, allocation_size: usize) -> Self {
         Self {
             offset,
             bytes,
             allocation_size,
-            defragmented: false,
+            owned: false,
         }
     }
 
-    /// Constructs a new defragmented Buffer
-    fn new_defragmented(offset: u64, bytes: Bytes) -> Self {
+    /// Constructs a Buffer of a copy of our own
+    fn new_owned(offset: u64, bytes: Bytes) -> Self {
         let allocation_size = bytes.len();
         Self {
             offset,
             bytes,
             allocation_size,
-            defragmented: true,
+            owned: true,
         }
     }
 
@@ -293,25 +316,21 @@ impl Buffer {
         self.offset + self.bytes.len() as u64
     }
 
-    /// Discards data before `offset` and flags `self` as defragmented if it has good utilization
-    fn try_mark_defragment(&mut self, offset: u64) {
+    /// Discards data before `offset`
+    fn discard_before(&mut self, offset: u64) {
         let duplicate = offset.saturating_sub(self.offset) as usize;
         self.offset = self.offset.max(offset);
         if duplicate >= self.bytes.len() {
-            // All bytes are duplicate
             self.bytes = Bytes::new();
-            self.defragmented = true;
             self.allocation_size = 0;
             return;
         }
         self.bytes.advance(duplicate);
-        // Make sure that fragmented buffers with high utilization become defragmented and
-        // defragmented buffers remain defragmented
-        self.defragmented = self.defragmented || self.bytes.len() * 6 / 5 >= self.allocation_size;
-        if self.defragmented {
-            // Make sure that defragmented buffers do not contribute to over-allocation
-            self.allocation_size = self.bytes.len();
-        }
+    }
+
+    /// Whether `bytes` is our own copy and still uses at least half of it
+    fn uses_allocation(&self) -> bool {
+        self.owned && 2 * self.bytes.len() >= self.allocation_size
     }
 }
 
@@ -362,7 +381,7 @@ pub(crate) struct IllegalOrderedRead;
 pub(crate) struct TooManyChunks;
 
 /// O(1) for a frame in order or below everything buffered, otherwise an insert that
-/// shifts up to half of `data` (see `COMPACT_THRESHOLD`)
+/// shifts up to half of `data` (see `max_spans` and `COMPACT_THRESHOLD`)
 fn insert_ordered(data: &mut VecDeque<Buffer>, buffer: Buffer) {
     if data.back().is_none_or(|back| *back <= buffer) {
         data.push_back(buffer);
@@ -378,21 +397,40 @@ fn insert_ordered(data: &mut VecDeque<Buffer>, buffer: Buffer) {
     data.insert(idx, buffer);
 }
 
-/// Bound on the number of distinct spans kept for a stream
+/// Bound on the number of disjoint spans kept for a stream with `buffered` bytes
 ///
-/// Independent of how much memory those spans over-allocate. A frame is rejected only
-/// if compaction cannot get the count back down to this.
+/// A frame is rejected only if compaction leaves more. Each lost packet leaves a gap, so
+/// past `MAX_CHUNKS` one more span is allowed per `MIN_BYTES_PER_SPAN` buffered: a large
+/// receive window may hold thousands of gaps while a peer sends at full rate into a
+/// queue that drops every other packet. Tiny gapped frames stay bounded by `MAX_CHUNKS`.
+fn max_spans(buffered: usize) -> usize {
+    (buffered / MIN_BYTES_PER_SPAN).clamp(MAX_CHUNKS, MAX_SPANS)
+}
+
+/// Spans allowed regardless of how little data they hold
+// ngtcp2 uses a threshold of 4000 -- try to be a little more conservative?
 const MAX_CHUNKS: usize = 1024;
 
-/// Minimum size of a defragmented chunk that is retained without coalescing.
+/// Bound on the number of disjoint spans regardless of the data they hold
 ///
-/// Chunks below this size will be copied on every compaction. 128 bytes balances
-/// being cheap to copy while reducing the overhead of many small buffer nodes.
-const MIN_RETAINED_CHUNK_SIZE: usize = 128;
+/// Inserting into the middle of `data` costs time linear in its length. 8192 spans hold the
+/// gaps of every other packet lost in an 8 MiB receive window.
+const MAX_SPANS: usize = 8 * MAX_CHUNKS;
 
-/// Chunk count past which `insert` compacts before deciding whether to reject
+/// Buffered bytes that each span past `MAX_CHUNKS` must bring
 ///
-/// Above `MAX_CHUNKS` so a flood of mergeable frames cannot force a defragmentation
+/// Below the stream data of a packet at QUIC's minimum datagram size (1200 bytes).
+const MIN_BYTES_PER_SPAN: usize = 1024;
+
+/// Minimum size of an owned chunk that `defragment` retains without copying
+///
+/// Bounds the chunks per span: all but its last hold at least this many bytes.
+const MIN_RETAINED_CHUNK_SIZE: usize = 16 * 1024;
+
+/// Chunks not yet copied past which `insert` compacts
+///
+/// Bounds the allocations that received chunks hold on to (as the fixed bound on all
+/// chunks did before), while a flood of mergeable frames cannot force a defragmentation
 /// per frame.
 const COMPACT_THRESHOLD: usize = 2 * MAX_CHUNKS;
 
@@ -776,9 +814,191 @@ mod test {
         }
         assert_matches!(result, Err(TooManyChunks));
         assert!(
-            x.data.len() <= COMPACT_THRESHOLD + 1,
+            x.data.len() <= MAX_CHUNKS + COMPACT_THRESHOLD + 1,
             "chunk count {} exceeded the bound",
             x.data.len()
+        );
+    }
+
+    /// Chunks not yet copied by `defragment`
+    fn not_owned(x: &Assembler) -> usize {
+        x.data.iter().filter(|chunk| !chunk.owned).count()
+    }
+
+    #[test]
+    fn every_other_packet_lost_is_not_rejected() {
+        // A drop-tail queue overflowing under a sender at full rate loses about every
+        // other packet; an 8 MiB stream receive window holds ~3500 such gaps. Each frame
+        // arrives in a receive batch of its own (64 KiB).
+        const PAYLOAD: usize = 1200;
+        let data = Bytes::from(vec![0; PAYLOAD]);
+        // As accounted (the packet), and as possibly held (a receive batch)
+        for allocation_size in [PAYLOAD + 32, 65536] {
+            let mut x = Assembler::new();
+            for i in 0..3500u64 {
+                x.insert((2 * i + 1) * PAYLOAD as u64, data.clone(), allocation_size)
+                    .expect("full-size frames behind lost packets must not be rejected");
+                assert!(not_owned(&x) <= COMPACT_THRESHOLD + 1);
+            }
+            assert_eq!(x.defragment(0), 3500);
+            assert_eq!(not_owned(&x), 0);
+        }
+    }
+
+    #[test]
+    fn fresh_counts_chunks_not_yet_copied() {
+        // Chunks read whole leave the count, so an application reading as data arrives
+        // causes no compaction
+        let mut x = Assembler::new();
+        let data = Bytes::from(vec![0; 1200]);
+        for i in 0..(3 * COMPACT_THRESHOLD as u64) {
+            x.insert(i * 1200, data.clone(), 1200).unwrap();
+            assert_eq!(x.fresh, not_owned(&x));
+            while x.read(usize::MAX, true).is_some() {}
+            assert_eq!(x.fresh, 0);
+        }
+        // Gapped, then read in part and whole up to the first gap
+        let base = x.bytes_read();
+        for i in 0..(3 * COMPACT_THRESHOLD as u64) {
+            x.insert(base + 2 * i * 1200, data.clone(), 1200).unwrap();
+            assert_eq!(x.fresh, not_owned(&x));
+        }
+        x.insert(base + 1200, data.clone(), 1200).unwrap();
+        while x.read(1000, true).is_some() {
+            assert_eq!(x.fresh, not_owned(&x));
+        }
+        assert_eq!(x.bytes_read(), base + 3 * 1200);
+    }
+
+    #[test]
+    fn spans_bounded_regardless_of_data() {
+        const PAYLOAD: usize = 1200;
+        let mut x = Assembler::new();
+        let data = Bytes::from(vec![0; PAYLOAD]);
+        let mut accepted = 0;
+        while x
+            .insert((2 * accepted + 1) * PAYLOAD as u64, data.clone(), PAYLOAD)
+            .is_ok()
+        {
+            accepted += 1;
+            assert!(
+                accepted as usize <= MAX_SPANS + COMPACT_THRESHOLD,
+                "never rejected"
+            );
+        }
+        assert!(accepted as usize >= MAX_SPANS);
+    }
+
+    #[test]
+    fn filled_gaps_leave_no_small_chunks() {
+        // Gaps between large copies filled one byte each: no one-byte chunk stays between them
+        const LEN: usize = MIN_RETAINED_CHUNK_SIZE;
+        let mut x = Assembler::new();
+        for i in 0..64u64 {
+            let offset = 1 + i * (LEN as u64 + 1);
+            x.insert(offset, Bytes::from(vec![0; LEN]), LEN).unwrap();
+        }
+        assert_eq!(x.defragment(0), 64);
+        for i in 1..64u64 {
+            x.insert(i * (LEN as u64 + 1), Bytes::from_static(b"x"), 1)
+                .unwrap();
+        }
+        assert_eq!(x.defragment(0), 1);
+        assert!(
+            x.data
+                .iter()
+                .rev()
+                .skip(1)
+                .all(|chunk| chunk.bytes.len() >= LEN)
+        );
+    }
+
+    #[test]
+    fn trimmed_copy_is_not_retained() {
+        // Frames each overlapping the start of a large copy must not leave most of it
+        // held by a chunk that keeps only its tail
+        const LEN: usize = 1 << 20;
+        const FRAME: usize = 1400;
+        let mut x = Assembler::new();
+        let mut start = 1 << 30;
+        x.insert(start, Bytes::from(vec![0; LEN]), 2 * LEN).unwrap();
+        x.defragment(0);
+        let copy = x.data[0].bytes.as_ptr_range();
+        for _ in 0..(LEN / FRAME) {
+            start -= 1;
+            x.insert(start, Bytes::from(vec![0; FRAME]), FRAME).unwrap();
+            x.defragment(0);
+            start = x.data.back().unwrap().offset;
+            for chunk in &x.data {
+                if copy.contains(&chunk.bytes.as_ptr()) {
+                    assert!(
+                        2 * chunk.bytes.len() >= LEN,
+                        "{} bytes hold the copy",
+                        chunk.bytes.len()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn many_chunks_behind_one_gap_are_not_rejected() {
+        // Large and small chunks alternating behind one missing byte are one span
+        let mut x = Assembler::new();
+        let mut offset = 1;
+        for _ in 0..600 {
+            for len in [5000, 400, 400, 400] {
+                x.insert(offset, Bytes::from(vec![0; len]), len)
+                    .expect("contiguous data must not be rejected");
+                offset += len as u64;
+            }
+        }
+        assert_eq!(x.defragment(0), 1);
+    }
+
+    #[test]
+    fn bounded_chunks_with_bulk_data_buffered() {
+        // Bulk data buffered must not let small gapped frames add more spans than it pays for
+        let mut x = Assembler::new();
+        let bulk = 8 << 20;
+        x.insert(1, Bytes::from(vec![0; bulk]), bulk).unwrap();
+        let mut offset = 2 + bulk as u64;
+        let mut accepted = 0;
+        let result: Result<(), _> = loop {
+            if let Err(e) = x.insert(offset, Bytes::from_static(b"gap"), 3) {
+                break Err(e);
+            }
+            assert!(accepted < 8 * max_spans(bulk), "never rejected");
+            accepted += 1;
+            offset += 3 + 1; // 3 data bytes, 1 byte gap
+        };
+        assert_matches!(result, Err(TooManyChunks));
+        assert!(accepted >= max_spans(bulk) - 1);
+        assert!(
+            x.data.len() <= max_spans(x.buffered) + COMPACT_THRESHOLD + 1,
+            "chunk count {} exceeded the bound",
+            x.data.len()
+        );
+    }
+
+    #[test]
+    fn duplicates_do_not_raise_the_bound() {
+        // Duplicates count toward `buffered` in ordered mode until compacted away
+        let mut x = Assembler::new();
+        let bulk = 1 << 20;
+        let data = Bytes::from(vec![0; bulk]);
+        for _ in 0..8 {
+            x.insert(1, data.clone(), bulk).unwrap();
+        }
+        let mut offset = 2 + bulk as u64;
+        let mut accepted = 0;
+        while x.insert(offset, Bytes::from_static(b"gap"), 3).is_ok() {
+            accepted += 1;
+            offset += 3 + 1;
+        }
+        assert!(
+            accepted <= max_spans(bulk) + COMPACT_THRESHOLD,
+            "{accepted} gapped frames accepted"
         );
     }
 
@@ -794,7 +1014,7 @@ mod test {
         for k in 0..(4 * MAX_CHUNKS as u64) {
             x.insert(top - k - 1, Bytes::from_static(b"ab"), 2).unwrap();
             assert!(
-                x.data.len() <= COMPACT_THRESHOLD + 1,
+                x.data.len() <= MAX_CHUNKS + COMPACT_THRESHOLD + 1,
                 "chunk count {} exceeded the bound at k={k}",
                 x.data.len()
             );
@@ -816,7 +1036,7 @@ mod test {
                 .expect("duplicate flood must not be rejected");
             max_len = max_len.max(x.data.len());
             assert!(
-                x.data.len() <= COMPACT_THRESHOLD + 1,
+                x.data.len() <= MAX_CHUNKS + COMPACT_THRESHOLD + 1,
                 "chunk count {} exceeded the bound",
                 x.data.len()
             );
