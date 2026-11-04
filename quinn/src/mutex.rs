@@ -42,10 +42,15 @@ mod tracking {
         ///
         /// The purpose will be recorded in the list of last lock owners
         pub(crate) fn lock(&self, purpose: &'static str) -> MutexGuard<'_, T> {
+            self.lock_for_drop(purpose).unwrap()
+        }
+
+        /// Acquires the lock for cleanup, skipping state left inconsistent by a panic
+        pub(crate) fn lock_for_drop(&self, purpose: &'static str) -> Option<MutexGuard<'_, T>> {
             // We don't bother dispatching through Runtime::now because they're pure performance
             // diagnostics.
             let now = Instant::now();
-            let guard = self.inner.lock().unwrap();
+            let guard = self.inner.lock().ok()?;
 
             let lock_time = Instant::now();
             let elapsed = lock_time.duration_since(now);
@@ -57,11 +62,11 @@ mod tracking {
                 );
             }
 
-            MutexGuard {
+            Some(MutexGuard {
                 guard,
                 start_time: lock_time,
                 purpose,
-            }
+            })
         }
     }
 
@@ -133,10 +138,15 @@ mod non_tracking {
         /// Acquires the lock for a certain purpose
         ///
         /// The purpose will be recorded in the list of last lock owners
-        pub(crate) fn lock(&self, _purpose: &'static str) -> MutexGuard<'_, T> {
-            MutexGuard {
-                guard: self.inner.lock().unwrap(),
-            }
+        pub(crate) fn lock(&self, purpose: &'static str) -> MutexGuard<'_, T> {
+            self.lock_for_drop(purpose).unwrap()
+        }
+
+        /// Acquires the lock for cleanup, skipping state left inconsistent by a panic
+        pub(crate) fn lock_for_drop(&self, _purpose: &'static str) -> Option<MutexGuard<'_, T>> {
+            Some(MutexGuard {
+                guard: self.inner.lock().ok()?,
+            })
         }
     }
 

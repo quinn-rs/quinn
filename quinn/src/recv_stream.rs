@@ -543,19 +543,18 @@ impl Drop for RecvStream {
     fn drop(&mut self) {
         if self.all_data_read {
             debug_assert!(
-                !self
-                    .conn
+                self.conn
                     .state
-                    .lock("RecvStream:drop")
-                    .blocked_readers
-                    .contains_key(&self.stream),
+                    .lock_for_drop("RecvStream::drop")
+                    .is_none_or(|conn| !conn.blocked_readers.contains_key(&self.stream)),
                 "Stream {} should not have a blocked reader when all data read is true",
                 self.stream
             );
             return;
         }
-        let mut conn = self.conn.state.lock("RecvStream::drop");
-
+        let Some(mut conn) = self.conn.state.lock_for_drop("RecvStream::drop") else {
+            return;
+        };
         // clean up any previously registered wakers
         conn.blocked_readers.remove(&self.stream);
 
