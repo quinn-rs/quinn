@@ -17,7 +17,7 @@ pub use recv::{Chunks, ReadError, ReadableError};
 mod send;
 pub(crate) use send::{ByteSlice, BytesArray};
 use send::{BytesSource, Send, SendState};
-pub use send::{FinishError, WriteError, Written};
+pub use send::{FinishError, ResetAtError, WriteError, Written};
 
 mod state;
 #[allow(unreachable_pub)] // fuzzing only
@@ -321,6 +321,9 @@ impl<'a> SendStream<'a> {
 
     /// Abandon transmitting data on a stream
     ///
+    /// After [`reset_at()`](Self::reset_at), this abandons the remaining reliable data too, and
+    /// fails if `error_code` differs.
+    ///
     /// # Panics
     /// - when applied to a receive stream
     pub fn reset(&mut self, error_code: VarInt) -> Result<(), ClosedStream> {
@@ -332,9 +335,19 @@ impl<'a> SendStream<'a> {
             .ok_or(ClosedStream { _private: () })?
             .get_or_insert_with(|| Send::new(max_send_data));
 
-        if matches!(stream.state, SendState::ResetSent) {
-            // Redundant reset call
-            return Err(ClosedStream { _private: () });
+        match stream.state {
+            SendState::Ready | SendState::DataSent { .. } => {}
+            SendState::ResetAtSent { reliable_size, .. } if reliable_size > 0 => {
+                // RESET_STREAM_AT with a reliable size of zero is equivalent to RESET_STREAM, and
+                // keeps the final size of the earlier RESET_STREAM_AT
+                return self
+                    .reset_at(error_code, 0)
+                    .map_err(|_| ClosedStream { _private: () });
+            }
+            SendState::ResetSent | SendState::ResetAtSent { .. } => {
+                // Redundant reset call
+                return Err(ClosedStream { _private: () });
+            }
         }
 
         // Restore the portion of the send window consumed by the data that we aren't about to
@@ -342,9 +355,71 @@ impl<'a> SendStream<'a> {
         // credit based on the final offset communicated in the RESET_STREAM frame we send.
         self.state.buffered_data -= stream.pending.buffered();
         stream.reset();
-        self.pending.reset_stream.push((self.id, error_code));
+        self.pending.reset_stream.push((self.id, error_code, None));
 
         // Don't reopen an already-closed stream we haven't forgotten yet
+        Ok(())
+    }
+
+    /// Abandon transmitting data on a stream, except for the first `reliable_size` bytes
+    ///
+    /// Sends a RESET_STREAM_AT frame, defined by [draft-ietf-quic-reliable-stream-reset]. Data
+    /// before `reliable_size` is still retransmitted until acknowledged.
+    ///
+    /// This is useful when a stream starts with data the peer needs even if the rest of the stream
+    /// is abandoned, such as a header saying what the stream is for. After a plain
+    /// [`reset()`](Self::reset), the peer may never receive that header, and so can't tell which
+    /// stream was reset. For example, WebTransport over HTTP/3 uses this to deliver the session ID
+    /// at the start of each stream.
+    ///
+    /// May be called again to shrink the reliable size. The error code must stay the same.
+    ///
+    /// Requires the peer to accept reliable stream resets, see
+    /// [`Connection::peer_supports_reset_stream_at()`].
+    ///
+    /// [draft-ietf-quic-reliable-stream-reset]: https://datatracker.ietf.org/doc/draft-ietf-quic-reliable-stream-reset/
+    /// [`Connection::peer_supports_reset_stream_at()`]: crate::Connection::peer_supports_reset_stream_at
+    pub fn reset_at(&mut self, error_code: VarInt, reliable_size: u64) -> Result<(), ResetAtError> {
+        if !self.state.peer_reset_stream_at {
+            return Err(ResetAtError::Unsupported);
+        }
+        let max_send_data = self.state.max_send_data(self.id);
+        let stream = self
+            .state
+            .send
+            .get_mut(&self.id)
+            .ok_or(ResetAtError::ClosedStream)?
+            .get_or_insert_with(|| Send::new(max_send_data));
+
+        match stream.state {
+            SendState::Ready | SendState::DataSent { .. } => {}
+            SendState::ResetSent => return Err(ResetAtError::ClosedStream),
+            SendState::ResetAtSent {
+                error_code: sent_error_code,
+                reliable_size: sent_reliable_size,
+                ..
+            } => {
+                if error_code != sent_error_code {
+                    return Err(ResetAtError::ErrorCodeChanged);
+                }
+                if reliable_size == sent_reliable_size {
+                    // Redundant reset call
+                    return Ok(());
+                }
+            }
+        }
+        // After an earlier RESET_STREAM_AT, only data before its reliable size remains
+        if reliable_size > stream.offset() {
+            return Err(ResetAtError::ReliableSizeTooLarge);
+        }
+
+        // Restore the portion of the send window consumed by data that we won't send
+        let buffered = stream.pending.buffered();
+        stream.reset_at(error_code, reliable_size);
+        self.state.buffered_data -= buffered - stream.pending.buffered();
+        self.pending
+            .reset_stream
+            .push((self.id, error_code, Some(reliable_size)));
         Ok(())
     }
 

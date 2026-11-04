@@ -100,8 +100,7 @@ impl RangeSet {
             .map(|(&x, &y)| (x, y))
     }
 
-    #[cfg(test)]
-    pub(super) fn remove(&mut self, x: Range<u64>) -> bool {
+    pub(crate) fn remove(&mut self, x: Range<u64>) -> bool {
         if x.is_empty() {
             return false;
         }
