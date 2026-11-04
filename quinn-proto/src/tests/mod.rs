@@ -2529,6 +2529,68 @@ fn cid_rotation() {
     }
 }
 
+/// Mimics [`HashedConnectionIdGenerator`]: CIDs are longer than 4 bytes, but only a small prefix
+/// carries entropy, so the usable CID space is far smaller than `cid_len` suggests
+struct SmallCidSpaceGenerator {
+    next: u8,
+}
+
+impl SmallCidSpaceGenerator {
+    const SPACE_BITS: usize = 4;
+    const CID_LEN: usize = 8;
+}
+
+impl ConnectionIdGenerator for SmallCidSpaceGenerator {
+    fn generate_cid(&mut self) -> ConnectionId {
+        let nonce = self.next % (1 << Self::SPACE_BITS);
+        self.next = self.next.wrapping_add(1);
+        ConnectionId::new(&[nonce; Self::CID_LEN])
+    }
+
+    fn cid_len(&self) -> usize {
+        Self::CID_LEN
+    }
+
+    fn effective_cid_space_len_bits(&self) -> usize {
+        Self::SPACE_BITS
+    }
+
+    fn cid_lifetime(&self) -> Option<Duration> {
+        None
+    }
+}
+
+#[test]
+fn cids_exhausted_uses_effective_cid_space() {
+    let _guard = subscribe();
+    let server_addr = "[::2]:7890".parse().unwrap();
+    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+        || Box::new(SmallCidSpaceGenerator { next: 0 });
+    let mut client = Endpoint::new(
+        Arc::new(EndpointConfig {
+            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            ..Default::default()
+        }),
+        None,
+        true,
+    );
+
+    // The endpoint refuses new connections once more than 3/4 of the CID space is in use, so that
+    // `new_cid` can be relied upon to finish quickly. Each `connect` reserves exactly one CID.
+    let space = 1 << SmallCidSpaceGenerator::SPACE_BITS;
+    let threshold = space - space / 4;
+    for _ in 0..=threshold {
+        client
+            .connect(Instant::now(), client_config(), server_addr, "localhost")
+            .unwrap();
+    }
+    assert_eq!(client.known_cids(), threshold + 1);
+    assert_matches!(
+        client.connect(Instant::now(), client_config(), server_addr, "localhost"),
+        Err(ConnectError::CidsExhausted)
+    );
+}
+
 #[test]
 fn cid_retirement() {
     let _guard = subscribe();
