@@ -10,6 +10,7 @@ use std::{
     future::Future,
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+    panic::{AssertUnwindSafe, catch_unwind},
     pin::{Pin, pin},
     str,
     sync::{
@@ -1721,6 +1722,147 @@ async fn recv_stream_cancel_stop_drop() {
             recv_dropped.wait().await;
         },
     );
+}
+
+#[tokio::test]
+async fn connection_handles_drop_after_driver_panic() {
+    for unwinding in [false, true] {
+        let factory = EndpointFactory::new();
+        let server = factory.endpoint();
+        let panic_signal = Arc::new(Mutex::new(None));
+        let mut client = Endpoint::new_with_abstract_socket(
+            factory.endpoint_config.clone(),
+            None,
+            Arc::new(PanickingSendSocket {
+                inner: localhost_socket(),
+                panic_signal: panic_signal.clone(),
+            }),
+            Arc::new(TokioRuntime),
+        )
+        .unwrap();
+        let mut roots = RootCertStore::empty();
+        roots.add(factory.cert.cert.der().clone()).unwrap();
+        client.set_default_client_config(
+            ClientConfig::with_root_certificates(Arc::new(roots)).unwrap(),
+        );
+
+        let (connection, peer) = join!(
+            client
+                .connect(server.local_addr().unwrap(), "localhost")
+                .unwrap(),
+            async { server.accept().await.unwrap().await.unwrap() },
+        );
+        let connection = connection.unwrap();
+        let (send, recv) = connection.open_bi().await.unwrap();
+        let (finished_send, mut stopped_recv) = connection.open_bi().await.unwrap();
+        stopped_recv.stop(0u32.into()).unwrap();
+        drop(finished_send);
+
+        let (signal, panicked) = tokio::sync::oneshot::channel();
+        *panic_signal.lock().unwrap() = Some(signal);
+        connection
+            .send_datagram(Bytes::from_static(b"panic"))
+            .unwrap();
+        // This test uses a current-thread runtime, so the driver finishes unwinding before
+        // the task waiting for its signal can resume.
+        timeout(Duration::from_secs(5), panicked)
+            .await
+            .unwrap()
+            .unwrap();
+
+        drop_after_poison((send, recv, stopped_recv, connection), unwinding);
+        drop(peer);
+    }
+}
+
+#[tokio::test]
+async fn incoming_drop_after_endpoint_panic() {
+    for unwinding in [false, true] {
+        let factory = EndpointFactory::new();
+        let client = factory.endpoint();
+        let server = factory.endpoint();
+        let connecting = client
+            .connect(server.local_addr().unwrap(), "localhost")
+            .unwrap();
+        let incoming = timeout(Duration::from_secs(5), server.accept())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                let _guard = server.inner.state.lock().unwrap();
+                panic!("endpoint state panic");
+            }))
+            .is_err()
+        );
+        assert!(server.inner.state.is_poisoned());
+        drop_after_poison(incoming, unwinding);
+        drop(connecting);
+    }
+}
+
+fn drop_after_poison(value: impl Sized, unwinding: bool) {
+    let result = catch_unwind(AssertUnwindSafe(move || {
+        let _value = value;
+        if unwinding {
+            panic!("application panic");
+        }
+    }));
+    if unwinding {
+        assert_eq!(
+            result.unwrap_err().downcast_ref::<&str>(),
+            Some(&"application panic")
+        );
+    } else {
+        assert!(result.is_ok(), "dropping poisoned handles panicked");
+    }
+}
+
+#[derive(Debug)]
+struct PanickingSendSocket {
+    inner: Arc<dyn AsyncUdpSocket>,
+    panic_signal: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+}
+
+impl AsyncUdpSocket for PanickingSendSocket {
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
+        self.inner.clone().create_io_poller()
+    }
+
+    fn try_send(&self, transmit: &udp::Transmit) -> io::Result<()> {
+        let signal = self.panic_signal.lock().unwrap().take();
+        if let Some(signal) = signal {
+            signal.send(()).unwrap();
+            panic!("connection send panic");
+        }
+        self.inner.try_send(transmit)
+    }
+
+    fn max_transmit_segments(&self) -> usize {
+        self.inner.max_transmit_segments()
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context<'_>,
+        bufs: &mut [IoSliceMut<'_>],
+        meta: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        self.inner.poll_recv(cx, bufs, meta)
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.local_addr()
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        self.inner.max_receive_segments()
+    }
+
+    fn may_fragment(&self) -> bool {
+        self.inner.may_fragment()
+    }
 }
 
 #[derive(Default)]
