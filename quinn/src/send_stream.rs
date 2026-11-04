@@ -343,7 +343,9 @@ impl tokio::io::AsyncWrite for SendStream {
 
 impl Drop for SendStream {
     fn drop(&mut self) {
-        let mut conn = self.conn.state.lock("SendStream::drop");
+        let Some(mut conn) = self.conn.state.lock_for_drop("SendStream::drop") else {
+            return;
+        };
 
         // clean up any previously registered wakers
         conn.blocked_writers.remove(&self.stream);

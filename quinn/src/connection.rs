@@ -1025,7 +1025,9 @@ impl Drop for ConnectionRef {
             return;
         }
 
-        let conn = &mut *self.state.lock("drop");
+        let Some(mut conn) = self.state.lock_for_drop("drop") else {
+            return;
+        };
 
         if !conn.inner.is_closed() {
             // If the driver is alive, it's just it and us, so we'd better shut it down. If it's
