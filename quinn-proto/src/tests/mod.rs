@@ -2973,6 +2973,7 @@ fn datagram_expiration_unblocks_sender() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect_with(config);
     while pair.client_conn_mut(client_ch).poll().is_some() {}
+    let empty_space = pair.client_datagrams(client_ch).send_buffer_space();
     let deadline = pair.time + Duration::from_millis(5);
     let data = Bytes::from(vec![42; 400]);
     pair.client_datagrams(client_ch)
@@ -2991,7 +2992,10 @@ fn datagram_expiration_unblocks_sender() {
         pair.client_conn_mut(client_ch).stats().frame_tx.datagram,
         before
     );
-    assert_eq!(pair.client_datagrams(client_ch).send_buffer_space(), 512);
+    assert_eq!(
+        pair.client_datagrams(client_ch).send_buffer_space(),
+        empty_space
+    );
     assert!(
         iter::from_fn(|| pair.client_conn_mut(client_ch).poll())
             .any(|event| matches!(event, Event::DatagramsUnblocked))
@@ -3075,6 +3079,42 @@ fn datagram_larger_than_send_buffer_is_too_large() {
             .send(Bytes::from_static(&[0; 2]), false, None),
         Err(SendDatagramError::TooLarge)
     );
+}
+
+#[test]
+fn datagram_send_buffer_accounts_for_new_metadata() {
+    let _guard = subscribe();
+    for drop in [false, true] {
+        let mut pair = Pair::default();
+        let mut config = client_config();
+        let mut transport = TransportConfig::default();
+        transport.datagram_send_buffer_size(512);
+        config.transport_config(transport.into());
+        let (client_ch, server_ch) = pair.connect_with(config);
+        let available = pair.client_datagrams(client_ch).send_buffer_space();
+        assert!(available > 0 && available < 512);
+        assert_matches!(
+            pair.client_datagrams(client_ch)
+                .send(vec![0; available + 1].into(), drop, None),
+            Err(SendDatagramError::TooLarge)
+        );
+        let data = Bytes::from(vec![42; available]);
+        pair.client_datagrams(client_ch)
+            .send(data.clone(), drop, None)
+            .unwrap();
+        assert_eq!(pair.client_datagrams(client_ch).send_buffer_space(), 0);
+        assert_matches!(
+            pair.client_datagrams(client_ch)
+                .send(Bytes::new(), false, None),
+            Err(SendDatagramError::Blocked(_))
+        );
+        pair.drive();
+        assert_eq!(pair.server_datagrams(server_ch).recv(), Some(data));
+        assert_eq!(
+            pair.client_datagrams(client_ch).send_buffer_space(),
+            available
+        );
+    }
 }
 
 #[test]
@@ -4851,11 +4891,11 @@ fn oversized_datagrams_trigger_unblock() {
 
     let mut client_config = client_config();
     let mut transport_config = TransportConfig::default();
-    let send_buffer_size = transport_config.datagram_send_buffer_size;
     transport_config.initial_mtu(INITIAL_MTU as u16);
     client_config.transport_config(transport_config.into());
 
     let (client_ch, _) = pair.connect_with(client_config);
+    let empty_space = pair.client_datagrams(client_ch).send_buffer_space();
 
     // Send datagrams until the send buffer is full.
     let max_size = pair.client_datagrams(client_ch).max_size().unwrap();
@@ -4912,7 +4952,7 @@ fn oversized_datagrams_trigger_unblock() {
 
     assert_eq!(
         pair.client_datagrams(client_ch).send_buffer_space(),
-        send_buffer_size,
+        empty_space,
         "expected the send buffer to be empty after too large datagrams were dropped",
     );
     match pair.client_conn_mut(client_ch).poll() {

@@ -42,7 +42,12 @@ impl Datagrams<'_> {
             .max_size()
             .ok_or(SendDatagramError::UnsupportedByPeer)?;
         let send_buffer_size = self.conn.config.datagram_send_buffer_size;
-        if data.len() > Ord::min(max, send_buffer_size) {
+        if data.len() > max
+            || data
+                .len()
+                .checked_add(size_of::<QueuedDatagram>())
+                .is_none_or(|size| size > send_buffer_size)
+        {
             return Err(SendDatagramError::TooLarge);
         }
         if drop {
@@ -124,6 +129,7 @@ impl Datagrams<'_> {
             .config
             .datagram_send_buffer_size
             .saturating_sub(self.conn.datagrams.outgoing.memory_used())
+            .saturating_sub(size_of::<QueuedDatagram>())
     }
 }
 
@@ -322,7 +328,11 @@ impl DatagramSendBuffer {
     }
 
     fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
-        let Some(total) = self.memory_used().checked_add(datagram_len) else {
+        let Some(total) = self
+            .memory_used()
+            .checked_add(datagram_len)
+            .and_then(|size| size.checked_add(size_of::<QueuedDatagram>()))
+        else {
             return false;
         };
 
@@ -340,29 +350,29 @@ struct QueuedDatagram {
     deadline: Option<Instant>,
 }
 
-/// Errors that can arise when sending a datagram
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum SendDatagramError {
-    /// The peer does not support receiving datagram frames
-    #[error("datagrams not supported by peer")]
-    UnsupportedByPeer,
-    /// Datagram support is disabled locally
-    #[error("datagram support disabled")]
-    Disabled,
-    /// The datagram is larger than the connection can currently accommodate
-    ///
-    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
-    /// exceeded.
-    #[error("datagram too large")]
-    TooLarge,
-    /// Send would block
-    #[error("datagram send blocked")]
-    Blocked(Bytes),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_buffer_reserves_metadata_for_each_datagram() {
+        let mut buffer = DatagramSendBuffer::default();
+        let limit = 2 * size_of::<QueuedDatagram>() + 10;
+        buffer.push_back(QueuedDatagram {
+            frame: Datagram {
+                data: Bytes::from_static(b"first"),
+            },
+            deadline: None,
+        });
+        assert!(buffer.has_send_buffer_space(5, limit));
+        assert!(!buffer.has_send_buffer_space(6, limit));
+        assert!(!buffer.has_send_buffer_space(usize::MAX, usize::MAX));
+        buffer.make_space_for(6, limit);
+        assert!(buffer.is_empty());
+        assert!(buffer.has_send_buffer_space(6, limit));
+        assert!(!buffer.has_send_buffer_space(0, size_of::<QueuedDatagram>() - 1));
+        assert!(buffer.has_send_buffer_space(0, size_of::<QueuedDatagram>()));
+    }
 
     #[test]
     fn expiration_preserves_order_and_accounts_for_memory() {
@@ -455,7 +465,7 @@ mod tests {
             }
             match removal {
                 "send" => assert!(buffer.write(&mut Vec::new(), 1200)),
-                "capacity" => buffer.make_space_for(1, 5 + size_of::<QueuedDatagram>()),
+                "capacity" => buffer.make_space_for(1, 5 + 2 * size_of::<QueuedDatagram>()),
                 "size" => assert!(buffer.drop_oversized(4)),
                 _ => unreachable!(),
             }
@@ -550,4 +560,24 @@ mod tests {
         assert_eq!(state.outgoing.queue[0].frame.data.len(), 10);
         assert_eq!(state.outgoing.payload_bytes, 10);
     }
+}
+
+/// Errors that can arise when sending a datagram
+#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum SendDatagramError {
+    /// The peer does not support receiving datagram frames
+    #[error("datagrams not supported by peer")]
+    UnsupportedByPeer,
+    /// Datagram support is disabled locally
+    #[error("datagram support disabled")]
+    Disabled,
+    /// The datagram is larger than the connection can currently accommodate
+    ///
+    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
+    /// exceeded.
+    #[error("datagram too large")]
+    TooLarge,
+    /// Send would block
+    #[error("datagram send blocked")]
+    Blocked(Bytes),
 }
