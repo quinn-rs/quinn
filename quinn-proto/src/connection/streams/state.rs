@@ -1,3 +1,4 @@
+use std::mem::size_of;
 use std::{
     collections::{VecDeque, hash_map},
     convert::TryFrom,
@@ -67,6 +68,8 @@ impl StreamRecv {
 
 #[allow(unreachable_pub)] // fuzzing only
 pub struct StreamsState {
+    pub(crate) data_retransmissions: u64,
+    pub(crate) data_retransmitted_bytes: u64,
     pub(super) side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
     pub(super) send: FxHashMap<StreamId, Option<Box<Send>>>,
@@ -146,6 +149,33 @@ pub struct StreamsState {
 }
 
 impl StreamsState {
+    pub(crate) fn queue_stats(&self) -> crate::QueueStats {
+        let mut stats = crate::QueueStats {
+            metadata_allocated: (self.recv.capacity() * size_of::<(StreamId, Option<StreamRecv>)>()
+                + self.send.capacity() * size_of::<(StreamId, Option<Box<Send>>)>()
+                + self.free_recv.capacity() * size_of::<StreamRecv>())
+                as u64,
+            ..crate::QueueStats::default()
+        };
+        for receiver in self.recv.values().filter_map(Option::as_ref) {
+            let (StreamRecv::Free(recv) | StreamRecv::Open(recv)) = receiver;
+            let memory = recv.assembler.memory_usage();
+            stats.stream_receive_buffered += memory.buffered_bytes;
+            stats.stream_receive_allocated += memory.allocated_bytes;
+            stats.metadata_allocated += memory.metadata_bytes + size_of::<Recv>() as u64;
+        }
+        for receiver in &self.free_recv {
+            let (StreamRecv::Free(recv) | StreamRecv::Open(recv)) = receiver;
+            let memory = recv.assembler.memory_usage();
+            stats.metadata_allocated += memory.metadata_bytes + size_of::<Recv>() as u64;
+        }
+        for send in self.send.values().filter_map(Option::as_ref) {
+            let memory = send.pending.memory_usage();
+            stats.stream_send_buffered += memory.buffered_bytes;
+            stats.metadata_allocated += memory.metadata_bytes + size_of::<Send>() as u64;
+        }
+        stats
+    }
     #[allow(unreachable_pub)] // fuzzing only
     pub fn new(
         side: Side,
@@ -156,6 +186,8 @@ impl StreamsState {
         stream_receive_window: VarInt,
     ) -> Self {
         Self {
+            data_retransmissions: 0,
+            data_retransmitted_bytes: 0,
             side,
             send: FxHashMap::default(),
             recv: FxHashMap::default(),
@@ -643,7 +675,14 @@ impl StreamsState {
             // Now that we know the `StreamId`, we can better account for how many bytes
             // are required to encode it.
             let max_buf_size = max_buf_size - buf.len() - 1 - VarInt::size(id.into());
+            let retransmitting = stream.pending.has_retransmits();
             let (offsets, encode_length) = stream.pending.poll_transmit(max_buf_size);
+            if retransmitting && !offsets.is_empty() {
+                self.data_retransmissions = self.data_retransmissions.saturating_add(1);
+                self.data_retransmitted_bytes = self
+                    .data_retransmitted_bytes
+                    .saturating_add(offsets.end - offsets.start);
+            }
             let fin = offsets.end == stream.pending.offset()
                 && matches!(stream.state, SendState::DataSent { .. });
             if fin {
@@ -1063,6 +1102,75 @@ mod tests {
             (1024 * 1024u32).into(),
             (1024 * 1024u32).into(),
         )
+    }
+
+    /// Queue gauges track retained receive allocations through partial reads and release.
+    #[test]
+    fn queue_gauges_follow_buffer_ownership() {
+        let mut state = StreamsState::new(
+            Side::Server,
+            0_u32.into(),
+            1_u32.into(),
+            4096,
+            4096_u32.into(),
+            4096_u32.into(),
+        );
+        let id = StreamId::new(Side::Client, Dir::Bi, 0);
+        let _ = state
+            .received(
+                frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: false,
+                    data: Bytes::from_static(b"abcdefgh"),
+                },
+                64,
+            )
+            .unwrap();
+        let stats = state.queue_stats();
+        assert_eq!(stats.stream_receive_buffered, 8);
+        assert_eq!(stats.stream_receive_allocated, 64);
+        let receiver = state.recv.get_mut(&id).unwrap().as_mut().unwrap();
+        let (StreamRecv::Free(recv) | StreamRecv::Open(recv)) = receiver;
+        assert_eq!(recv.assembler.read(3, true).unwrap().bytes, &b"abc"[..]);
+        let stats = state.queue_stats();
+        assert_eq!(stats.stream_receive_buffered, 5);
+        assert_eq!(stats.stream_receive_allocated, 64);
+        let receiver = state.recv.get_mut(&id).unwrap().as_mut().unwrap();
+        let (StreamRecv::Free(recv) | StreamRecv::Open(recv)) = receiver;
+        assert_eq!(recv.assembler.read(8, true).unwrap().bytes, &b"defgh"[..]);
+        let stats = state.queue_stats();
+        assert_eq!(stats.stream_receive_buffered, 0);
+        assert_eq!(stats.stream_receive_allocated, 0);
+        assert!(stats.metadata_allocated > 0);
+    }
+
+    /// Retransmission counters count emitted data attempts, not scheduling a retry or new data.
+    #[test]
+    fn retransmission_stats_count_emitted_stream_data() {
+        let mut state = StreamsState::new(
+            Side::Client,
+            0_u32.into(),
+            0_u32.into(),
+            4096,
+            4096_u32.into(),
+            4096_u32.into(),
+        );
+        let id = StreamId::new(Side::Client, Dir::Bi, 0);
+        let mut send = Send::new(4096_u32.into());
+        send.pending.write(Bytes::from_static(b"abcdefgh"));
+        state.send.insert(id, Some(send));
+        state.pending.push_pending(id, 0);
+        let first = state.write_stream_frames(&mut Vec::new(), 128, true);
+        assert_eq!(first.len(), 1);
+        assert_eq!(state.data_retransmissions, 0);
+        state.retransmit(first[0].clone());
+        assert_eq!(state.data_retransmissions, 0);
+        let retry = state.write_stream_frames(&mut Vec::new(), 128, true);
+        assert_eq!(retry.len(), 1);
+        assert_eq!(state.data_retransmissions, 1);
+        assert_eq!(state.data_retransmitted_bytes, 8);
+        assert_eq!(state.queue_stats().stream_send_buffered, 8);
     }
 
     #[test]
