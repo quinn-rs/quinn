@@ -256,6 +256,16 @@ impl ConnectionDriver {
     }
 }
 
+impl Drop for ConnectionDriver {
+    fn drop(&mut self) {
+        // Drop the socket and its poller to avoid keeping the endpoint socket open
+        if let Some(mut conn) = self.conn.state.lock_for_drop("drop") {
+            conn.io_poller = None;
+            conn.socket = None;
+        }
+    }
+}
+
 impl Future for ConnectionDriver {
     type Output = Result<(), io::Error>;
 
@@ -997,8 +1007,8 @@ impl ConnectionRef {
                 blocked_readers: FxHashMap::default(),
                 stopped: FxHashMap::default(),
                 error: None,
-                io_poller: socket.clone().create_io_poller(),
-                socket,
+                io_poller: Some(socket.clone().create_io_poller()),
+                socket: Some(socket),
                 runtime,
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
@@ -1082,8 +1092,10 @@ pub(crate) struct State {
     pub(crate) stopped: FxHashMap<StreamId, Arc<Notify>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
-    socket: Arc<dyn AsyncUdpSocket>,
-    io_poller: Pin<Box<dyn UdpPoller>>,
+    /// None once the connection driver is dropped
+    socket: Option<Arc<dyn AsyncUdpSocket>>,
+    /// None once the connection driver is dropped
+    io_poller: Option<Pin<Box<dyn UdpPoller>>>,
     runtime: Arc<dyn Runtime>,
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
@@ -1092,13 +1104,13 @@ pub(crate) struct State {
 
 impl State {
     fn drive_transmit(&mut self, cx: &mut Context) -> io::Result<bool> {
+        let socket = self.socket.as_ref().unwrap();
+        let io_poller = self.io_poller.as_mut().unwrap();
+
         let now = self.runtime.now();
         let mut transmits = 0;
 
-        let max_datagrams = self
-            .socket
-            .max_transmit_segments()
-            .min(MAX_TRANSMIT_SEGMENTS);
+        let max_datagrams = socket.max_transmit_segments().min(MAX_TRANSMIT_SEGMENTS);
 
         loop {
             // Retry the last transmit, or get a new one.
@@ -1123,17 +1135,14 @@ impl State {
                 }
             };
 
-            if self.io_poller.as_mut().poll_writable(cx)?.is_pending() {
+            if io_poller.as_mut().poll_writable(cx)?.is_pending() {
                 // Retry after a future wakeup
                 self.buffered_transmit = Some(t);
                 return Ok(false);
             }
 
             let len = t.size;
-            let retry = match self
-                .socket
-                .try_send(&udp_transmit(&t, &self.send_buffer[..len]))
-            {
+            let retry = match socket.try_send(&udp_transmit(&t, &self.send_buffer[..len])) {
                 Ok(()) => false,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => true,
                 Err(e) => return Err(e),
@@ -1175,8 +1184,8 @@ impl State {
         loop {
             match self.conn_events.poll_recv(cx) {
                 Poll::Ready(Some(ConnectionEvent::Rebind(socket))) => {
-                    self.socket = socket;
-                    self.io_poller = self.socket.clone().create_io_poller();
+                    self.io_poller = Some(socket.clone().create_io_poller());
+                    self.socket = Some(socket);
                     self.inner.local_address_changed();
                 }
                 Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
