@@ -261,6 +261,13 @@ impl ConnectionDriver {
     }
 }
 
+impl Drop for ConnectionDriver {
+    fn drop(&mut self) {
+        // Drop the sender to avoid keeping the endpoint socket open
+        self.conn.state.lock("drop").sender = None;
+    }
+}
+
 impl Future for ConnectionDriver {
     type Output = Result<(), io::Error>;
 
@@ -1166,7 +1173,8 @@ pub(crate) struct State {
     pub(crate) stopped: FxHashMap<StreamId, Arc<Notify>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
-    sender: Pin<Box<dyn UdpSender>>,
+    /// None once the connection driver is dropped
+    sender: Option<Pin<Box<dyn UdpSender>>>,
     runtime: Arc<dyn Runtime>,
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
@@ -1202,7 +1210,7 @@ impl State {
             blocked_readers: FxHashMap::default(),
             stopped: FxHashMap::default(),
             error: None,
-            sender,
+            sender: Some(sender),
             runtime,
             send_buffer: Vec::new(),
             buffered_transmit: None,
@@ -1211,13 +1219,12 @@ impl State {
     }
 
     fn drive_transmit(&mut self, cx: &mut Context<'_>) -> io::Result<bool> {
+        let sender = self.sender.as_mut().unwrap();
+
         let now = self.runtime.now();
         let mut transmits = 0;
 
-        let max_datagrams = self
-            .sender
-            .max_transmit_segments()
-            .min(MAX_TRANSMIT_SEGMENTS);
+        let max_datagrams = sender.max_transmit_segments().min(MAX_TRANSMIT_SEGMENTS);
 
         loop {
             // Retry the last transmit, or get a new one.
@@ -1243,8 +1250,7 @@ impl State {
             };
 
             let len = t.size;
-            match self
-                .sender
+            match sender
                 .as_mut()
                 .poll_send(&udp_transmit(&t, &self.send_buffer[..len]), cx)
             {
@@ -1284,7 +1290,7 @@ impl State {
         loop {
             match self.conn_events.poll_recv(cx) {
                 Poll::Ready(Some(ConnectionEvent::Rebind(sender))) => {
-                    self.sender = sender;
+                    self.sender = Some(sender);
                     self.inner.local_address_changed();
                 }
                 Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
