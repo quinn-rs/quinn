@@ -60,9 +60,9 @@ impl SentPackets {
         self.packets.values_mut()
     }
 
-    /// Consume the map, yielding present entries in increasing packet-number order.
-    pub(super) fn into_values(self) -> impl Iterator<Item = SentPacket> {
-        self.packets.into_values()
+    /// Consume the map, yielding present packet numbers and entries in increasing packet-number order.
+    pub(super) fn into_iter(self) -> impl Iterator<Item = (u64, SentPacket)> {
+        self.packets.into_iter()
     }
 }
 
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn values_mut_and_into_values() {
+    fn values_mut_and_into_iter() {
         let mut m = SentPackets::default();
         for pn in 0..4 {
             m.insert(pn, packet(pn as u16));
@@ -182,8 +182,10 @@ mod tests {
         assert_eq!(m.get(0).map(|p| p.size), Some(100));
         assert_eq!(m.get(2).map(|p| p.size), Some(102));
         assert_eq!(
-            m.into_values().map(|p| p.size).collect::<Vec<_>>(),
-            vec![100, 102, 103]
+            m.into_iter()
+                .map(|(pn, p)| (pn, p.size))
+                .collect::<Vec<_>>(),
+            vec![(0, 100), (2, 102), (3, 103)]
         );
     }
 
@@ -195,8 +197,11 @@ mod tests {
         }
         let taken = std::mem::take(&mut m);
         assert_eq!(
-            taken.into_values().map(|p| p.size).collect::<Vec<_>>(),
-            vec![5, 6, 7]
+            taken
+                .into_iter()
+                .map(|(pn, p)| (pn, p.size))
+                .collect::<Vec<_>>(),
+            vec![(5, 5), (6, 6), (7, 7)]
         );
         assert_eq!(range_of(&m, ..), vec![]);
         // Reusable after take.
