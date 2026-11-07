@@ -16,12 +16,12 @@ use crate::{
 pub(crate) fn send(
     state: &UdpSocketState,
     io: SockRef<'_>,
-    transmit: &Transmit<'_>,
-) -> io::Result<()> {
+    transmit: Transmit<'_>,
+) -> io::Result<usize> {
     if state.is_apple_fast_path_enabled() {
         send_via_sendmsg_x(state, io, transmit)
     } else {
-        send_single(state, io, transmit)
+        send_single(state, io, &transmit.limit(1))
     }
 }
 
@@ -29,29 +29,23 @@ pub(crate) fn send(
 fn send_via_sendmsg_x(
     state: &UdpSocketState,
     io: SockRef<'_>,
-    transmit: &Transmit<'_>,
-) -> io::Result<()> {
+    transmit: Transmit<'_>,
+) -> io::Result<usize> {
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
     let mut iovs = unsafe { mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
     let mut ctrls = [cmsg::Aligned([0u8; cmsg::LEN]); BATCH_SIZE];
     let addr = socket2::SockAddr::from(transmit.destination);
-    let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
-    let mut cnt = 0;
-    debug_assert!(transmit.contents.len().div_ceil(segment_size) <= BATCH_SIZE);
-    for (i, chunk) in transmit
-        .contents
-        .chunks(segment_size)
-        .enumerate()
-        .take(BATCH_SIZE)
-    {
+
+    let mut prepare = |i: usize, chunk: &[u8]| -> io::Result<()> {
+        let segment = Transmit {
+            destination: transmit.destination,
+            ecn: transmit.ecn,
+            contents: chunk,
+            segment_size: None,
+            src_ip: transmit.src_ip,
+        };
         prepare_msg_x(
-            &Transmit {
-                destination: transmit.destination,
-                ecn: transmit.ecn,
-                contents: chunk,
-                segment_size: Some(chunk.len()),
-                src_ip: transmit.src_ip,
-            },
+            &segment,
             &addr,
             &mut hdrs[i],
             &mut iovs[i],
@@ -61,13 +55,45 @@ fn send_via_sendmsg_x(
         );
         hdrs[i].msg_datalen = chunk.len();
         state.check_send_buffer_limit(chunk.len(), &hdrs[i])?;
-        cnt += 1;
-    }
-    let Some(sendmsg_x) = state.resolve_apple_fast_fn(sendmsg_x_fn) else {
-        return send_single(state, io, transmit);
+
+        Ok(())
     };
-    retry_if_interrupted(|| unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) })?;
-    Ok(())
+
+    debug_assert!(transmit.datagram_count() <= BATCH_SIZE);
+    let cnt = if transmit.contents.is_empty() {
+        prepare(0, &[])?;
+        1
+    } else {
+        let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
+        let mut cnt = 0;
+
+        for (i, chunk) in transmit
+            .contents
+            .chunks(segment_size)
+            .enumerate()
+            .take(BATCH_SIZE)
+        {
+            prepare(i, chunk)?;
+            cnt += 1;
+        }
+
+        cnt
+    };
+
+    let Some(sendmsg_x) = state.resolve_apple_fast_fn(sendmsg_x_fn) else {
+        return send_single(state, io, &transmit.limit(1));
+    };
+
+    let sent = retry_if_interrupted(|| unsafe {
+        sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0)
+    })? as usize;
+
+    if sent == 0 {
+        return Err(io::ErrorKind::WriteZero.into());
+    }
+    debug_assert!(sent <= cnt);
+
+    Ok(sent)
 }
 
 /// Prepares an `msghdr_x` for use with `sendmsg_x`
