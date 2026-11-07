@@ -9,7 +9,7 @@ pub use rustls::Error;
 #[cfg(feature = "__rustls-post-quantum-test")]
 use rustls::NamedGroup;
 use rustls::{
-    self, CipherSuite,
+    self, CipherSuite, HandshakeKind,
     client::danger::ServerCertVerifier,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
@@ -134,7 +134,14 @@ impl crypto::Session for TlsSession {
                 Connection::Client(_) => false,
                 Connection::Server(session) => session.server_name().is_some(),
             };
-            if self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
+            // After a HelloRetryRequest, the server knows the name but picks the protocol only
+            // from the client's next ClientHello
+            let retried =
+                self.inner.handshake_kind() == Some(HandshakeKind::FullWithHelloRetryRequest);
+            if self.inner.alpn_protocol().is_some()
+                || (have_server_name && !retried)
+                || !self.is_handshaking()
+            {
                 self.got_handshake_data = true;
                 return Ok(true);
             }
