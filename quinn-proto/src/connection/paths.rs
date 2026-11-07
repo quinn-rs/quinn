@@ -220,6 +220,11 @@ impl PathData {
         event
     }
 
+    /// Whether `packet` counts toward this path's bytes in flight
+    pub(super) fn is_in_flight(&self, packet: &SentPacket) -> bool {
+        packet.size != 0 && packet.path_generation == self.generation
+    }
+
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
