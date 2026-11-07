@@ -21,8 +21,7 @@ use crate::{
 /// across QUIC versions), which gives us the destination CID and allows us
 /// to inspect the version and packet type (which depends on the version).
 /// This information allows us to fully decode and decrypt the packet.
-#[cfg_attr(test, derive(Clone))]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PartialDecode {
     plain_header: ProtectedHeader,
     buf: io::Cursor<BytesMut>,
@@ -938,17 +937,15 @@ mod tests {
     #[test]
     fn header_encoding() {
         use crate::Side;
-        use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
-        #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-        use rustls::crypto::aws_lc_rs::default_provider;
-        #[cfg(feature = "rustls-ring")]
-        use rustls::crypto::ring::default_provider;
+        use crate::crypto::rustls::{
+            configured_provider, initial_keys, initial_suite_from_provider,
+        };
         use rustls::quic::Version;
 
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
-        let provider = default_provider();
+        let provider = configured_provider();
 
-        let suite = initial_suite_from_provider(&std::sync::Arc::new(provider)).unwrap();
+        let suite = initial_suite_from_provider(&provider).unwrap();
         let client = initial_keys(Version::V1, dcid, Side::Client, &suite);
         let mut buf = Vec::new();
         let header = Header::Initial(InitialHeader {

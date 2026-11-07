@@ -10,7 +10,7 @@ use crate::range_set::RangeSet;
 
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug, Default)]
-pub(super) struct Assembler {
+pub(crate) struct Assembler {
     state: State,
     /// Buffered chunks, in `Buffer::cmp` order
     data: VecDeque<Buffer>,
@@ -26,7 +26,7 @@ pub(super) struct Assembler {
 }
 
 impl Assembler {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -57,7 +57,7 @@ impl Assembler {
     }
 
     /// Get the the next chunk
-    pub(super) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
+    pub(crate) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
         while ordered && self.data.front()?.end() <= self.bytes_read {
             // Next buffer ends before the current read index
             let front = self.data.pop_front().unwrap();
@@ -154,7 +154,7 @@ impl Assembler {
 
     // Note: If a packet contains many frames from the same stream, the estimated over-allocation
     // will be much higher because we are counting the same allocation multiple times.
-    pub(super) fn insert(
+    pub(crate) fn insert(
         &mut self,
         mut offset: u64,
         mut bytes: Bytes,
@@ -228,8 +228,14 @@ impl Assembler {
     }
 
     /// Number of bytes consumed by the application
-    pub(super) fn bytes_read(&self) -> u64 {
+    pub(crate) fn bytes_read(&self) -> u64 {
         self.bytes_read
+    }
+
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+    pub(crate) fn skip_to(&mut self, offset: u64) {
+        self.bytes_read = self.bytes_read.max(offset);
+        self.end = self.end.max(offset);
     }
 
     /// Discard all buffered data
