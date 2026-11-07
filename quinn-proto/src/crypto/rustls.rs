@@ -553,8 +553,12 @@ impl crypto::ServerConfig for QuicServerConfig {
         Ok(initial_keys(version, dst_cid, Side::Server, &self.initial))
     }
 
+    fn supports_version(&self, version: u32) -> bool {
+        interpret_version(version).is_ok()
+    }
+
     fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
-        // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
+        // Safe: `initial_keys()` or `supports_version()` already accepted `version`
         let version = interpret_version(version).unwrap();
         let (nonce, key) = match version {
             Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
