@@ -120,6 +120,13 @@ impl Endpoint {
     /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
     /// server will only be able to accept connections from IPv6 clients. An IPv4 server is never
     /// dual-stack.
+    ///
+    /// Note that an endpoint participates in handshakes only while the application is accepting
+    /// connections: call [`accept()`](Self::accept), typically in a loop, and accept the
+    /// [`Incoming`]s it yields. Connection attempts that are never accepted
+    /// are buffered without any response being sent, so clients will simply time out — an
+    /// endpoint whose `accept()` future is never polled is a common cause of "mysterious"
+    /// handshake timeouts.
     #[cfg(all(
         not(wasm_browser),
         any(feature = "runtime-tokio", feature = "runtime-smol"),
@@ -192,6 +199,10 @@ impl Endpoint {
     /// can be `await`ed to obtain the final [`Connection`](crate::Connection), or used to e.g.
     /// filter connection attempts or force address validation, or converted into an intermediate
     /// `Connecting` future which can be used to e.g. send 0.5-RTT data.
+    ///
+    /// The server's part of the handshake does not begin until the yielded [`Incoming`] is
+    /// accepted; attempts that are never accepted are buffered without any response being
+    /// sent, and the client will eventually time out.
     pub fn accept(&self) -> Accept<'_> {
         Accept {
             endpoint: self,
