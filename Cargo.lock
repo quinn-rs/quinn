@@ -389,6 +389,7 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
+ "rustls-aws-lc-rs",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -456,6 +457,7 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
+ "rustls-ring",
 ]
 
 [[package]]
@@ -1829,6 +1831,8 @@ dependencies = [
  "quinn-proto",
  "rcgen",
  "rustls",
+ "rustls-aws-lc-rs",
+ "rustls-util",
  "serde",
  "serde_json",
  "socket2",
@@ -1998,6 +2002,9 @@ dependencies = [
  "rcgen",
  "rustc-hash",
  "rustls",
+ "rustls-aws-lc-rs",
+ "rustls-ring",
+ "rustls-util",
  "smol",
  "socket2",
  "thiserror 2.0.21",
@@ -2027,8 +2034,11 @@ dependencies = [
  "ring",
  "rustc-hash",
  "rustls",
+ "rustls-aws-lc-rs",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "rustls-ring",
+ "rustls-util",
  "slab",
  "thiserror 2.0.21",
  "tinyvec",
@@ -2210,16 +2220,24 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.46"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
+version = "0.24.0-dev.2"
+source = "git+https://github.com/rustls/rustls.git?branch=main#35a8f439137d45ed18962807d38684b0c6bc6e3f"
 dependencies = [
- "aws-lc-rs",
- "log",
- "once_cell",
- "ring",
  "rustls-pki-types",
  "rustls-webpki",
+ "subtle",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls-aws-lc-rs"
+version = "0.24.0-dev.2"
+source = "git+https://github.com/rustls/rustls.git?branch=main#35a8f439137d45ed18962807d38684b0c6bc6e3f"
+dependencies = [
+ "aws-lc-rs",
+ "rustls",
+ "rustls-pki-types",
  "subtle",
  "zeroize",
 ]
@@ -2248,19 +2266,16 @@ dependencies = [
 
 [[package]]
 name = "rustls-platform-verifier"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1167586491e2b18b8bfbb293e8180ec17c201c4f076d7cb3070ca964e7598f98"
+version = "0.8.0"
+source = "git+https://github.com/iadev09/rustls-platform-verifier.git?rev=d4b254f084857bb4451c3b33c5f5a38475e5e860#d4b254f084857bb4451c3b33c5f5a38475e5e860"
 dependencies = [
  "core-foundation",
  "core-foundation-sys",
  "jni",
  "log",
- "once_cell",
  "rustls",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
- "rustls-webpki",
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
@@ -2270,17 +2285,35 @@ dependencies = [
 [[package]]
 name = "rustls-platform-verifier-android"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eec689c0bc40ff2458a5977b6619cb718087084a18e02a131c599b62d05e1a5f"
+source = "git+https://github.com/iadev09/rustls-platform-verifier.git?rev=d4b254f084857bb4451c3b33c5f5a38475e5e860#d4b254f084857bb4451c3b33c5f5a38475e5e860"
+
+[[package]]
+name = "rustls-ring"
+version = "0.24.0-dev.2"
+source = "git+https://github.com/rustls/rustls.git?branch=main#35a8f439137d45ed18962807d38684b0c6bc6e3f"
+dependencies = [
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls-util"
+version = "0.24.0-dev.2"
+source = "git+https://github.com/rustls/rustls.git?branch=main#35a8f439137d45ed18962807d38684b0c6bc6e3f"
+dependencies = [
+ "rustls",
+ "tracing",
+]
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.16"
+version = "0.104.0-alpha.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
+checksum = "e4f05eb03bb89c8b88908947d1add6fbe564e58db7b686dbda59691aaec0e450"
 dependencies = [
- "aws-lc-rs",
- "ring",
  "rustls-pki-types",
  "untrusted",
 ]
