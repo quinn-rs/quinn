@@ -53,6 +53,9 @@ pub struct Endpoint {
     allow_mtud: bool,
     /// Time at which a stateless reset was most recently sent
     last_stateless_reset: Option<Instant>,
+    /// Time at which a warning about a retransmitted Initial for an unaccepted connection
+    /// attempt was most recently emitted
+    last_unaccepted_retransmit_warn: Option<Instant>,
     /// Buffered Initial and 0-RTT messages for pending incoming connections
     incoming_buffers: Slab<IncomingBuffer>,
     all_incoming_buffers_total_bytes: u64,
@@ -84,6 +87,7 @@ impl Endpoint {
             server_config,
             allow_mtud,
             last_stateless_reset: None,
+            last_unaccepted_retransmit_warn: None,
             incoming_buffers: Slab::new(),
             all_incoming_buffers_total_bytes: 0,
         }
@@ -218,6 +222,26 @@ impl Endpoint {
             // Handle packet on existing connection
             match route_to {
                 RouteDatagramTo::Incoming(incoming_idx) => {
+                    // A client retransmitting its Initial means it is still waiting for the
+                    // server's first flight. If the attempt hasn't been accepted yet, the
+                    // handshake will not begin no matter how many retransmits arrive, so
+                    // surface this once per interval rather than leaving the operator with a
+                    // silent timeout that looks like a transport bug.
+                    if event.first_decode.is_initial()
+                        && self
+                            .last_unaccepted_retransmit_warn
+                            .is_none_or(|last| last + self.config.min_reset_interval <= event.now)
+                    {
+                        warn!(
+                            dst_cid = %event.first_decode.dst_cid(),
+                            remote = %event.remote,
+                            "buffering retransmitted Initial for a connection attempt that has \
+                             not been accepted; the handshake will not begin until the \
+                             endpoint's accept() future is polled"
+                        );
+                        self.last_unaccepted_retransmit_warn = Some(event.now);
+                    }
+
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
                     let config = &incoming_buffer.server_config;
 
