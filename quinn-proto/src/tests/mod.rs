@@ -30,6 +30,7 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
+    shared::{ConnectionEventInner, DatagramConnectionEvent},
     transport_parameters::TransportParameters,
 };
 mod util;
@@ -666,6 +667,74 @@ fn zero_rtt_happypath() {
     );
     let _ = chunks.finalize();
     assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+}
+
+#[test]
+fn client_discards_0rtt_packets() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let config = client_config();
+
+    // Establish normal connection
+    let client_ch = pair.begin_connect(config.clone());
+    pair.drive();
+    pair.server.assert_accept();
+    let now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .close(now, VarInt(0), [][..].into());
+    pair.drive();
+
+    pair.client.addr = SocketAddr::new(
+        Ipv6Addr::LOCALHOST.into(),
+        CLIENT_PORTS.lock().unwrap().next().unwrap(),
+    );
+    info!("resuming session");
+    let client_ch = pair.begin_connect(config);
+    assert!(pair.client_conn_mut(client_ch).has_0rtt());
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    const MSG: &[u8] = b"Hello, 0-RTT!";
+    pair.client_send(client_ch, s).write(MSG).unwrap();
+    pair.client.drive_outgoing(pair.time);
+
+    // Reflect the client's own 0-RTT packet, coalesced after the Initial in its first datagram,
+    // back to it. The client holds the keys to decrypt it, but RFC 9001 §5.6 requires it to
+    // discard 0-RTT packets without attempting to.
+    let decode = |data| {
+        PartialDecode::new(
+            data,
+            &FixedLengthConnectionIdParser::new(0),
+            DEFAULT_SUPPORTED_VERSIONS,
+            true,
+        )
+        .unwrap()
+    };
+    let (_, datagram) = pair.client.outbound.front().unwrap();
+    let (initial, rest) = decode(BytesMut::from(&datagram[..]));
+    assert!(initial.is_initial());
+    let (first_decode, remaining) = decode(rest.unwrap());
+    assert!(first_decode.is_0rtt());
+    assert!(remaining.is_none());
+    let event = ConnectionEvent(ConnectionEventInner::Datagram(DatagramConnectionEvent {
+        now: pair.time,
+        remote: pair.server.addr,
+        ecn: None,
+        first_decode,
+        remaining,
+    }));
+    pair.client_conn_mut(client_ch).handle_event(event);
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+    assert_eq!(pair.client_conn_mut(client_ch).stats().frame_rx.stream, 0);
+
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Connected)
+    );
+    assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
 }
 
 #[test]
