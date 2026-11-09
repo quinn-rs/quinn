@@ -2,7 +2,10 @@ use std::{
     convert::TryInto,
     iter, mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use assert_matches::assert_matches;
@@ -13,12 +16,11 @@ use hex_literal::hex;
 use rand::Rng;
 #[cfg(feature = "ring")]
 use ring::hmac;
-#[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
-use rustls::crypto::aws_lc_rs::default_provider;
-#[cfg(feature = "rustls-ring")]
-use rustls::crypto::ring::default_provider;
 use rustls::{
-    AlertDescription, RootCertStore,
+    RootCertStore, TlsInputBuffer,
+    crypto::Identity,
+    enums::{ApplicationProtocol, ProtocolVersion},
+    error::AlertDescription,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     server::WebPkiClientVerifier,
 };
@@ -28,7 +30,7 @@ use super::*;
 use crate::{
     Duration, Instant,
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
-    crypto::rustls::QuicServerConfig,
+    crypto::rustls::{QuicInputBuffer, QuicServerConfig},
     frame::FrameStruct,
     packet::{Header, InitialHeader, PacketNumber},
     transport_parameters::TransportParameters,
@@ -214,6 +216,62 @@ fn lifecycle() {
 }
 
 #[test]
+fn custom_tls_input_buffer() {
+    struct TestInput {
+        inner: rustls::VecInput,
+        received: Arc<AtomicUsize>,
+    }
+
+    impl QuicInputBuffer for TestInput {
+        fn extend_from_slice(&mut self, mut bytes: &[u8]) {
+            self.received.fetch_add(bytes.len(), Ordering::Relaxed);
+            while !bytes.is_empty() {
+                self.inner.read(&mut bytes).unwrap();
+            }
+        }
+    }
+
+    impl TlsInputBuffer for TestInput {
+        fn slice_mut(&mut self) -> &mut [u8] {
+            self.inner.slice_mut()
+        }
+
+        fn discard(&mut self, num_bytes: usize) {
+            self.inner.discard(num_bytes);
+        }
+
+        fn received_close_notify(&mut self) {
+            self.inner.received_close_notify();
+        }
+
+        fn has_seen_eof(&self) -> bool {
+            self.inner.has_seen_eof()
+        }
+    }
+
+    let received = Arc::new(AtomicUsize::new(0));
+    let factory_received = received.clone();
+    let created = Arc::new(AtomicUsize::new(0));
+    let factory_created = created.clone();
+    let mut crypto = server_crypto();
+    crypto.tls_input_buffer_factory(move || {
+        factory_created.fetch_add(1, Ordering::Relaxed);
+        TestInput {
+            inner: rustls::VecInput::default(),
+            received: factory_received.clone(),
+        }
+    });
+    let config = ServerConfig::with_crypto(Arc::new(crypto));
+    for _ in 0..2 {
+        let mut pair = Pair::new(Default::default(), config.clone());
+        pair.connect();
+    }
+
+    assert_eq!(created.load(Ordering::Relaxed), 2);
+    assert_ne!(received.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn stats_include_congestion_controller_bandwidth_estimate() {
     const WINDOW: u64 = 12_000;
     const BANDWIDTH_ESTIMATE: u64 = 4_000_000;
@@ -285,11 +343,11 @@ fn stats_include_congestion_controller_bandwidth_estimate() {
 }
 
 #[test]
-fn draft_version_compat() {
+fn compatible_version() {
     let _guard = subscribe();
 
     let mut client_config = client_config();
-    client_config.version(0xff00_0020);
+    client_config.version(0xff00_0022);
 
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect_with(client_config);
@@ -555,6 +613,70 @@ fn stateless_reset_limit() {
 }
 
 #[test]
+fn retry_integrity() {
+    // RFC 9001, Appendix A.4: https://www.rfc-editor.org/rfc/rfc9001.html#section-a.4
+    let orig_dst_cid = ConnectionId::new(&hex!("8394c8f03e515708"));
+    let packet = hex!("ff000000010008f067a5502a4262b5746f6b656e");
+    let tag = hex!("04a265ba2eff4d829058fb3f0f2496ba");
+    assert_eq!(
+        server_config().crypto.retry_tag(1, orig_dst_cid, &packet),
+        tag
+    );
+
+    let mut pair = Pair::default();
+    let client = pair.begin_connect(client_config());
+    let session = pair.client_conn_mut(client).crypto_session();
+    assert!(session.is_valid_retry(orig_dst_cid, &packet, &tag));
+    assert!(!session.is_valid_retry(orig_dst_cid, &packet, &tag[..15]));
+
+    let mut corrupted_tag = tag;
+    corrupted_tag[0] ^= 1;
+    assert!(!session.is_valid_retry(orig_dst_cid, &packet, &corrupted_tag));
+
+    let mut corrupted_packet = packet;
+    corrupted_packet[0] ^= 1;
+    assert!(!session.is_valid_retry(orig_dst_cid, &corrupted_packet, &tag));
+}
+
+#[test]
+fn peer_identity() {
+    let mut pair = Pair::default();
+    let (client, server) = pair.connect();
+
+    let identity = pair
+        .client_conn_mut(client)
+        .crypto_session()
+        .peer_identity()
+        .unwrap()
+        .downcast::<Identity<'static>>()
+        .unwrap();
+    let Identity::X509(identity) = *identity else {
+        panic!("expected a certificate chain");
+    };
+    assert_eq!(identity.end_entity, CERTIFIED_KEY.cert.der().clone());
+    assert!(identity.intermediates.is_empty());
+    assert!(
+        pair.server_conn_mut(server)
+            .crypto_session()
+            .peer_identity()
+            .is_none()
+    );
+}
+
+#[test]
+fn export_keying_material_before_handshake() {
+    let mut pair = Pair::default();
+    let client = pair.begin_connect(client_config());
+
+    assert!(
+        pair.client_conn_mut(client)
+            .crypto_session()
+            .export_keying_material(&mut [0; 64], b"label", b"context")
+            .is_err()
+    );
+}
+
+#[test]
 fn export_keying_material() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -578,6 +700,28 @@ fn export_keying_material() {
         .unwrap();
 
     assert_eq!(&client_buf[..], &server_buf[..]);
+
+    let session = pair.client_conn_mut(client_ch).crypto_session();
+    let mut repeated = [0; 64];
+    session
+        .export_keying_material(&mut repeated, LABEL, CONTEXT)
+        .unwrap();
+    assert_eq!(client_buf, repeated);
+
+    session
+        .export_keying_material(&mut repeated, b"another_label", CONTEXT)
+        .unwrap();
+    assert_ne!(client_buf, repeated);
+
+    assert!(
+        session
+            .export_keying_material(&mut [], LABEL, CONTEXT)
+            .is_err()
+    );
+    session
+        .export_keying_material(&mut repeated, LABEL, CONTEXT)
+        .unwrap();
+    assert_eq!(client_buf, repeated);
 }
 
 #[test]
@@ -710,7 +854,7 @@ fn reject_self_signed_server_cert() {
 
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(error)})
-                    if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCA.into()));
+                    if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCa.into()));
 }
 
 #[test]
@@ -725,16 +869,17 @@ fn reject_missing_client_cert() {
     let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.signing_key.serialize_der());
     let cert = CERTIFIED_KEY.cert.der().clone();
 
-    let provider = Arc::new(default_provider());
-    let config = rustls::ServerConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_client_cert_verifier(
-            WebPkiClientVerifier::builder_with_provider(Arc::new(store), provider)
+    let provider = crypto::rustls::configured_provider();
+    let config = rustls::ServerConfig::builder(provider.clone())
+        .with_client_cert_verifier(Arc::new(
+            WebPkiClientVerifier::builder(Arc::new(store), &provider)
                 .build()
                 .unwrap(),
+        ))
+        .with_single_cert(
+            Arc::new(Identity::from_cert_chain(vec![cert]).unwrap()),
+            PrivateKeyDer::from(key),
         )
-        .with_single_cert(vec![cert], PrivateKeyDer::from(key))
         .unwrap();
     let config = QuicServerConfig::try_from(config).unwrap();
 
@@ -954,7 +1099,7 @@ fn zero_rtt_rejection() {
     // the existing `ClientConfig` and change the ALPN protocols to make that happen.
     let this = Arc::get_mut(&mut client_crypto).expect("QuicClientConfig is shared");
     let inner = Arc::get_mut(&mut this.inner).expect("QuicClientConfig.inner is shared");
-    inner.alpn_protocols = vec!["bar".into()];
+    inner.alpn_protocols = vec![ApplicationProtocol::from(b"bar")];
 
     // Changing protocols invalidates 0-RTT
     let client_config = ClientConfig::new(client_crypto);
@@ -1302,13 +1447,13 @@ fn alpn_success() {
     assert_eq!(
         hd.protocol_version
             .unwrap()
-            .downcast_ref::<rustls::ProtocolVersion>(),
-        Some(&rustls::ProtocolVersion::TLSv1_3)
+            .downcast_ref::<ProtocolVersion>(),
+        Some(&ProtocolVersion::TLSv1_3)
     );
     assert!(
         hd.cipher_suite
             .unwrap()
-            .downcast_ref::<rustls::CipherSuite>()
+            .downcast_ref::<rustls::crypto::CipherSuite>()
             .is_some()
     );
 }
