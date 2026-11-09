@@ -5,21 +5,23 @@ use crate::connection::spaces::PacketSpace;
 use crate::crypto::{HeaderKey, KeyPair, PacketKey};
 use crate::packet::{Packet, PartialDecode, SpaceId};
 use crate::token::ResetToken;
-use crate::{RESET_TOKEN_SIZE, TransportError};
+use crate::{RESET_TOKEN_SIZE, Side, TransportError};
 
 /// Removes header protection of a packet, or returns `None` if the packet was dropped
 pub(super) fn unprotect_header(
     partial_decode: PartialDecode,
     spaces: &[PacketSpace; 3],
     zero_rtt_crypto: Option<&ZeroRttCrypto>,
+    side: Side,
     stateless_reset_token: Option<ResetToken>,
 ) -> Option<UnprotectHeaderResult> {
     let header_crypto = if partial_decode.is_0rtt() {
-        if let Some(crypto) = zero_rtt_crypto {
-            Some(&*crypto.header)
-        } else {
-            debug!("dropping unexpected 0-RTT packet");
-            return None;
+        match zero_rtt_crypto {
+            Some(crypto) if side.is_server() => Some(&*crypto.header),
+            _ => {
+                debug!("dropping unexpected 0-RTT packet");
+                return None;
+            }
         }
     } else if let Some(space) = partial_decode.space() {
         if let Some(crypto) = &spaces[space].crypto {
