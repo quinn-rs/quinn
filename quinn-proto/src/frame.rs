@@ -208,6 +208,40 @@ impl Frame {
         }
     }
 
+    /// Whether this frame may be carried in a 0-RTT packet
+    ///
+    /// See RFC 9000 §12.4 (Table 3) and §12.5. Both CONNECTION_CLOSE types are permitted, as 0-RTT
+    /// belongs to the application data packet number space. ACK_FREQUENCY and IMMEDIATE_ACK are
+    /// excluded because `min_ack_delay` must not be remembered across connections.
+    pub(crate) fn allowed_in_0rtt(&self) -> bool {
+        use Frame::*;
+        match self {
+            Padding
+            | Ping
+            | ResetStream(_)
+            | StopSending(_)
+            | Stream(_)
+            | MaxData(_)
+            | MaxStreamData { .. }
+            | MaxStreams { .. }
+            | DataBlocked { .. }
+            | StreamDataBlocked { .. }
+            | StreamsBlocked { .. }
+            | NewConnectionId(_)
+            | PathChallenge(_)
+            | Close(_)
+            | Datagram(_) => true,
+            Ack(_)
+            | Crypto(_)
+            | NewToken(_)
+            | RetireConnectionId { .. }
+            | PathResponse(_)
+            | AckFrequency(_)
+            | ImmediateAck
+            | HandshakeDone => false,
+        }
+    }
+
     pub(crate) fn is_ack_eliciting(&self) -> bool {
         !matches!(*self, Self::Ack(_) | Self::Padding | Self::Close(_))
     }
