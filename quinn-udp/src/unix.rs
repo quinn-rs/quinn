@@ -1,4 +1,4 @@
-#[cfg(not(any(apple, target_os = "openbsd", solarish)))]
+#[cfg(not(any(apple, target_os = "openbsd", target_os = "fuchsia", solarish)))]
 use std::ptr;
 use std::{
     io::{self, IoSliceMut},
@@ -248,6 +248,7 @@ impl UdpSocketState {
         target_os = "dragonfly",
         target_os = "redox",
         target_os = "hurd",
+        target_os = "fuchsia",
         solarish
     )))]
     pub fn recv(
@@ -279,6 +280,7 @@ impl UdpSocketState {
         target_os = "dragonfly",
         target_os = "redox",
         target_os = "hurd",
+        target_os = "fuchsia",
         solarish,
         apple_slow
     ))]
@@ -626,6 +628,7 @@ pub(crate) fn send_single(
     target_os = "dragonfly",
     target_os = "redox",
     target_os = "hurd",
+    target_os = "fuchsia",
     solarish
 )))]
 fn recv_via_recvmmsg(
@@ -667,6 +670,7 @@ fn recv_via_recvmmsg(
     target_os = "dragonfly",
     target_os = "redox",
     target_os = "hurd",
+    target_os = "fuchsia",
     solarish,
     apple
 ))]
