@@ -2360,6 +2360,7 @@ impl Connection {
             partial_decode,
             &self.spaces,
             self.zero_rtt_crypto.as_ref(),
+            self.side.side(),
             self.peer_params.stateless_reset_token,
         ) {
             self.handle_packet(now, remote, ecn, decoded.packet, decoded.stateless_reset);
@@ -3804,6 +3805,7 @@ impl Connection {
             first_decode.clone(),
             &self.spaces,
             self.zero_rtt_crypto.as_ref(),
+            self.side.side(),
             self.peer_params.stateless_reset_token,
         )?;
 
