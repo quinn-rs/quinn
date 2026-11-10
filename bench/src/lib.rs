@@ -75,7 +75,13 @@ pub async fn connect_client(
         .with_root_certificates(roots)
         .with_no_client_auth();
 
-    let mut client_config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
+    // Initial packets always use AES-128-GCM, independent of the negotiated cipher suite
+    let initial = rustls::crypto::ring::cipher_suite::TLS13_AES_128_GCM_SHA256
+        .tls13()
+        .and_then(|suite| suite.quic_suite())
+        .unwrap();
+    let crypto = QuicClientConfig::with_initial(Arc::new(crypto), initial)?;
+    let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
     client_config.transport_config(Arc::new(transport_config(&opt)));
 
     let connection = endpoint
