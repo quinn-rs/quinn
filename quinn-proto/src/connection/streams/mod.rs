@@ -230,6 +230,20 @@ impl<'a> SendStream<'a> {
         self.write_source(&mut BytesArray::from_chunks(data))
     }
 
+    /// Get a non-zero [`write_limit()`][1] value, or call [`mark_blocked()`][2] and return
+    /// [`WriteError::Blocked`]
+    ///
+    /// [1]: Self::write_limit
+    /// [2]: Self::mark_blocked
+    fn write_limit_or_mark_blocked(&mut self) -> Result<usize, WriteError> {
+        let limit = self.write_limit()?;
+        if limit == 0 {
+            self.mark_blocked();
+            return Err(WriteError::Blocked);
+        }
+        Ok(limit)
+    }
+
     /// Get how many bytes could be written immediately
     ///
     /// Always returns `Ok(0)` if blocked, never returns `WriteError::Blocked`.
@@ -295,20 +309,6 @@ impl<'a> SendStream<'a> {
             stream.data_blocked_limit = Some(stream.max_data);
             self.pending.stream_data_blocked.insert(self.id);
         }
-    }
-
-    /// Get a non-zero [`write_limit()`][1] value, or call [`mark_blocked()`][2] and return
-    /// [`WriteError::Blocked`]
-    ///
-    /// [1]: Self::write_limit
-    /// [2]: Self::mark_blocked
-    fn write_limit_or_mark_blocked(&mut self) -> Result<usize, WriteError> {
-        let limit = self.write_limit()?;
-        if limit == 0 {
-            self.mark_blocked();
-            return Err(WriteError::Blocked);
-        }
-        Ok(limit)
     }
 
     fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
