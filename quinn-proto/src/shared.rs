@@ -10,6 +10,8 @@ pub struct ConnectionEvent(pub(crate) ConnectionEventInner);
 
 #[derive(Debug)]
 pub(crate) enum ConnectionEventInner {
+    /// No new connection identifier could be allocated for the Connection
+    CidsExhausted(Instant),
     /// A datagram has been received for the Connection
     Datagram(DatagramConnectionEvent),
     /// New connection identifiers have been issued for the Connection
