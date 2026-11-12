@@ -13,7 +13,7 @@ use crate::{TransportError, VarInt, frame};
 #[derive(Debug, Default)]
 pub(super) struct Recv {
     // NB: when adding or removing fields, remember to update `reinit`.
-    state: RecvState,
+    pub(super) state: RecvState,
     pub(super) assembler: Assembler,
     sent_max_stream_data: u64,
     pub(super) end: u64,
@@ -64,7 +64,12 @@ impl Recv {
             return Err(TransportError::FINAL_SIZE_ERROR(""));
         }
 
-        let new_bytes = self.credit_consumed_by(end, received, max_data)?;
+        // A reset already accounted for the final size in connection-level flow control
+        let new_bytes = if self.state.is_reset() {
+            0
+        } else {
+            self.credit_consumed_by(end, received, max_data)?
+        };
 
         // Stopped streams don't need to wait for the actual data, they just need to know
         // how much there was.
@@ -79,8 +84,14 @@ impl Recv {
         // Don't bother storing data or releasing stream-level flow control credit if the stream's
         // already stopped
         if !self.stopped {
+            let mut data = frame.data;
+            if let RecvState::ResetRecvd { reliable_size, .. } = self.state {
+                // Data past the reliable size will never be read
+                let keep = reliable_size.saturating_sub(frame.offset);
+                data.truncate(keep.min(data.len() as u64) as usize);
+            }
             self.assembler
-                .insert(frame.offset, frame.data, payload_len)
+                .insert(frame.offset, data, payload_len)
                 .map_err(|_| TransportError::INTERNAL_ERROR("too many gaps in stream buffer"))?;
         }
 
@@ -159,7 +170,11 @@ impl Recv {
 
     /// Whether data is still being accepted from the peer
     pub(super) fn is_receiving(&self) -> bool {
-        matches!(self.state, RecvState::Recv { .. })
+        match self.state {
+            RecvState::Recv { .. } => true,
+            // Data before the reliable size of RESET_STREAM_AT is still delivered
+            RecvState::ResetRecvd { reliable_size, .. } => reliable_size > 0,
+        }
     }
 
     fn final_offset(&self) -> Option<u64> {
@@ -170,10 +185,13 @@ impl Recv {
     }
 
     /// Returns `false` iff the reset was redundant
+    ///
+    /// `reliable_size` is set for RESET_STREAM_AT frames.
     pub(super) fn reset(
         &mut self,
         error_code: VarInt,
         final_offset: VarInt,
+        reliable_size: Option<VarInt>,
         received: u64,
         max_data: u64,
     ) -> Result<bool, TransportError> {
@@ -189,24 +207,48 @@ impl Recv {
         }
         self.credit_consumed_by(final_offset.into(), received, max_data)?;
 
-        if matches!(self.state, RecvState::ResetRecvd { .. }) {
-            return Ok(false);
+        let new_reliable_size = reliable_size.map_or(0, u64::from);
+        if let RecvState::ResetRecvd {
+            error_code: old_error_code,
+            reliable_size,
+            ..
+        } = &mut self.state
+        {
+            if *reliable_size == 0 {
+                // All data has already been abandoned
+                return Ok(false);
+            }
+            if *old_error_code != error_code {
+                return Err(TransportError::STREAM_STATE_ERROR(
+                    "reset error code changed",
+                ));
+            }
+            // Only the smallest reliable size counts
+            if new_reliable_size >= *reliable_size {
+                return Ok(false);
+            }
+            *reliable_size = new_reliable_size;
+        } else {
+            self.state = RecvState::ResetRecvd {
+                size: final_offset.into(),
+                error_code,
+                reliable_size: new_reliable_size,
+            };
         }
-        self.state = RecvState::ResetRecvd {
-            size: final_offset.into(),
-            error_code,
-        };
-        // Nuke buffers so that future reads fail immediately, which ensures future reads don't
-        // issue flow control credit redundant to that already issued. We could instead special-case
-        // reset streams during read, but it's unclear if there's any benefit to retaining data for
-        // reset streams.
-        self.assembler.clear();
+        // Data past the reliable size will never be read. Without a reliable size, this nukes all
+        // buffers so that future reads fail immediately.
+        self.assembler.truncate(new_reliable_size);
         Ok(true)
     }
 
+    /// The reset error code, once any reliable data has been read
     pub(super) fn reset_code(&self) -> Option<VarInt> {
         match self.state {
-            RecvState::ResetRecvd { error_code, .. } => Some(error_code),
+            RecvState::ResetRecvd {
+                error_code,
+                reliable_size,
+                ..
+            } if self.assembler.has_read_prefix(reliable_size) => Some(error_code),
             _ => None,
         }
     }
@@ -255,6 +297,8 @@ pub struct Chunks<'a> {
     pending: &'a mut Retransmits,
     state: ChunksState,
     read: u64,
+    /// Whether a reset already issued flow control credit for the whole stream
+    reset: bool,
 }
 
 impl<'a> Chunks<'a> {
@@ -274,6 +318,7 @@ impl<'a> Chunks<'a> {
             return Err(ReadableError::ClosedStream);
         }
         recv.assembler.ensure_ordering(ordered)?;
+        let reset = recv.state.is_reset();
         let recv = entry.remove().unwrap().into_inner(); // initialized above
         Ok(Self {
             id,
@@ -282,6 +327,7 @@ impl<'a> Chunks<'a> {
             pending,
             state: ChunksState::Readable(recv),
             read: 0,
+            reset,
         })
     }
 
@@ -291,8 +337,14 @@ impl<'a> Chunks<'a> {
     pub fn next(&mut self, max_length: usize) -> Result<Option<Chunk>, ReadError> {
         let rs = match &mut self.state {
             ChunksState::Readable(rs) => rs,
-            ChunksState::Reset(error_code) => {
-                return Err(ReadError::Reset(*error_code));
+            ChunksState::Reset {
+                error_code,
+                final_size,
+            } => {
+                return Err(ReadError::Reset {
+                    error_code: *error_code,
+                    final_size: *final_size,
+                });
             }
             ChunksState::Finished => {
                 return Ok(None);
@@ -306,16 +358,36 @@ impl<'a> Chunks<'a> {
         }
 
         match rs.state {
-            RecvState::ResetRecvd { error_code, .. } => {
-                debug_assert_eq!(self.read, 0, "reset streams have empty buffers");
-                let state = mem::replace(&mut self.state, ChunksState::Reset(error_code));
+            RecvState::ResetRecvd {
+                size: final_size,
+                error_code,
+                reliable_size,
+            } => {
+                if !rs.assembler.has_read_prefix(reliable_size) {
+                    // Wait for the rest of the data before the reliable size
+                    return Err(ReadError::Blocked);
+                }
+                debug_assert!(
+                    reliable_size > 0 || self.read == 0,
+                    "reset streams have empty buffers"
+                );
+                let state = mem::replace(
+                    &mut self.state,
+                    ChunksState::Reset {
+                        error_code,
+                        final_size,
+                    },
+                );
                 // At this point if we have `rs` self.state must be `ChunksState::Readable`
                 let recv = match state {
                     ChunksState::Readable(recv) => StreamRecv::Open(recv),
                     _ => unreachable!("state must be ChunkState::Readable"),
                 };
                 self.streams.stream_recv_freed(self.id, recv);
-                Err(ReadError::Reset(error_code))
+                Err(ReadError::Reset {
+                    error_code,
+                    final_size,
+                })
             }
             RecvState::Recv { size } => {
                 if size == Some(rs.end) && rs.assembler.bytes_read() == rs.end {
@@ -376,8 +448,10 @@ impl<'a> Chunks<'a> {
                 .insert(self.id, Some(StreamRecv::Open(rs)));
         }
 
-        // Issue connection-level flow control credit for any data we read regardless of state
-        let max_data = self.streams.add_read_credits(self.read);
+        // Issue connection-level flow control credit for any data we read regardless of state,
+        // unless a reset already credited it
+        let read_credits = if self.reset { 0 } else { self.read };
+        let max_data = self.streams.add_read_credits(read_credits);
         self.pending.max_data |= max_data.0;
         should_transmit |= max_data.0;
         ShouldTransmit(should_transmit)
@@ -392,7 +466,7 @@ impl Drop for Chunks<'_> {
 
 enum ChunksState {
     Readable(Box<Recv>),
-    Reset(VarInt),
+    Reset { error_code: VarInt, final_size: u64 },
     Finished,
     Finalized,
 }
@@ -407,10 +481,16 @@ pub enum ReadError {
     #[error("blocked")]
     Blocked,
     /// The peer abandoned transmitting data on this stream.
-    ///
-    /// Carries an application-defined error code.
-    #[error("reset by peer: code {0}")]
-    Reset(VarInt),
+    #[error("reset by peer: code {error_code}")]
+    Reset {
+        /// Application-defined error code supplied by the peer
+        error_code: VarInt,
+        /// Final size of the stream, including data that will never be read
+        ///
+        /// Protocols with their own flow control, such as WebTransport over HTTP/3, need this to
+        /// account for data abandoned by the reset.
+        final_size: u64,
+    },
 }
 
 /// Errors triggered when opening a recv stream for reading
@@ -434,9 +514,23 @@ impl From<IllegalOrderedRead> for ReadableError {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum RecvState {
-    Recv { size: Option<u64> },
-    ResetRecvd { size: u64, error_code: VarInt },
+pub(super) enum RecvState {
+    Recv {
+        size: Option<u64>,
+    },
+    ResetRecvd {
+        size: u64,
+        error_code: VarInt,
+        /// Data before this offset is delivered before the reset, per RESET_STREAM_AT
+        reliable_size: u64,
+    },
+}
+
+impl RecvState {
+    /// Whether the peer reset the stream
+    pub(super) fn is_reset(&self) -> bool {
+        matches!(self, Self::ResetRecvd { .. })
+    }
 }
 
 impl Default for RecvState {
