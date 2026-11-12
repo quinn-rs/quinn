@@ -470,6 +470,10 @@ impl Connection {
         buf: &mut Vec<u8>,
     ) -> Option<Transmit> {
         assert!(max_datagrams != 0);
+        if self.datagrams.outgoing.drop_expired(now) && self.datagrams.send_blocked {
+            self.datagrams.send_blocked = false;
+            self.events.push_back(Event::DatagramsUnblocked);
+        }
         let max_datagrams = match self.config.enable_segmentation_offload {
             false => 1,
             true => max_datagrams,
@@ -3521,7 +3525,7 @@ impl Connection {
         // DATAGRAM
         let mut sent_datagrams = false;
         while buf.len() + Datagram::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            match self.datagrams.write(buf, max_size) {
+            match self.datagrams.outgoing.write(buf, max_size) {
                 true => {
                     sent_datagrams = true;
                     sent.non_retransmits = true;
