@@ -11,7 +11,6 @@ use crate::{
     Duration, RESET_TOKEN_SIZE, ServerConfig, SystemTime, UNIX_EPOCH,
     coding::{BufExt, BufMutExt},
     crypto::{HandshakeTokenKey, HmacKey},
-    packet::InitialHeader,
     shared::ConnectionId,
 };
 
@@ -111,21 +110,26 @@ pub(crate) struct IncomingToken {
 }
 
 impl IncomingToken {
-    /// Construct for an `Incoming` given the first packet header, or error if the connection
-    /// cannot be established
+    /// Construct for an `Incoming` given the first packet's destination CID and token, or error if
+    /// the connection cannot be established
+    ///
+    /// Takes the destination CID and token separately so that it is callable while the header is
+    /// still protected, which is what allows Initial key derivation to be deferred until after the
+    /// token has been checked.
     pub(crate) fn from_header(
-        header: &InitialHeader,
+        dst_cid: ConnectionId,
+        token: &[u8],
         server_config: &ServerConfig,
         remote_address: SocketAddr,
     ) -> Result<Self, InvalidRetryTokenError> {
         let unvalidated = Self {
             retry_src_cid: None,
-            orig_dst_cid: header.dst_cid,
+            orig_dst_cid: dst_cid,
             validated: false,
         };
 
         // Decode token or short-circuit
-        if header.token.is_empty() {
+        if token.is_empty() {
             return Ok(unvalidated);
         }
 
@@ -138,7 +142,7 @@ impl IncomingToken {
         //
         // > If the token is invalid, then the server SHOULD proceed as if the client did not have
         // > a validated address, including potentially sending a Retry packet.
-        let Some(retry) = Token::decode(&*server_config.token_key, &header.token) else {
+        let Some(retry) = Token::decode(&*server_config.token_key, token) else {
             return Ok(unvalidated);
         };
 
@@ -157,7 +161,7 @@ impl IncomingToken {
                 }
 
                 Ok(Self {
-                    retry_src_cid: Some(header.dst_cid),
+                    retry_src_cid: Some(dst_cid),
                     orig_dst_cid,
                     validated: true,
                 })
@@ -182,7 +186,7 @@ impl IncomingToken {
 
                 Ok(Self {
                     retry_src_cid: None,
-                    orig_dst_cid: header.dst_cid,
+                    orig_dst_cid: dst_cid,
                     validated: true,
                 })
             }

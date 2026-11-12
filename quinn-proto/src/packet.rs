@@ -109,6 +109,16 @@ impl PartialDecode {
         self.buf.get_ref().len()
     }
 
+    /// Token of an Initial packet, readable before header protection is removed
+    ///
+    /// Header protection masks only the first byte and the packet number. Empty for other packets.
+    pub(crate) fn initial_token(&self) -> &[u8] {
+        match self.plain_header.as_initial() {
+            Some(header) => &self.buf.get_ref()[header.token_pos.start..header.token_pos.end],
+            None => &[],
+        }
+    }
+
     pub(crate) fn finish(
         self,
         header_crypto: Option<&dyn crypto::HeaderKey>,
