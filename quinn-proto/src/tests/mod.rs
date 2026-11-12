@@ -5388,3 +5388,76 @@ fn late_data_packet_is_a_spurious_congestion_event() {
     let stats = pair.client_conn_mut(client_ch).stats();
     assert_eq!(stats.path.spurious_congestion_events, 1);
 }
+
+/// A large stream receive window holds more gaps than a fixed bound on buffered spans
+/// allows: a drop-tail queue overflowing under a sender at full rate loses about every
+/// other packet, and that must not close the connection.
+#[test]
+fn every_other_packet_lost_in_large_window() {
+    let _guard = subscribe();
+    const WINDOW: u32 = 8 << 20;
+
+    let mut server_transport = TransportConfig::default();
+    server_transport
+        .stream_receive_window(WINDOW.into())
+        .receive_window((2 * WINDOW).into());
+    let mut server_config = server_config();
+    server_config.transport_config(Arc::new(server_transport));
+    let mut pair = Pair::new(Default::default(), server_config);
+
+    let mut cubic = congestion::CubicConfig::default();
+    cubic.initial_window(WINDOW.into());
+    let mut client_transport = TransportConfig::default();
+    client_transport
+        .congestion_controller_factory(Arc::new(cubic))
+        .send_window((2 * WINDOW).into())
+        .mtu_discovery_config(None);
+    let mut client_config = client_config();
+    client_config.transport_config(Arc::new(client_transport));
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    let data = vec![42; 6 << 20];
+    assert_eq!(pair.client_send(client_ch, s).write(&data), Ok(data.len()));
+    pair.client_send(client_ch, s).finish().unwrap();
+
+    // Send everything the window allows, losing every other datagram
+    let mut sent = 0;
+    for _ in 0..10_000 {
+        pair.client.drive(pair.time, pair.server.addr);
+        if pair.client.outbound.len() == sent {
+            if pair.client_conn_mut(client_ch).bytes_in_flight() as usize >= data.len() {
+                break;
+            }
+            pair.time += Duration::from_millis(1);
+            continue;
+        }
+        sent = pair.client.outbound.len();
+    }
+    let mut i = 0;
+    pair.client.outbound.retain(|_| {
+        i += 1;
+        i % 2 == 0
+    });
+    assert!(sent > 4000, "only {sent} datagrams sent at once");
+    pair.drive();
+
+    while let Some(event) = pair.server_conn_mut(server_ch).poll() {
+        assert!(
+            !matches!(event, Event::ConnectionLost { .. }),
+            "server lost the connection: {event:?}"
+        );
+    }
+    assert_matches!(
+        pair.server_streams(server_ch).accept(Dir::Uni),
+        Some(stream) if stream == s
+    );
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(false).unwrap();
+    let mut received = 0;
+    while let Ok(Some(chunk)) = chunks.next(usize::MAX) {
+        received += chunk.bytes.len();
+    }
+    let _ = chunks.finalize();
+    assert_eq!(received, data.len());
+}
