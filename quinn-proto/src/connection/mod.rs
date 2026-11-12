@@ -2944,13 +2944,10 @@ impl Connection {
             }
 
             let _guard = span.as_ref().map(|x| x.enter());
-            // RFC 9000 §12.5: CRYPTO frames cannot be sent in 0-RTT packets. Both
-            // CONNECTION_CLOSE types are permitted there, as 0-RTT belongs to the application
-            // data packet number space; see §12.4 Table 3.
-            if packet.header.is_0rtt() && matches!(frame, Frame::Crypto(_)) {
-                return Err(TransportError::PROTOCOL_VIOLATION(
-                    "illegal frame type in 0-RTT",
-                ));
+            if packet.header.is_0rtt() && !frame.allowed_in_0rtt() {
+                let mut err = TransportError::PROTOCOL_VIOLATION("illegal frame type in 0-RTT");
+                err.frame = Some(frame.ty());
+                return Err(err);
             }
             ack_eliciting |= frame.is_ack_eliciting();
 
