@@ -2,6 +2,17 @@
 
 use crate::{Dir, Duration, frame::Frame};
 
+/// Current payload retention and container allocation of a protocol buffer.
+#[derive(Debug, Default, Copy, Clone)]
+pub(super) struct MemoryUsage {
+    /// Buffered payload bytes, including overlapping chunks or retained send prefixes.
+    pub buffered_bytes: u64,
+    /// Estimated retained payload allocation, excluding container storage.
+    pub allocated_bytes: u64,
+    /// Allocated storage for the container's entries.
+    pub metadata_bytes: u64,
+}
+
 /// Statistics about UDP datagrams transmitted or received on a connection
 ///
 /// All QUIC packets are carried by UDP datagrams. Hence, these statistics cover all traffic on a connection.
@@ -179,4 +190,70 @@ pub struct ConnectionStats {
     pub frame_rx: FrameStats,
     /// Statistics related to the current transmission path
     pub path: PathStats,
+    /// Current payload queues, not cumulative traffic counters or configured window limits.
+    pub queues: QueueStats,
+    /// Packet duplication and retransmitted STREAM data observed by this endpoint.
+    pub recovery: RecoveryStats,
+}
+
+/// Current bytes retained in protocol queues.
+///
+/// Allocation estimates include shared receive buffers; a shared allocation may
+/// be attributed to more than one chunk. These are not process RSS measurements
+/// and exclude TLS provider allocations, socket buffers and allocator overhead.
+#[derive(Debug, Default, Copy, Clone)]
+#[non_exhaustive]
+pub struct QueueStats {
+    /// STREAM data waiting for the application, including buffered overlaps.
+    pub stream_receive_buffered: u64,
+    /// Estimated allocations backing unread STREAM data.
+    pub stream_receive_allocated: u64,
+    /// STREAM data retained until acknowledged, including unsent data.
+    pub stream_send_buffered: u64,
+    /// CRYPTO data waiting for handshake processing.
+    pub crypto_receive_buffered: u64,
+    /// Estimated allocations backing unread CRYPTO data.
+    pub crypto_receive_allocated: u64,
+    /// CRYPTO data queued or retained for retransmission.
+    pub crypto_send_buffered: u64,
+    /// DATAGRAM payloads waiting for the application.
+    pub datagram_receive_buffered: u64,
+    /// DATAGRAM payloads waiting to be transmitted.
+    pub datagram_send_buffered: u64,
+    /// Estimated owned queue bookkeeping allocations.
+    pub metadata_allocated: u64,
+    /// I/O driver's reusable transmit buffer; populated by runtime adapters.
+    pub driver_send_allocated: u64,
+    /// Datagrams/events queued by a runtime adapter before protocol processing.
+    pub driver_receive_queued: u64,
+}
+impl QueueStats {
+    /// Estimated memory retained by the queues, excluding configured capacity limits.
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        [
+            self.stream_receive_allocated,
+            self.stream_send_buffered,
+            self.crypto_receive_allocated,
+            self.crypto_send_buffered,
+            self.datagram_receive_buffered,
+            self.datagram_send_buffered,
+            self.metadata_allocated,
+            self.driver_send_allocated,
+            self.driver_receive_queued,
+        ]
+        .into_iter()
+        .fold(0, u64::saturating_add)
+    }
+}
+/// Cumulative recovery counters. A newly numbered packet carrying retransmitted
+/// data is not a duplicate packet; these are deliberately separate measurements.
+#[derive(Debug, Default, Copy, Clone)]
+#[non_exhaustive]
+pub struct RecoveryStats {
+    /// Authenticated packets discarded because their packet number was already seen.
+    pub duplicate_packets: u64,
+    /// Transmitted STREAM frames containing retransmitted data (excluding FIN-only frames).
+    pub stream_data_retransmissions: u64,
+    /// Payload bytes in those transmitted STREAM frames, counting every attempt.
+    pub stream_data_retransmitted_bytes: u64,
 }
