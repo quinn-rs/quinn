@@ -586,7 +586,14 @@ impl Iter {
         let ty = self.bytes.get::<FrameType>()?;
         self.last_ty = Some(ty);
         Ok(match ty {
-            FrameType::PADDING => Frame::Padding,
+            FrameType::PADDING => {
+                // Consume the whole run of padding at once. Initial packets are padded to at
+                // least 1200 bytes, and decoding every zero byte as a frame of its own is a
+                // noticeable part of a server's CPU time per handshake.
+                let run = self.bytes.iter().take_while(|&&byte| byte == 0).count();
+                self.bytes.advance(run);
+                Frame::Padding
+            }
             FrameType::RESET_STREAM => Frame::ResetStream(ResetStream {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
@@ -960,6 +967,18 @@ mod test {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
+    }
+
+    #[test]
+    fn padding_run_is_one_frame() {
+        let mut buf = vec![0; 1100];
+        buf.push(FrameType::PING.0 as u8);
+        buf.extend_from_slice(&[0; 50]);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 3);
+        assert_matches!(frames[0], Frame::Padding);
+        assert_matches!(frames[1], Frame::Ping);
+        assert_matches!(frames[2], Frame::Padding);
     }
 
     #[test]
