@@ -1380,6 +1380,12 @@ fn alpn_success() {
             .downcast_ref::<rustls::CipherSuite>()
             .is_some()
     );
+    assert!(
+        hd.key_exchange_group
+            .unwrap()
+            .downcast_ref::<rustls::NamedGroup>()
+            .is_some()
+    );
 }
 
 #[test]
