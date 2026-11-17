@@ -49,7 +49,7 @@ qlog = ["proto/qlog"]
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at any time.
 
-__rustls-post-quantum-test =  ["rustls/prefer-post-quantum", "rustls-aws-lc-rs", "proto/__rustls-post-quantum-test"]
+__rustls-post-quantum-test =  ["rustls/prefer-post-quantum", "rustls-aws-lc-rs"]
 
 [dependencies]
 async-io = { workspace = true, optional = true }

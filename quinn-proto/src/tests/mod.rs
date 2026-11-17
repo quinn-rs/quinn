@@ -1106,6 +1106,12 @@ fn alpn_success() {
         .downcast::<crate::crypto::rustls::HandshakeData>()
         .unwrap();
     assert_eq!(hd.protocol.unwrap(), &b"bar"[..]);
+    assert!(
+        hd.key_exchange_group
+            .unwrap()
+            .downcast_ref::<rustls::NamedGroup>()
+            .is_some()
+    );
 }
 
 #[test]
