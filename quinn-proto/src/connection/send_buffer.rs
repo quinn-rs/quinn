@@ -51,29 +51,7 @@ impl SendBuffer {
 
         while self.acks.min() == Some(self.offset - self.unacked_len as u64) {
             let prefix = self.acks.pop_min().unwrap();
-            let mut to_advance = (prefix.end - prefix.start) as usize;
-
-            self.unacked_len -= to_advance;
-            while to_advance > 0 {
-                let front = self
-                    .unacked_segments
-                    .front_mut()
-                    .expect("Expected buffered data");
-
-                if front.len() <= to_advance {
-                    to_advance -= front.len();
-                    self.unacked_segments.pop_front();
-                    self.front_trimmed = 0;
-
-                    if self.unacked_segments.len() * 4 < self.unacked_segments.capacity() {
-                        self.unacked_segments.shrink_to_fit();
-                    }
-                } else {
-                    front.advance(to_advance);
-                    self.front_trimmed += to_advance;
-                    to_advance = 0;
-                }
-            }
+            self.advance((prefix.end - prefix.start) as usize);
         }
     }
 
@@ -200,6 +178,31 @@ impl SendBuffer {
     /// Bytes still retained from application writes, including acknowledged data
     pub(super) fn buffered(&self) -> u64 {
         (self.unacked_len + self.front_trimmed) as u64
+    }
+
+    /// Drop `to_advance` bytes from the front of the unacknowledged data
+    fn advance(&mut self, mut to_advance: usize) {
+        self.unacked_len -= to_advance;
+        while to_advance > 0 {
+            let front = self
+                .unacked_segments
+                .front_mut()
+                .expect("Expected buffered data");
+
+            if front.len() <= to_advance {
+                to_advance -= front.len();
+                self.unacked_segments.pop_front();
+                self.front_trimmed = 0;
+
+                if self.unacked_segments.len() * 4 < self.unacked_segments.capacity() {
+                    self.unacked_segments.shrink_to_fit();
+                }
+            } else {
+                front.advance(to_advance);
+                self.front_trimmed += to_advance;
+                to_advance = 0;
+            }
+        }
     }
 }
 
