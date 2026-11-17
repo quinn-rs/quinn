@@ -25,6 +25,20 @@ pub(super) struct SendBuffer {
     acks: RangeSet,
     /// Previously transmitted ranges deemed lost
     retransmits: RangeSet,
+    /// Segment `get` found last: data is mostly sent in order, so lookups start there rather than
+    /// walk the whole buffer
+    ///
+    /// `ack` keeps its offset at or above the first unacknowledged offset.
+    cursor: Cursor,
+}
+
+/// Position of a segment in `SendBuffer::unacked_segments`
+#[derive(Default, Debug, Clone, Copy)]
+struct Cursor {
+    /// Index in `unacked_segments`
+    index: usize,
+    /// Stream offset of the segment's first byte
+    offset: u64,
 }
 
 impl SendBuffer {
@@ -64,6 +78,7 @@ impl SendBuffer {
                     to_advance -= front.len();
                     self.unacked_segments.pop_front();
                     self.front_trimmed = 0;
+                    self.cursor.index = self.cursor.index.saturating_sub(1);
 
                     if self.unacked_segments.len() * 4 < self.unacked_segments.capacity() {
                         self.unacked_segments.shrink_to_fit();
@@ -74,6 +89,9 @@ impl SendBuffer {
                     to_advance = 0;
                 }
             }
+        }
+        if self.cursor.index == 0 {
+            self.cursor.offset = self.offset - self.unacked_len as u64;
         }
     }
 
@@ -140,20 +158,35 @@ impl SendBuffer {
     /// in noncontiguous fashion in the send buffer. In this case callers
     /// should call the function again with an incremented start offset to
     /// retrieve more data.
-    pub(super) fn get(&self, offsets: Range<u64>) -> &[u8] {
+    pub(super) fn get(&mut self, offsets: Range<u64>) -> &[u8] {
         let base_offset = self.offset - self.unacked_len as u64;
+        debug_assert!(
+            offsets.start >= base_offset,
+            "acknowledged data requested: {offsets:?}, base {base_offset}"
+        );
+        if offsets.start < base_offset {
+            return &[];
+        }
 
-        let mut segment_offset = base_offset;
-        for segment in self.unacked_segments.iter() {
-            if offsets.start >= segment_offset
-                && offsets.start < segment_offset + segment.len() as u64
-            {
-                let start = (offsets.start - segment_offset) as usize;
-                let end = (offsets.end - segment_offset) as usize;
+        // New data follows the segment found last; retransmits of earlier data walk from the front
+        let mut cursor = match self.cursor {
+            cursor if cursor.offset <= offsets.start => cursor,
+            _ => Cursor {
+                index: 0,
+                offset: base_offset,
+            },
+        };
+        while let Some(segment) = self.unacked_segments.get(cursor.index) {
+            if offsets.start < cursor.offset + segment.len() as u64 {
+                self.cursor = cursor;
+                let segment = &self.unacked_segments[cursor.index];
+                let start = (offsets.start - cursor.offset) as usize;
+                let end = (offsets.end - cursor.offset) as usize;
 
                 return &segment[start..end.min(segment.len())];
             }
-            segment_offset += segment.len() as u64;
+            cursor.offset += segment.len() as u64;
+            cursor.index += 1;
         }
 
         &[]
@@ -353,6 +386,28 @@ mod tests {
         assert_eq!(aggregate_unacked(&buf), &MSG[9..]);
         buf.ack(0..MSG_LEN);
         assert_eq!(aggregate_unacked(&buf), &[] as &[u8]);
+    }
+
+    #[test]
+    fn get_across_acks_and_retransmits() {
+        let mut buf = SendBuffer::new();
+        for segment in [&b"abc"[..], b"def", b"ghi", b"jkl"] {
+            buf.write(segment.into());
+        }
+        assert_eq!(buf.poll_transmit(64), (0..12, true));
+
+        assert_eq!(buf.get(7..12), b"hi");
+        assert_eq!(buf.get(1..12), b"bc");
+        assert_eq!(buf.get(10..12), b"kl");
+
+        buf.ack(0..4);
+        assert_eq!(buf.get(10..12), b"kl");
+        assert_eq!(buf.get(4..12), b"ef");
+
+        buf.ack(4..10);
+        assert_eq!(buf.get(10..12), b"kl");
+        buf.ack(10..11);
+        assert_eq!(buf.get(11..12), b"l");
     }
 
     #[test]
