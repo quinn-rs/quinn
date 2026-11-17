@@ -1921,6 +1921,46 @@ mod tests {
     }
 
     #[test]
+    fn final_size_below_received_data() {
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let stream_frame = |offset, len, fin| frame::Stream {
+            id,
+            offset,
+            fin,
+            data: Bytes::from_static(&[0; 16][..len]),
+        };
+        for stopped in [false, true] {
+            let mut client = make(Side::Client);
+            let _ = client.received(stream_frame(0, 10, false), 10).unwrap();
+            if stopped {
+                let mut pending = Retransmits::default();
+                RecvStream {
+                    id,
+                    state: &mut client,
+                    pending: &mut pending,
+                }
+                .stop(0u32.into())
+                .unwrap();
+            }
+            // The stream can't end before data that was already received
+            for (offset, len) in [(0, 0), (0, 5), (9, 0)] {
+                assert_eq!(
+                    client
+                        .received(stream_frame(offset, len, true), len)
+                        .unwrap_err()
+                        .code,
+                    TransportErrorCode::FINAL_SIZE_ERROR,
+                    "final size {} with 10 bytes received, stopped: {stopped}",
+                    offset + len as u64
+                );
+            }
+            // It can end where that data ends
+            let _ = client.received(stream_frame(10, 0, true), 0).unwrap();
+            assert_eq!(client.data_recvd, 10);
+        }
+    }
+
+    #[test]
     fn stream_limit_fixed() {
         let mut client = make(Side::Client);
         // Open streams 0-127

@@ -63,6 +63,12 @@ impl Recv {
             debug!(end, final_offset, "final size error");
             return Err(TransportError::FINAL_SIZE_ERROR(""));
         }
+        if frame.fin && end < self.end && self.final_offset().is_none() {
+            debug!(end, received = self.end, "final size error");
+            return Err(TransportError::FINAL_SIZE_ERROR(
+                "lower than high water mark",
+            ));
+        }
 
         let new_bytes = self.credit_consumed_by(end, received, max_data)?;
 
