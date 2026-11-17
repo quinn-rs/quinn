@@ -193,11 +193,13 @@ impl Recv {
                 "lower than high water mark",
             ));
         }
-        self.credit_consumed_by(final_offset.into(), received, max_data)?;
-
         if matches!(self.state, RecvState::ResetRecvd { .. }) {
+            // A repeated frame: the first one accounted for the final size already, while
+            // `self.end` stayed where the received data ends
             return Ok(false);
         }
+        self.credit_consumed_by(final_offset.into(), received, max_data)?;
+
         self.state = RecvState::ResetRecvd {
             size: final_offset.into(),
             error_code,
