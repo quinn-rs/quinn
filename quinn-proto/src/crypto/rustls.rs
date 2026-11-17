@@ -6,10 +6,8 @@ use bytes::BytesMut;
 #[cfg(feature = "ring")]
 use ring::aead;
 pub use rustls::Error;
-#[cfg(feature = "__rustls-post-quantum-test")]
-use rustls::NamedGroup;
 use rustls::{
-    self, CipherSuite, HandshakeKind,
+    self, CipherSuite, HandshakeKind, NamedGroup,
     client::danger::ServerCertVerifier,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
@@ -77,12 +75,10 @@ impl crypto::Session for TlsSession {
                 Connection::Server(session) => session.negotiated_cipher_suite(),
             }
             .map(|suite| -> Box<dyn Any> { Box::new(suite.suite()) }),
-            #[cfg(feature = "__rustls-post-quantum-test")]
-            negotiated_key_exchange_group: self
+            key_exchange_group: self
                 .inner
                 .negotiated_key_exchange_group()
-                .expect("key exchange group is negotiated")
-                .name(),
+                .map(|group| group.name()),
         }))
     }
 
@@ -287,9 +283,8 @@ pub struct HandshakeData {
     pub protocol_version: Option<Box<dyn Any>>,
     /// The cipher suite negotiated with the peer, if any
     pub cipher_suite: Option<Box<dyn Any>>,
-    /// The key exchange group negotiated with the peer
-    #[cfg(feature = "__rustls-post-quantum-test")]
-    pub negotiated_key_exchange_group: NamedGroup,
+    /// The key exchange group negotiated with the peer, if any
+    pub key_exchange_group: Option<NamedGroup>,
 }
 
 /// A QUIC-compatible TLS client configuration
