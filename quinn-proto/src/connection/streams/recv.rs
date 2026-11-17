@@ -192,11 +192,11 @@ impl Recv {
                 "lower than high water mark",
             ));
         }
-        self.credit_consumed_by(final_offset.into(), received, max_data)?;
-
         if matches!(self.state, RecvState::ResetRecvd { .. }) {
             return Ok(false);
         }
+        self.credit_consumed_by(final_offset.into(), received, max_data)?;
+
         self.state = RecvState::ResetRecvd {
             size: final_offset.into(),
             error_code,
