@@ -5388,3 +5388,75 @@ fn late_data_packet_is_a_spurious_congestion_event() {
     let stats = pair.client_conn_mut(client_ch).stats();
     assert_eq!(stats.path.spurious_congestion_events, 1);
 }
+
+/// What the server sends within `max_ack_delay` (plus a margin) of receiving the client's
+/// ack-eliciting data, over a link with 40 ms of latency each way, with the server's own data
+/// held from the client so the server's congestion window does not open. When `server_has_data`
+/// is true the server first fills its congestion window with its own data. Returns the sizes of
+/// the datagrams it sent, with when it sent them relative to the client data's arrival.
+fn server_datagrams_after_client_data(server_has_data: bool) -> Vec<(Duration, usize)> {
+    let mut pair = Pair::default();
+    pair.latency = Duration::from_millis(40);
+    let (client_ch, server_ch) = pair.connect();
+    if server_has_data {
+        let s = pair.server_streams(server_ch).open(Dir::Uni).unwrap();
+        pair.server_send(server_ch, s)
+            .write(&[1; 1024 * 1024])
+            .unwrap();
+        // The server alone, for 60 ms: it paces out its whole congestion window and is then
+        // blocked by it (its probe timeout is several times longer than this).
+        let until = pair.time + Duration::from_millis(60);
+        loop {
+            pair.drive_server();
+            match pair.server.next_wakeup() {
+                Some(t) if t <= until && t > pair.time => pair.time = t,
+                _ => break,
+            }
+        }
+        pair.time = until;
+    }
+    // The client does not see the server's data, so it acknowledges none of it.
+    let held = mem::take(&mut pair.client.inbound);
+    let c = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, c)
+        .write(&[2; 1024 * 1024])
+        .unwrap();
+    pair.drive_client();
+    assert!(!pair.server.inbound.is_empty(), "the client sent data");
+    pair.client.inbound = held;
+    // Only the server runs, from the client data's arrival until a little longer than the
+    // default max_ack_delay (25 ms) after it.
+    let arrival = pair.server.inbound.front().unwrap().0;
+    pair.time = arrival;
+    let deadline = arrival + Duration::from_millis(30);
+    let mut sent = Vec::new();
+    loop {
+        pair.server.drive(pair.time, pair.client.addr);
+        for (_, b) in pair.server.outbound.drain(..) {
+            sent.push((pair.time - arrival, b.len()));
+        }
+        match pair.server.next_wakeup() {
+            Some(t) if t <= deadline && t > pair.time => pair.time = t,
+            _ => break,
+        }
+    }
+    sent
+}
+
+/// A connection that owes ACKs must send them even while its congestion window is full of its
+/// own data: ACK-only packets are not congestion controlled (RFC 9002 section 7).
+#[test]
+fn acks_sent_while_congestion_blocked() {
+    let _guard = subscribe();
+    let idle = server_datagrams_after_client_data(false);
+    assert!(
+        !idle.is_empty(),
+        "control: an idle server acknowledges the client's data"
+    );
+    let blocked = server_datagrams_after_client_data(true);
+    assert!(
+        !blocked.is_empty(),
+        "a server whose congestion window is full of its own data sent nothing within 30 ms of \
+         receiving ack-eliciting data, so it sent no ACK; an idle server sent {idle:?}"
+    );
+}
