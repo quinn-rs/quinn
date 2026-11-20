@@ -44,8 +44,8 @@ pub struct Bbr {
     min_cwnd: u64,
     prev_in_flight_count: u64,
     exit_probe_rtt_at: Option<Instant>,
-    probe_rtt_last_started_at: Option<Instant>,
     min_rtt: Duration,
+    min_rtt_stamp: Option<Instant>,
     exiting_quiescence: bool,
     pacing_rate: u64,
     max_acked_packet_number: u64,
@@ -85,8 +85,8 @@ impl Bbr {
             min_cwnd: calculate_min_window(current_mtu as u64),
             prev_in_flight_count: 0,
             exit_probe_rtt_at: None,
-            probe_rtt_last_started_at: None,
             min_rtt: Default::default(),
+            min_rtt_stamp: None,
             exiting_quiescence: false,
             pacing_rate: 0,
             max_acked_packet_number: 0,
@@ -213,9 +213,8 @@ impl Bbr {
     fn is_min_rtt_expired(&self, now: Instant, app_limited: bool) -> bool {
         !app_limited
             && self
-                .probe_rtt_last_started_at
-                .map(|last| now.saturating_duration_since(last) > Duration::from_secs(10))
-                .unwrap_or(true)
+                .min_rtt_stamp
+                .is_some_and(|stamp| now.saturating_duration_since(stamp) > MIN_RTT_EXPIRY)
     }
 
     fn maybe_enter_or_exit_probe_rtt(
@@ -232,7 +231,6 @@ impl Bbr {
             // Do not decide on the time to exit ProbeRtt until the
             // |bytes_in_flight| is at the target small value.
             self.exit_probe_rtt_at = None;
-            self.probe_rtt_last_started_at = Some(now);
         }
 
         if self.mode == Mode::ProbeRtt {
@@ -248,6 +246,7 @@ impl Bbr {
                     }
                 }
                 Some(exit_time) if is_round_start && now >= exit_time => {
+                    self.min_rtt_stamp = Some(now);
                     if !self.is_at_full_bandwidth {
                         self.enter_startup_mode();
                     } else {
@@ -403,13 +402,15 @@ impl Controller for Bbr {
         sent: Instant,
         bytes: u64,
         app_limited: bool,
-        rtt: &RttEstimator,
+        _rtt: &RttEstimator,
     ) {
         self.max_bandwidth
             .on_ack(now, sent, bytes, self.round_count, app_limited);
         self.acked_bytes += bytes;
-        if self.is_min_rtt_expired(now, app_limited) || self.min_rtt > rtt.min() {
-            self.min_rtt = rtt.min();
+        let sample = now.saturating_duration_since(sent);
+        if self.min_rtt_stamp.is_none() || sample <= self.min_rtt {
+            self.min_rtt = sample;
+            self.min_rtt_stamp = Some(now);
         }
     }
 
@@ -646,6 +647,7 @@ const K_DERIVED_HIGH_CWNDGAIN: f32 = 2.0;
 const K_PACING_GAIN: [f32; 8] = [1.25, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
 
 const K_STARTUP_GROWTH_TARGET: f32 = 1.25;
+const MIN_RTT_EXPIRY: Duration = Duration::from_secs(10);
 const K_ROUND_TRIPS_WITHOUT_GROWTH_BEFORE_EXITING_STARTUP: u8 = 3;
 
 // Do not allow initial congestion window to be greater than 200 packets.
@@ -656,6 +658,8 @@ const DRAIN_TO_TARGET: bool = true;
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use super::*;
 
     #[test]
@@ -674,5 +678,70 @@ mod tests {
             .on_ack(start + interval * 3, start + interval, 1200, 0, false);
 
         assert_eq!(bbr.metrics().bandwidth_estimate, Some(960_000));
+    }
+
+    #[test]
+    fn probe_rtt_waits_for_min_rtt_to_expire() {
+        let starts = probe_rtt_starts(Duration::from_secs(30), |_| Duration::from_millis(20));
+        assert_eq!(starts, Vec::<Duration>::new());
+    }
+
+    #[test]
+    fn probe_rtt_starts_once_min_rtt_is_stale() {
+        let starts = probe_rtt_starts(Duration::from_secs(25), |sent| {
+            if sent < Duration::from_secs(1) {
+                Duration::from_millis(20)
+            } else {
+                Duration::from_millis(30)
+            }
+        });
+
+        // The last 20 ms sample is acknowledged at 1.019 s
+        assert_eq!(starts.len(), 2);
+        assert_eq!(starts[0], Duration::from_millis(11_020));
+        assert!(starts[1] > starts[0] + Duration::from_secs(10));
+        assert!(starts[1] < starts[0] + Duration::from_millis(10_500));
+    }
+
+    fn probe_rtt_starts(run: Duration, rtt: impl Fn(Duration) -> Duration) -> Vec<Duration> {
+        let mut bbr = Bbr::new(Arc::new(BbrConfig::default()), 1200);
+        let mut estimator = RttEstimator::new(Duration::from_millis(333));
+        let start = Instant::now();
+        let mut in_flight = VecDeque::new();
+        let mut next_packet_number = 0;
+        let mut starts = Vec::new();
+        for ms in 0..run.as_millis() as u64 {
+            let now = start + Duration::from_millis(ms);
+            let mut largest_acked = None;
+            while let Some(&(packet_number, sent)) = in_flight.front() {
+                if sent + rtt(sent - start) > now {
+                    break;
+                }
+                in_flight.pop_front();
+                bbr.on_ack(now, sent, 1200, false, &estimator);
+                largest_acked = Some((packet_number, sent));
+            }
+
+            if let Some((packet_number, sent)) = largest_acked {
+                let was_probing = bbr.mode == Mode::ProbeRtt;
+                bbr.on_end_acks(
+                    now,
+                    in_flight.len() as u64 * 1200,
+                    false,
+                    Some(packet_number),
+                );
+                estimator.update(Duration::ZERO, now - sent);
+                if !was_probing && bbr.mode == Mode::ProbeRtt {
+                    starts.push(now - start);
+                }
+            }
+
+            if (in_flight.len() as u64 + 1) * 1200 <= bbr.window() {
+                bbr.on_sent(now, 1200, next_packet_number);
+                in_flight.push_back((next_packet_number, now));
+                next_packet_number += 1;
+            }
+        }
+        starts
     }
 }
