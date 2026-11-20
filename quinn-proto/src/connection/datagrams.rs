@@ -21,35 +21,66 @@ impl Datagrams<'_> {
     /// If `drop` is true, previously queued datagrams which are still unsent may be discarded to
     /// make space for this datagram, in order of oldest to newest. If `drop` is false, and there
     /// isn't enough space due to previously queued datagrams, this function will return
-    /// `SendDatagramError::Blocked`. `Event::DatagramsUnblocked` will be emitted once datagrams
+    /// [`SendDatagramError::Blocked`]. [`Event::DatagramsUnblocked`] will be emitted once datagrams
     /// have been sent.
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent.
     pub fn send(&mut self, data: Bytes, drop: bool) -> Result<(), SendDatagramError> {
+        self.send_many(std::iter::once(data), drop)
+            .map_err(|error| match error {
+                SendDatagramsError::UnsupportedByPeer => SendDatagramError::UnsupportedByPeer,
+                SendDatagramsError::Disabled => SendDatagramError::Disabled,
+                SendDatagramsError::TooLarge { .. } => SendDatagramError::TooLarge,
+                SendDatagramsError::Blocked { data, .. } => SendDatagramError::Blocked(data),
+            })?;
+
+        Ok(())
+    }
+
+    /// Queue multiple unreliable, unordered datagrams for immediate transmission
+    ///
+    /// If `drop` is true, previously queued datagrams which are still unsent may be discarded to
+    /// make space for a datagram, in order of oldest to newest. If `drop` is false, and there isn't
+    /// enough space due to previously queued datagrams, the first datagram that cannot be
+    /// queued is returned inside [`SendDatagramsError::Blocked`], and all datagrams before it are
+    /// already queued. [`Event::DatagramsUnblocked`] will be emitted once datagrams have been sent.
+    ///
+    /// Returns the number of datagrams queued.
+    pub fn send_many<I: IntoIterator<Item = Bytes>>(
+        &mut self,
+        datas: I,
+        drop: bool,
+    ) -> Result<usize, SendDatagramsError> {
         if self.conn.config.datagram_receive_buffer_size.is_none() {
-            return Err(SendDatagramError::Disabled);
+            return Err(SendDatagramsError::Disabled);
         }
         let max = self
             .max_size()
-            .ok_or(SendDatagramError::UnsupportedByPeer)?;
+            .ok_or(SendDatagramsError::UnsupportedByPeer)?;
         let send_buffer_size = self.conn.config.datagram_send_buffer_size;
-        if data.len() > Ord::min(max, send_buffer_size) {
-            return Err(SendDatagramError::TooLarge);
-        }
-        if drop {
-            self.conn
+
+        let mut queued = 0;
+
+        for (offset, data) in datas.into_iter().enumerate() {
+            if data.len() > Ord::min(max, send_buffer_size) {
+                return Err(SendDatagramsError::TooLarge { offset });
+            }
+            if drop {
+                self.conn
+                    .datagrams
+                    .make_space_for(data.len(), send_buffer_size);
+            } else if !self
+                .conn
                 .datagrams
-                .make_space_for(data.len(), send_buffer_size);
-        } else if !self
-            .conn
-            .datagrams
-            .has_send_buffer_space(data.len(), send_buffer_size)
-        {
-            self.conn.datagrams.send_blocked = true;
-            return Err(SendDatagramError::Blocked(data));
+                .has_send_buffer_space(data.len(), send_buffer_size)
+            {
+                self.conn.datagrams.send_blocked = true;
+                return Err(SendDatagramsError::Blocked { data, offset });
+            }
+            self.conn.datagrams.outgoing.push_back(Datagram { data });
+            queued += 1;
         }
-        self.conn.datagrams.outgoing.push_back(Datagram { data });
-        Ok(())
+        Ok(queued)
     }
 
     /// Discard queued datagrams that no longer fit the active path, waking blocked senders.
@@ -342,4 +373,23 @@ pub enum SendDatagramError {
     /// Send would block
     #[error("datagram send blocked")]
     Blocked(Bytes),
+}
+
+/// Errors that can arise when sending multiple datagrams
+#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum SendDatagramsError {
+    /// The peer does not support receiving datagram frames
+    #[error("datagrams not supported by peer")]
+    UnsupportedByPeer,
+    /// Datagram support is disabled locally
+    #[error("datagram support disabled")]
+    Disabled,
+    /// The datagram at `offset` is larger than the connection can currently accommodate
+    ///
+    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been exceeded.
+    #[error("datagram too large")]
+    TooLarge { offset: usize },
+    /// Send would block, the datagrams before `offset` were queued.
+    #[error("datagram send blocked")]
+    Blocked { data: Bytes, offset: usize },
 }
