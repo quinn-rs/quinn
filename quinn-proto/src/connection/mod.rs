@@ -599,6 +599,9 @@ impl Connection {
             } else {
                 unreachable!("tried to send {:?} packet without keys", space_id)
             };
+            // Set when the congestion window blocks this space but ACKs are due:
+            // the packet then carries only those ACKs.
+            let mut ack_only = false;
             if !coalesce || buf_capacity - buf_end < MIN_PACKET_SPACE + tag_len {
                 // We need to send 1 more datagram and extend the buffer for that.
 
@@ -629,6 +632,12 @@ impl Connection {
                 // pending frames that will never be sent once closing, and a closed connection no
                 // longer processes ACKs, so the window could never drain
                 // (see https://github.com/quinn-rs/quinn/issues/2785)
+                //
+                // The same holds for a packet carrying only ACK frames: those do not count
+                // toward bytes in flight and are not congestion controlled (RFC 9002
+                // section 7), so when the window is full but ACKs are due, the space still
+                // gets a datagram carrying just the ACKs while its other data stays queued
+                // (see https://github.com/quinn-rs/quinn/issues/3004)
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 && !close {
                     // Assume the current packet will get padded to fill the segment
                     let untracked_bytes = if let Some(builder) = &builder_storage {
@@ -640,29 +649,37 @@ impl Connection {
 
                     let bytes_to_send = segment_size as u64 + untracked_bytes;
                     if self.path.in_flight.bytes + bytes_to_send > self.path.congestion.window() {
-                        space_idx += 1;
                         congestion_blocked = true;
-                        // We continue instead of breaking here in order to avoid
-                        // blocking loss probes queued for higher spaces.
-                        trace!("blocked by congestion control");
-                        continue;
+                        if can_send.acks {
+                            ack_only = true;
+                            trace!("blocked by congestion control, sending ACK-only packet");
+                        } else {
+                            space_idx += 1;
+                            // We continue instead of breaking here in order to avoid
+                            // blocking loss probes queued for higher spaces.
+                            trace!("blocked by congestion control");
+                            continue;
+                        }
                     }
 
-                    // Check whether the next datagram is blocked by pacing
-                    let smoothed_rtt = self.path.rtt.get();
-                    if let Some(delay) = self.path.pacing.delay(
-                        smoothed_rtt,
-                        bytes_to_send,
-                        self.path.current_mtu(),
-                        self.path.congestion.window(),
-                        now,
-                    ) {
-                        self.timers.set(Timer::Pacing, delay);
-                        congestion_blocked = true;
-                        // Loss probes should be subject to pacing, even though
-                        // they are not congestion controlled.
-                        trace!("blocked by pacing");
-                        break;
+                    // Check whether the next datagram is blocked by pacing. ACK-only
+                    // packets are not congestion controlled, so they are not paced either.
+                    if !ack_only {
+                        let smoothed_rtt = self.path.rtt.get();
+                        if let Some(delay) = self.path.pacing.delay(
+                            smoothed_rtt,
+                            bytes_to_send,
+                            self.path.current_mtu(),
+                            self.path.congestion.window(),
+                            now,
+                        ) {
+                            self.timers.set(Timer::Pacing, delay);
+                            congestion_blocked = true;
+                            // Loss probes should be subject to pacing, even though
+                            // they are not congestion controlled.
+                            trace!("blocked by pacing");
+                            break;
+                        }
                     }
                 }
 
@@ -815,7 +832,7 @@ impl Connection {
                 buf,
                 buf_capacity,
                 datagram_start,
-                ack_eliciting,
+                ack_eliciting && !ack_only,
                 self,
             )?);
             coalesce = coalesce && !builder.short_header;
@@ -917,8 +934,14 @@ impl Connection {
                 });
             }
 
-            let sent =
-                self.populate_packet(now, space_id, buf, builder.max_size, builder.exact_number);
+            let sent = self.populate_packet(
+                now,
+                space_id,
+                buf,
+                builder.max_size,
+                builder.exact_number,
+                ack_only,
+            );
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due to
             // any other reason, there is a bug which leads to one component announcing write
@@ -3330,11 +3353,29 @@ impl Connection {
         buf: &mut Vec<u8>,
         max_size: usize,
         pn: u64,
+        ack_only: bool,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id];
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space.pending_acks.maybe_ack_non_eliciting();
+
+        // An ACK-only packet carries nothing but the ACK frames: the rest of the
+        // space's data stays queued until the congestion window opens again.
+        if ack_only {
+            if space.pending_acks.can_send() {
+                Self::try_populate_acks(
+                    now,
+                    self.receiving_ecn,
+                    &mut sent,
+                    space,
+                    buf,
+                    &mut self.stats,
+                    max_size,
+                );
+            }
+            return sent;
+        }
 
         let pre_payload_len = buf.len();
 
