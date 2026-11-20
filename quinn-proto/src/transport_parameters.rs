@@ -73,6 +73,8 @@ macro_rules! make_struct {
 
             /// Does the endpoint support active connection migration
             pub(crate) disable_active_migration: bool,
+            /// Does the endpoint accept RESET_STREAM_AT frames
+            pub(crate) reset_stream_at: bool,
             /// Maximum size for datagram frames
             pub(crate) max_datagram_frame_size: Option<VarInt>,
             /// The value that the endpoint included in the Source Connection ID field of the first
@@ -122,6 +124,7 @@ macro_rules! make_struct {
                     $($name: VarInt::from_u32($default),)*
 
                     disable_active_migration: false,
+                    reset_stream_at: false,
                     max_datagram_frame_size: None,
                     initial_src_cid: None,
                     grease_quic_bit: false,
@@ -161,6 +164,7 @@ impl TransportParameters {
             max_udp_payload_size: endpoint_config.max_udp_payload_size,
             max_idle_timeout: config.max_idle_timeout.unwrap_or(VarInt(0)),
             disable_active_migration: server_config.is_some_and(|c| !c.migration),
+            reset_stream_at: true,
             active_connection_id_limit: if cid_gen.cid_len() == 0 {
                 2 // i.e. default, i.e. unsent
             } else {
@@ -196,6 +200,7 @@ impl TransportParameters {
             || cached.initial_max_streams_uni > self.initial_max_streams_uni
             || cached.max_datagram_frame_size > self.max_datagram_frame_size
             || cached.grease_quic_bit && !self.grease_quic_bit
+            || cached.reset_stream_at && !self.reset_stream_at
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
@@ -333,6 +338,12 @@ impl TransportParameters {
                         w.write_var(0);
                     }
                 }
+                TransportParameterId::ResetStreamAt => {
+                    if self.reset_stream_at {
+                        w.write_var(id as u64);
+                        w.write_var(0);
+                    }
+                }
                 TransportParameterId::MaxDatagramFrameSize => {
                     if let Some(x) = self.max_datagram_frame_size {
                         w.write_var(id as u64);
@@ -455,6 +466,12 @@ impl TransportParameters {
                         return Err(Error::Malformed);
                     }
                     params.disable_active_migration = true;
+                }
+                TransportParameterId::ResetStreamAt => {
+                    if len != 0 || params.reset_stream_at {
+                        return Err(Error::Malformed);
+                    }
+                    params.reset_stream_at = true;
                 }
                 TransportParameterId::PreferredAddress => {
                     if params.preferred_address.is_some() {
@@ -637,6 +654,9 @@ pub(crate) enum TransportParameterId {
     // Smallest possible ID of reserved transport parameter https://datatracker.ietf.org/doc/html/rfc9000#section-22.3
     ReservedTransportParameter = 0x1B,
 
+    // https://datatracker.ietf.org/doc/html/draft-ietf-quic-reliable-stream-reset#section-3
+    ResetStreamAt = 0x1D,
+
     // https://www.rfc-editor.org/rfc/rfc9221.html#section-3
     MaxDatagramFrameSize = 0x20,
 
@@ -649,7 +669,7 @@ pub(crate) enum TransportParameterId {
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 21] = [
+    const SUPPORTED: [Self; 22] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -664,6 +684,7 @@ impl TransportParameterId {
         Self::ReservedTransportParameter,
         Self::StatelessResetToken,
         Self::DisableActiveMigration,
+        Self::ResetStreamAt,
         Self::MaxDatagramFrameSize,
         Self::PreferredAddress,
         Self::OriginalDestinationConnectionId,
@@ -701,6 +722,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::ReservedTransportParameter == id => Self::ReservedTransportParameter,
             id if Self::StatelessResetToken == id => Self::StatelessResetToken,
             id if Self::DisableActiveMigration == id => Self::DisableActiveMigration,
+            id if Self::ResetStreamAt == id => Self::ResetStreamAt,
             id if Self::MaxDatagramFrameSize == id => Self::MaxDatagramFrameSize,
             id if Self::PreferredAddress == id => Self::PreferredAddress,
             id if Self::OriginalDestinationConnectionId == id => {
@@ -750,6 +772,7 @@ mod test {
                 stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
             }),
             grease_quic_bit: true,
+            reset_stream_at: true,
             min_ack_delay: Some(2_000u32.into()),
             ..TransportParameters::default()
         };
@@ -905,6 +928,19 @@ mod test {
     }
 
     #[test]
+    fn read_reset_stream_at_with_value() {
+        // `reset_stream_at` must have an empty value
+        let mut buf = Vec::new();
+        buf.write_var(TransportParameterId::ResetStreamAt as u64);
+        buf.write_var(1);
+        buf.write(VarInt::from_u32(0));
+        assert_eq!(
+            TransportParameters::read(Side::Server, &mut buf.as_slice()),
+            Err(Error::Malformed)
+        );
+    }
+
+    #[test]
     fn read_preferred_address_length_mismatch() {
         // `preferred_address` has a fixed size for a given connection ID length, so bytes past
         // that size are read as a parameter of their own.
@@ -940,5 +976,16 @@ mod test {
         };
         high_limit.validate_resumption_from(&low_limit).unwrap();
         low_limit.validate_resumption_from(&high_limit).unwrap_err();
+
+        // 0-RTT must not disable reliable stream resets
+        let reset_stream_at = TransportParameters {
+            reset_stream_at: true,
+            ..TransportParameters::default()
+        };
+        let default = TransportParameters::default();
+        reset_stream_at.validate_resumption_from(&default).unwrap();
+        default
+            .validate_resumption_from(&reset_stream_at)
+            .unwrap_err();
     }
 }

@@ -227,6 +227,20 @@ impl Assembler {
         Ok(())
     }
 
+    /// Whether the application has read every byte before `end`
+    pub(super) fn has_read_prefix(&self, end: u64) -> bool {
+        match &self.state {
+            State::Ordered => self.bytes_read >= end,
+            State::Unordered { recvd } => {
+                end == 0
+                    || (recvd
+                        .peek_min()
+                        .is_some_and(|range| range.start == 0 && range.end >= end)
+                        && self.data.front().is_none_or(|front| front.offset >= end))
+            }
+        }
+    }
+
     /// Number of bytes consumed by the application
     pub(super) fn bytes_read(&self) -> u64 {
         self.bytes_read
@@ -237,6 +251,22 @@ impl Assembler {
         self.data.clear();
         self.buffered = 0;
         self.allocated = 0;
+    }
+
+    /// Discard buffered data at or past `end`
+    pub(super) fn truncate(&mut self, end: u64) {
+        self.data.retain_mut(|chunk| {
+            if chunk.offset >= end {
+                self.buffered -= chunk.bytes.len();
+                self.allocated -= chunk.allocation_size;
+                return false;
+            }
+            // The allocation is retained, so `allocation_size` is unchanged
+            let excess = chunk.end().saturating_sub(end) as usize;
+            chunk.bytes.truncate(chunk.bytes.len() - excess);
+            self.buffered -= excess;
+            true
+        });
     }
 }
 
@@ -951,6 +981,23 @@ mod test {
             got.extend_from_slice(&chunk.bytes);
         }
         assert_eq!(&got[..], b"abcdefghij");
+    }
+
+    #[test]
+    fn truncate() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"0123"), 4).unwrap();
+        x.insert(2, Bytes::from_static(b"23456"), 5).unwrap();
+        x.insert(8, Bytes::from_static(b"89"), 2).unwrap();
+        x.truncate(5);
+        assert_sorted(&x);
+        assert_eq!(x.buffered, 7);
+        assert_eq!(x.allocated, 9);
+        assert_matches!(next(&mut x, 32), Some(y) if &y[..] == b"0123");
+        assert_matches!(next(&mut x, 32), Some(y) if &y[..] == b"4");
+        assert_matches!(next(&mut x, 32), None);
+        assert_eq!(x.buffered, 0);
+        assert_eq!(x.allocated, 0);
     }
 
     fn next_unordered(x: &mut Assembler) -> Chunk {
