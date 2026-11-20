@@ -47,33 +47,17 @@ impl SendBuffer {
         range.start = base_offset.max(range.start);
         range.end = base_offset.max(range.end);
 
+        if range.start == base_offset && self.acks.is_empty() {
+            // Acknowledgements mostly arrive in order: skip the range set
+            self.advance((range.end - range.start) as usize);
+            return;
+        }
+
         self.acks.insert(range);
 
         while self.acks.min() == Some(self.offset - self.unacked_len as u64) {
             let prefix = self.acks.pop_min().unwrap();
-            let mut to_advance = (prefix.end - prefix.start) as usize;
-
-            self.unacked_len -= to_advance;
-            while to_advance > 0 {
-                let front = self
-                    .unacked_segments
-                    .front_mut()
-                    .expect("Expected buffered data");
-
-                if front.len() <= to_advance {
-                    to_advance -= front.len();
-                    self.unacked_segments.pop_front();
-                    self.front_trimmed = 0;
-
-                    if self.unacked_segments.len() * 4 < self.unacked_segments.capacity() {
-                        self.unacked_segments.shrink_to_fit();
-                    }
-                } else {
-                    front.advance(to_advance);
-                    self.front_trimmed += to_advance;
-                    to_advance = 0;
-                }
-            }
+            self.advance((prefix.end - prefix.start) as usize);
         }
     }
 
@@ -200,6 +184,31 @@ impl SendBuffer {
     /// Bytes still retained from application writes, including acknowledged data
     pub(super) fn buffered(&self) -> u64 {
         (self.unacked_len + self.front_trimmed) as u64
+    }
+
+    /// Drop `to_advance` bytes from the front of the unacknowledged data
+    fn advance(&mut self, mut to_advance: usize) {
+        self.unacked_len -= to_advance;
+        while to_advance > 0 {
+            let front = self
+                .unacked_segments
+                .front_mut()
+                .expect("Expected buffered data");
+
+            if front.len() <= to_advance {
+                to_advance -= front.len();
+                self.unacked_segments.pop_front();
+                self.front_trimmed = 0;
+
+                if self.unacked_segments.len() * 4 < self.unacked_segments.capacity() {
+                    self.unacked_segments.shrink_to_fit();
+                }
+            } else {
+                front.advance(to_advance);
+                self.front_trimmed += to_advance;
+                to_advance = 0;
+            }
+        }
     }
 }
 
@@ -395,6 +404,60 @@ mod tests {
         buf.ack(0..16);
         assert_eq!(aggregate_unacked(&buf), &MSG[23..]);
         assert!(buf.acks.is_empty());
+    }
+
+    #[test]
+    fn ack_in_and_out_of_order() {
+        let mut buf = SendBuffer::new();
+        let data: Vec<u8> = (0..20_000u32).map(|n| (n * 7 % 251) as u8).collect();
+        let mut written = 0;
+        let mut acked = 0;
+        for round in 0..400usize {
+            let len = 1 + round * 13 % 97;
+            if written + len <= data.len() {
+                buf.write(Bytes::copy_from_slice(&data[written..written + len]));
+                written += len;
+            }
+            let read = |buf: &mut SendBuffer, range: Range<u64>| {
+                let mut start = range.start;
+                let mut out = Vec::new();
+                while start < range.end {
+                    let piece = buf.get(start..range.end).to_vec();
+                    assert!(!piece.is_empty(), "round {round}: nothing at {start}");
+                    start += piece.len() as u64;
+                    out.extend_from_slice(&piece);
+                }
+                out
+            };
+            let ahead = (acked + round * 31 % 150).min(written);
+            assert_eq!(
+                read(&mut buf, acked as u64..ahead as u64),
+                &data[acked..ahead],
+                "round {round}: from the front"
+            );
+            let back = acked + (ahead - acked) / 3;
+            assert_eq!(
+                read(&mut buf, back as u64..ahead as u64),
+                &data[back..ahead],
+                "round {round}: behind the last lookup"
+            );
+            if round % 3 == 0 {
+                let skip = (acked + 5).min(written);
+                let end = (skip + 40).min(written);
+                buf.ack(skip as u64..end as u64);
+                buf.ack(acked as u64..skip as u64);
+                acked = end;
+            } else {
+                let end = (acked + round % 50).min(written);
+                buf.ack(acked as u64..end as u64);
+                acked = end;
+            }
+            assert_eq!(
+                aggregate_unacked(&buf),
+                &data[acked..written],
+                "round {round}"
+            );
+        }
     }
 
     fn aggregate_unacked(buf: &SendBuffer) -> Vec<u8> {
