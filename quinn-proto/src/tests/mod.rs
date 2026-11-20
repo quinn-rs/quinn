@@ -2466,6 +2466,69 @@ fn conn_flow_control() {
     );
 }
 
+/// A RESET_STREAM frame that arrives twice is harmless, whatever became of the receive window
+/// in between
+///
+/// The packet with the reset is delayed, the client declares it lost and sends the frame again,
+/// and the delayed packet arrives after all.
+#[test]
+fn repeated_reset_stream_flow_control() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(
+        Default::default(),
+        ServerConfig {
+            transport: Arc::new(TransportConfig {
+                receive_window: 100u32.into(),
+                ..TransportConfig::default()
+            }),
+            ..server_config()
+        },
+    );
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(pair.client_send(client_ch, s).write(&[0xAB; 60]), Ok(60));
+    pair.client_send(client_ch, s).reset(VarInt(42)).unwrap();
+    pair.drive_client();
+    // The network holds that packet back
+    let delayed = pair.server.inbound.pop_back().unwrap();
+    assert!(pair.server.inbound.is_empty());
+
+    // Later packets get through, until the client declares the first one lost and sends the
+    // reset again. A second stream then uses the flow control credit which the reset returned.
+    let s2 = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    let mut written = 0;
+    for _ in 0..20 {
+        if let Ok(n) = pair
+            .client_send(client_ch, s2)
+            .write(&[0xCD; 80][written..])
+        {
+            written += n;
+        }
+        if written == 80 {
+            break;
+        }
+        pair.client_conn_mut(client_ch).ping();
+        pair.drive();
+    }
+    assert_eq!(written, 80, "the retransmitted reset returned its credit");
+    pair.drive();
+    let resets_received = |pair: &mut Pair| {
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .reset_stream
+    };
+    assert_eq!(resets_received(&mut pair), 1);
+
+    // The delayed packet arrives at last
+    pair.server.inbound.push_back(delayed);
+    pair.drive();
+    assert_eq!(resets_received(&mut pair), 2);
+    assert!(!pair.server_conn_mut(server_ch).is_closed());
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+}
+
 #[test]
 fn stop_opens_bidi() {
     let _guard = subscribe();
