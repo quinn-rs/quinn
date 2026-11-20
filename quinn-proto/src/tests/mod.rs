@@ -2886,7 +2886,7 @@ fn tail_loss_small_segment_size() {
     info!("Sending datagram batch");
     for _ in 0..DGRAM_NUM {
         pair.client_datagrams(client_ch)
-            .send(vec![0; DGRAM_LEN].into(), false)
+            .send(vec![0; DGRAM_LEN].into(), false, None)
             .unwrap();
     }
 
@@ -2939,7 +2939,7 @@ fn tail_loss_probe_keeps_ping_when_datagram_does_not_fit() {
     let datagram_len = pair.client_datagrams(client_ch).max_size().unwrap();
     assert!(datagram_len > INITIAL_MTU as usize);
     pair.client_datagrams(client_ch)
-        .send(vec![0; datagram_len].into(), false)
+        .send(vec![0; datagram_len].into(), false, None)
         .unwrap();
 
     pair.drive();
@@ -2986,7 +2986,7 @@ fn tail_loss_respect_max_datagrams() {
     info!("Sending datagram batch");
     for _ in 0..DGRAM_NUM {
         pair.client_datagrams(client_ch)
-            .send(vec![0; DGRAM_LEN].into(), false)
+            .send(vec![0; DGRAM_LEN].into(), false, None)
             .unwrap();
     }
 
@@ -3007,7 +3007,7 @@ fn datagram_send_recv() {
 
     const DATA: &[u8] = b"whee";
     pair.client_datagrams(client_ch)
-        .send(DATA.into(), true)
+        .send(DATA.into(), true, None)
         .unwrap();
     pair.drive();
     assert_matches!(
@@ -3016,6 +3016,111 @@ fn datagram_send_recv() {
     );
     assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), DATA);
     assert_matches!(pair.server_datagrams(server_ch).recv(), None);
+}
+
+#[test]
+fn datagram_expiration_while_congestion_blocked() {
+    let _guard = subscribe();
+    let mut transport = TransportConfig::default();
+    transport.mtu_discovery_config(None);
+    let mut config = client_config();
+    config.transport = Arc::new(transport);
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(config);
+
+    // Fill the congestion window without processing the server's ACKs.
+    let window = pair.client_conn_mut(client_ch).congestion_window();
+    let stream = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    let data = vec![42; 2 * window as usize];
+    assert_eq!(
+        pair.client_send(client_ch, stream).write(&data),
+        Ok(data.len())
+    );
+    pair.drive_client();
+    assert_eq!(pair.client_conn_mut(client_ch).bytes_in_flight(), window);
+
+    let now = pair.time;
+    let before = pair.client_conn_mut(client_ch).stats().frame_tx.datagram;
+    for (data, deadline) in [
+        (&b"future"[..], Some(now + Duration::from_secs(1))),
+        (&b"expired"[..], Some(now + Duration::from_millis(5))),
+        (&b"no deadline"[..], None),
+    ] {
+        pair.client_datagrams(client_ch)
+            .send(Bytes::from_static(data), true, deadline)
+            .unwrap();
+    }
+    pair.drive_client();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).stats().frame_tx.datagram,
+        before
+    );
+
+    pair.time += Duration::from_millis(20);
+    pair.drive_client();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).stats().frame_tx.datagram,
+        before
+    );
+    pair.drive();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).stats().frame_tx.datagram - before,
+        2
+    );
+    assert_eq!(
+        pair.server_datagrams(server_ch).recv().unwrap(),
+        &b"future"[..]
+    );
+    assert_eq!(
+        pair.server_datagrams(server_ch).recv().unwrap(),
+        &b"no deadline"[..]
+    );
+    assert!(pair.server_datagrams(server_ch).recv().is_none());
+}
+
+#[test]
+fn datagram_expiration_unblocks_sender() {
+    let _guard = subscribe();
+    let mut transport = TransportConfig::default();
+    transport.datagram_send_buffer_size(512);
+    let mut config = client_config();
+    config.transport = Arc::new(transport);
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(config);
+    while pair.client_conn_mut(client_ch).poll().is_some() {}
+    let empty_space = pair.client_datagrams(client_ch).send_buffer_space();
+    let deadline = pair.time + Duration::from_millis(5);
+    let data = Bytes::from(vec![42; 400]);
+    pair.client_datagrams(client_ch)
+        .send(data.clone(), false, Some(deadline))
+        .unwrap();
+    assert_matches!(
+        pair.client_datagrams(client_ch)
+            .send(data.clone(), false, None),
+        Err(SendDatagramError::Blocked(_))
+    );
+
+    let before = pair.client_conn_mut(client_ch).stats().frame_tx.datagram;
+    pair.time = deadline;
+    pair.drive_client();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).stats().frame_tx.datagram,
+        before
+    );
+    assert_eq!(
+        pair.client_datagrams(client_ch).send_buffer_space(),
+        empty_space
+    );
+    assert!(
+        iter::from_fn(|| pair.client_conn_mut(client_ch).poll())
+            .any(|event| matches!(event, Event::DatagramsUnblocked))
+    );
+    pair.client_datagrams(client_ch)
+        .send(data.clone(), false, None)
+        .unwrap();
+    pair.drive();
+    assert_eq!(pair.server_datagrams(server_ch).recv(), Some(data));
+    assert!(pair.server_datagrams(server_ch).recv().is_none());
 }
 
 #[test]
@@ -3044,13 +3149,13 @@ fn datagram_recv_buffer_overflow() {
     const DATA2: &[u8] = &[0xBC; (PAYLOAD_WINDOW / 3) + 1];
     const DATA3: &[u8] = &[0xCD; (PAYLOAD_WINDOW / 3) + 1];
     pair.client_datagrams(client_ch)
-        .send(DATA1.into(), true)
+        .send(DATA1.into(), true, None)
         .unwrap();
     pair.client_datagrams(client_ch)
-        .send(DATA2.into(), true)
+        .send(DATA2.into(), true, None)
         .unwrap();
     pair.client_datagrams(client_ch)
-        .send(DATA3.into(), true)
+        .send(DATA3.into(), true, None)
         .unwrap();
     pair.drive();
     assert_matches!(
@@ -3062,7 +3167,7 @@ fn datagram_recv_buffer_overflow() {
     assert_matches!(pair.server_datagrams(server_ch).recv(), None);
 
     pair.client_datagrams(client_ch)
-        .send(DATA1.into(), true)
+        .send(DATA1.into(), true, None)
         .unwrap();
     pair.drive();
     assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), DATA1);
@@ -3081,14 +3186,50 @@ fn datagram_larger_than_send_buffer_is_too_large() {
 
     assert_matches!(
         pair.client_datagrams(client_ch)
-            .send(Bytes::from_static(&[0; 2]), true),
+            .send(Bytes::from_static(&[0; 2]), true, None),
         Err(SendDatagramError::TooLarge)
     );
     assert_matches!(
         pair.client_datagrams(client_ch)
-            .send(Bytes::from_static(&[0; 2]), false),
+            .send(Bytes::from_static(&[0; 2]), false, None),
         Err(SendDatagramError::TooLarge)
     );
+}
+
+#[test]
+fn datagram_send_buffer_accounts_for_new_metadata() {
+    let _guard = subscribe();
+    for drop in [false, true] {
+        let mut pair = Pair::default();
+        let mut config = client_config();
+        let mut transport = TransportConfig::default();
+        transport.datagram_send_buffer_size(512);
+        config.transport_config(transport.into());
+        let (client_ch, server_ch) = pair.connect_with(config);
+        let available = pair.client_datagrams(client_ch).send_buffer_space();
+        assert!(available > 0 && available < 512);
+        assert_matches!(
+            pair.client_datagrams(client_ch)
+                .send(vec![0; available + 1].into(), drop, None),
+            Err(SendDatagramError::TooLarge)
+        );
+        let data = Bytes::from(vec![42; available]);
+        pair.client_datagrams(client_ch)
+            .send(data.clone(), drop, None)
+            .unwrap();
+        assert_eq!(pair.client_datagrams(client_ch).send_buffer_space(), 0);
+        assert_matches!(
+            pair.client_datagrams(client_ch)
+                .send(Bytes::new(), false, None),
+            Err(SendDatagramError::Blocked(_))
+        );
+        pair.drive();
+        assert_eq!(pair.server_datagrams(server_ch).recv(), Some(data));
+        assert_eq!(
+            pair.client_datagrams(client_ch).send_buffer_space(),
+            available
+        );
+    }
 }
 
 #[test]
@@ -3106,7 +3247,10 @@ fn datagram_unsupported() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(pair.client_datagrams(client_ch).max_size(), None);
 
-    match pair.client_datagrams(client_ch).send(Bytes::new(), true) {
+    match pair
+        .client_datagrams(client_ch)
+        .send(Bytes::new(), true, None)
+    {
         Err(SendDatagramError::UnsupportedByPeer) => {}
         Err(e) => panic!("unexpected error: {e}"),
         Ok(_) => panic!("unexpected success"),
@@ -4340,7 +4484,7 @@ fn pure_sender_voluntarily_acks() {
     for _ in 0..100 {
         const MSG: &[u8] = b"hello";
         pair.client_datagrams(client_ch)
-            .send(Bytes::from_static(MSG), true)
+            .send(Bytes::from_static(MSG), true, None)
             .unwrap();
         pair.drive();
         assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), MSG);
@@ -4471,7 +4615,7 @@ fn datagram_gso() {
     // Sending ack-eliciting packet from server let client send ACK, which prevents
     // sending bundled ACK for a while.
     pair.server_datagrams(server_ch)
-        .send(Bytes::new(), false)
+        .send(Bytes::new(), false, None)
         .unwrap();
     pair.drive();
 
@@ -4485,7 +4629,7 @@ fn datagram_gso() {
     const DATAGRAMS: usize = 10;
     for _ in 0..DATAGRAMS {
         pair.client_datagrams(client_ch)
-            .send(Bytes::from_static(&[0; DATAGRAM_LEN]), false)
+            .send(Bytes::from_static(&[0; DATAGRAM_LEN]), false, None)
             .unwrap();
     }
     pair.drive();
@@ -4514,7 +4658,7 @@ fn gso_truncation() {
     const SIZES: [usize; 3] = [1024, 768, 768];
     for len in SIZES {
         pair.client_datagrams(client_ch)
-            .send(vec![0; len].into(), false)
+            .send(vec![0; len].into(), false, None)
             .unwrap();
     }
     pair.drive();
@@ -4579,7 +4723,7 @@ fn min_mtu_does_not_pad_application_data() {
 
     let message = Bytes::from_static(b"hello");
     pair.client_datagrams(client_ch)
-        .send(message.clone(), false)
+        .send(message.clone(), false, None)
         .unwrap();
     pair.client.drive(pair.time, pair.server.addr);
     assert_eq!(pair.client.outbound.len(), 1);
@@ -4764,10 +4908,10 @@ fn pad_to_mtu() {
     const LEN_1: usize = 800;
     const LEN_2: usize = 600;
     pair.client_datagrams(client_ch)
-        .send(vec![0; LEN_1].into(), false)
+        .send(vec![0; LEN_1].into(), false, None)
         .unwrap();
     pair.client_datagrams(client_ch)
-        .send(vec![0; LEN_2].into(), false)
+        .send(vec![0; LEN_2].into(), false, None)
         .unwrap();
     pair.client.drive(pair.time, pair.server.addr);
 
@@ -4823,7 +4967,7 @@ fn large_datagram_with_acks() {
     let max_size = pair.client_datagrams(client_ch).max_size().unwrap();
     let msg = Bytes::from(vec![0; max_size]);
     pair.client_datagrams(client_ch)
-        .send(msg.clone(), true)
+        .send(msg.clone(), true, None)
         .unwrap();
     let initial_datagrams = pair.client_conn_mut(client_ch).stats().udp_tx.datagrams;
     pair.drive();
@@ -4848,7 +4992,7 @@ fn voluntary_ack_with_large_datagrams() {
     for _ in 0..COUNT {
         let max_size = pair.client_datagrams(client_ch).max_size().unwrap();
         pair.client_datagrams(client_ch)
-            .send(vec![0; max_size].into(), true)
+            .send(vec![0; max_size].into(), true, None)
             .unwrap();
         pair.drive();
     }
@@ -4870,7 +5014,7 @@ fn ack_bundled_with_datagrams() {
 
     // Send packet from client and then send from server. the packet from server should include ACKs
     pair.client_datagrams(client_ch)
-        .send(vec![0; 1].into(), false)
+        .send(vec![0; 1].into(), false, None)
         .unwrap();
     pair.drive_client();
     pair.drive_server();
@@ -4880,7 +5024,7 @@ fn ack_bundled_with_datagrams() {
         pair.server_conn_mut(server_ch).stats().udp_tx.datagrams;
 
     pair.server_datagrams(server_ch)
-        .send(vec![0; 1].into(), false)
+        .send(vec![0; 1].into(), false, None)
         .unwrap();
     pair.drive_server();
 
@@ -4919,7 +5063,10 @@ fn path_changes_unblock_oversized_datagrams() {
         let empty_space = pair.server_datagrams(server_ch).send_buffer_space();
         let data = Bytes::from(vec![42; old_max]);
         loop {
-            match pair.server_datagrams(server_ch).send(data.clone(), false) {
+            match pair
+                .server_datagrams(server_ch)
+                .send(data.clone(), false, None)
+            {
                 Ok(()) => {}
                 Err(SendDatagramError::Blocked(_)) => break,
                 Err(error) => panic!("unexpected send error: {error}"),
@@ -4967,7 +5114,7 @@ fn path_changes_unblock_oversized_datagrams() {
 
         let small = Bytes::from_static(b"small");
         pair.server_datagrams(server_ch)
-            .send(small.clone(), false)
+            .send(small.clone(), false, None)
             .unwrap();
         pair.drive();
         assert_eq!(pair.client_datagrams(client_ch).recv(), Some(small));
@@ -4986,11 +5133,11 @@ fn oversized_datagrams_trigger_unblock() {
 
     let mut client_config = client_config();
     let mut transport_config = TransportConfig::default();
-    let send_buffer_size = transport_config.datagram_send_buffer_size;
     transport_config.initial_mtu(INITIAL_MTU as u16);
     client_config.transport_config(transport_config.into());
 
     let (client_ch, _) = pair.connect_with(client_config);
+    let empty_space = pair.client_datagrams(client_ch).send_buffer_space();
 
     // Send datagrams until the send buffer is full.
     let max_size = pair.client_datagrams(client_ch).max_size().unwrap();
@@ -4998,7 +5145,7 @@ fn oversized_datagrams_trigger_unblock() {
     loop {
         match pair
             .client_datagrams(client_ch)
-            .send(data.clone().into(), false)
+            .send(data.clone().into(), false, None)
         {
             Ok(_) => {}
             Err(SendDatagramError::Blocked(_)) => {
@@ -5015,7 +5162,7 @@ fn oversized_datagrams_trigger_unblock() {
         let err = loop {
             if let Err(e) = pair
                 .client_datagrams(client_ch)
-                .send(data.clone().into(), false)
+                .send(data.clone().into(), false, None)
             {
                 break e;
             }
@@ -5047,7 +5194,7 @@ fn oversized_datagrams_trigger_unblock() {
 
     assert_eq!(
         pair.client_datagrams(client_ch).send_buffer_space(),
-        send_buffer_size - size_of::<Datagram>(),
+        empty_space,
         "expected the send buffer to be empty after too large datagrams were dropped",
     );
     match pair.client_conn_mut(client_ch).poll() {
