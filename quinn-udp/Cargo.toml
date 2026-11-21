@@ -28,9 +28,6 @@ tracing = { workspace = true, optional = true }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 socket2 = { workspace = true }
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true }
-
 # Cargo builds dev-dependencies for every test target, and tokio's `net` doesn't build for wasm.
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["async_tokio"] }

@@ -3,7 +3,7 @@ use std::{
     ptr,
 };
 
-use windows_sys::Win32::Networking::WinSock;
+use crate::bindings as WinSock;
 
 use super::{CMsgHdr, MsgHdr};
 
