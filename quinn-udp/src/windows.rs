@@ -11,8 +11,8 @@ use std::{
     time::Instant,
 };
 
+use crate::bindings as WinSock;
 use libc::{c_int, c_uint};
-use windows_sys::Win32::Networking::WinSock;
 
 use crate::{
     EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef,
@@ -241,7 +241,7 @@ impl UdpSocketState {
         let mut ctrl_buf = cmsg::Aligned([0; CMSG_LEN]);
         let mut source: WinSock::SOCKADDR_INET = unsafe { mem::zeroed() };
         let mut data = WinSock::WSABUF {
-            buf: bufs[0].as_mut_ptr(),
+            buf: bufs[0].as_mut_ptr().cast(),
             len: bufs[0].len() as _,
         };
 
@@ -290,7 +290,7 @@ impl UdpSocketState {
 
         let cmsg_iter = unsafe { cmsg::Iter::new(&wsa_msg) };
         for cmsg in cmsg_iter {
-            const UDP_COALESCED_INFO: i32 = WinSock::UDP_COALESCED_INFO as i32;
+            const UDP_COALESCED_INFO: i32 = WinSock::UDP_COALESCED_INFO;
             // [header (len)][data][padding(len + sizeof(data))] -> [header][data][padding]
             match (cmsg.cmsg_level, cmsg.cmsg_type) {
                 (WinSock::IPPROTO_IP, WinSock::IP_PKTINFO) => {
@@ -421,7 +421,7 @@ fn send(
     if let Some(ip) = transmit.src_ip {
         let ip = std::net::SocketAddr::new(ip, 0);
         let ip = socket2::SockAddr::from(ip);
-        match ip.family() {
+        match i32::from(ip.family()) {
             WinSock::AF_INET => {
                 let src_ip = unsafe { ptr::read(ip.as_ptr() as *const WinSock::SOCKADDR_IN) };
                 let pktinfo = WinSock::IN_PKTINFO {

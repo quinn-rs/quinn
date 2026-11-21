@@ -45,8 +45,9 @@ use std::{
 #[cfg(not(wasm_browser))]
 use std::{sync::Mutex, time::Instant};
 #[cfg(windows)]
-use windows_sys::Win32::Networking::WinSock;
-
+mod bindings;
+#[cfg(windows)]
+use crate::bindings as WinSock;
 #[cfg(apple_fast)]
 mod apple_fast;
 
