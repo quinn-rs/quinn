@@ -103,12 +103,19 @@ impl Pacer {
             return None;
         }
 
-        let elapsed_rtts = time_elapsed.as_secs_f64() / smoothed_rtt.as_secs_f64();
-        let new_tokens = (window as f64 * 1.25 * elapsed_rtts).round() as u64;
+        let rtt = smoothed_rtt.as_nanos();
+        let new_tokens = u64::try_from(
+            u128::from(window)
+                .saturating_mul(5)
+                .saturating_mul(time_elapsed.as_nanos())
+                .saturating_add(rtt.saturating_mul(2))
+                / rtt.saturating_mul(4),
+        )
+        .unwrap_or(u64::MAX);
         self.tokens = self.tokens.saturating_add(new_tokens).min(self.capacity);
 
         // In the unlikely event that we're getting polled faster than tokens are generated, ensure
-        // that `elapsed_rtts` can grow until we make progress.
+        // that `time_elapsed` can grow until we make progress.
         if new_tokens > 0 {
             self.prev = now;
         }
