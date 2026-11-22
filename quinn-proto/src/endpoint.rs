@@ -1318,10 +1318,15 @@ impl Incoming {
         self.token.orig_dst_cid
     }
 
-    /// Remove packet protection from the first packet, unless that was attempted before
+    /// Remove packet protection from the first packet, ahead of accepting the attempt
     ///
-    /// Returns whether it is a valid Initial packet.
-    fn decrypt(&mut self) -> bool {
+    /// Accepting does this itself if it wasn't done before, so calling this is optional. It needs
+    /// no access to the [`Endpoint`], and can therefore run concurrently with other operations on
+    /// it, e.g. outside a lock guarding it. Initial keys are derived here, which is most of what an
+    /// endpoint spends on an attempt before its handshake starts.
+    ///
+    /// Returns whether the packet is a valid Initial. If it isn't, accepting the attempt fails.
+    pub fn decrypt(&mut self) -> bool {
         let partial = match mem::replace(&mut self.packet, FirstPacket::Invalid) {
             FirstPacket::Protected(partial) => partial,
             packet => {

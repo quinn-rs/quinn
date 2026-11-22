@@ -85,6 +85,38 @@ fn accept_of_invalid_initial_fails_silently() {
     }
 }
 
+#[test]
+fn decrypt_ahead_of_accept() {
+    let _guard = subscribe();
+    let now = Instant::now();
+    let config = Arc::new(server_config());
+
+    let mut client = Endpoint::new(Default::default(), None, true);
+    let (_, mut conn) = client
+        .connect(now, client_config(), CLIENT, "localhost")
+        .unwrap();
+    let mut packet = Vec::new();
+    let _ = conn.poll_transmit(now, 1, &mut packet).unwrap();
+    let mut endpoint = Endpoint::new(Default::default(), Some(config.clone()), true);
+    let mut incoming = new_incoming(&mut endpoint, now, packet.as_slice().into());
+    assert!(incoming.decrypt());
+    assert!(incoming.decrypt());
+    let mut buf = Vec::new();
+    assert!(endpoint.accept(incoming, now, &mut buf, None).is_ok());
+    assert_eq!(endpoint.known_connections(), 1);
+
+    let mut endpoint = Endpoint::new(Default::default(), Some(config), true);
+    let mut packet = initial_packet(ConnectionId::new(&[1; 8]), &[]);
+    *packet.last_mut().unwrap() ^= 1;
+    let mut incoming = new_incoming(&mut endpoint, now, packet);
+    assert!(!incoming.decrypt());
+    assert!(!incoming.decrypt());
+    let mut buf = Vec::new();
+    let error = endpoint.accept(incoming, now, &mut buf, None).unwrap_err();
+    assert!(error.response.is_none());
+    assert_eq!(endpoint.known_connections(), 0);
+}
+
 /// Refusing doesn't need the first packet to be valid, only its header to be readable
 #[test]
 fn refuse_of_invalid_initial() {
