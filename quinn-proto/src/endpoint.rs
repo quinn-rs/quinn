@@ -524,7 +524,7 @@ impl Endpoint {
         };
 
         let incoming_idx = self.incoming_buffers.insert(IncomingBuffer {
-            server_config,
+            server_config: server_config.clone(),
             datagrams: Vec::new(),
             total_bytes: 0,
         });
@@ -542,6 +542,7 @@ impl Endpoint {
             },
             rest: event.remaining,
             crypto,
+            server_config,
             token,
             incoming_idx,
             improper_drop_warner: IncomingImproperDropWarner,
@@ -598,11 +599,7 @@ impl Endpoint {
             version,
             ..
         } = incoming.packet.header;
-        let server_config = server_config.unwrap_or_else(|| {
-            self.incoming_buffers[incoming.incoming_idx]
-                .server_config
-                .clone()
-        });
+        let server_config = server_config.unwrap_or_else(|| incoming.server_config.clone());
 
         if server_config
             .transport
@@ -853,9 +850,6 @@ impl Endpoint {
             return Err(RetryError(Box::new(incoming)));
         }
 
-        let server_config = self.incoming_buffers[incoming.incoming_idx]
-            .server_config
-            .clone();
         self.remove_incoming_state(&incoming);
         incoming.improper_drop_warner.dismiss();
 
@@ -870,9 +864,9 @@ impl Endpoint {
         let payload = TokenPayload::Retry {
             address: incoming.addresses.remote,
             orig_dst_cid: incoming.packet.header.dst_cid,
-            issued: server_config.time_source.now(),
+            issued: incoming.server_config.time_source.now(),
         };
-        let token = Token::new(payload, &mut self.rng).encode(&*server_config.token_key);
+        let token = Token::new(payload, &mut self.rng).encode(&*incoming.server_config.token_key);
 
         let header = Header::Retry {
             src_cid: loc_cid,
@@ -882,7 +876,7 @@ impl Endpoint {
 
         header.encode(buf);
         buf.put_slice(&token);
-        buf.extend_from_slice(&server_config.crypto.retry_tag(
+        buf.extend_from_slice(&incoming.server_config.crypto.retry_tag(
             incoming.packet.header.version,
             incoming.packet.header.dst_cid,
             buf,
@@ -1312,6 +1306,8 @@ pub struct Incoming {
     packet: InitialPacket,
     rest: Option<BytesMut>,
     crypto: Keys,
+    /// Configuration in effect when the first packet arrived
+    server_config: Arc<ServerConfig>,
     token: IncomingToken,
     incoming_idx: usize,
     improper_drop_warner: IncomingImproperDropWarner,
