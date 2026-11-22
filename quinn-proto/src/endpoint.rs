@@ -24,7 +24,7 @@ use crate::{
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionArgs, ConnectionError, SideArgs},
-    crypto::{self, Keys, UnsupportedVersion},
+    crypto::{self, Keys},
     frame,
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, PacketDecodeError,
@@ -460,20 +460,25 @@ impl Endpoint {
             return None;
         }
 
-        let crypto = match server_config.crypto.initial_keys(header.version, dst_cid) {
-            Ok(keys) => keys,
-            Err(UnsupportedVersion) => {
-                // This probably indicates that the user set supported_versions incorrectly in
-                // `EndpointConfig`.
-                debug!(
-                    "ignoring initial packet version {:#x} unsupported by cryptographic layer",
-                    header.version
-                );
-                return None;
-            }
-        };
+        if !server_config.crypto.supports_version(header.version) {
+            // This probably indicates that the user set supported_versions incorrectly in
+            // `EndpointConfig`.
+            debug!(
+                "ignoring initial packet version {:#x} unsupported by cryptographic layer",
+                header.version
+            );
+            return None;
+        }
+        let server_config = server_config.clone();
 
+        // Initial keys are derived only where a response has to be encrypted. Otherwise that's left
+        // until the application accepts or refuses the attempt, as most of the cost of an Initial
+        // that is retried or ignored would be in the keys.
         if let Err(reason) = self.early_validate_first_packet(header) {
+            let crypto = server_config
+                .crypto
+                .initial_keys(header.version, dst_cid)
+                .ok()?;
             return Some(DatagramEvent::Response(self.initial_close(
                 header.version,
                 addresses,
@@ -484,39 +489,25 @@ impl Endpoint {
             )));
         }
 
-        let packet = match event.first_decode.finish(Some(&*crypto.header.remote)) {
-            Ok(packet) => packet,
-            Err(e) => {
-                trace!("unable to decode initial packet: {}", e);
-                return None;
-            }
-        };
-
-        if !packet.reserved_bits_valid() {
-            debug!("dropping connection attempt with invalid reserved bits");
-            return None;
-        }
-
-        let Header::Initial(header) = packet.header else {
-            panic!("non-initial packet in handle_first_packet()");
-        };
-
-        let server_config = self.server_config.as_ref().unwrap().clone();
-
+        let (version, src_cid) = (header.version, header.src_cid);
+        // Header protection doesn't cover the token
         let token = match IncomingToken::from_header(
-            header.dst_cid,
-            &header.token,
+            dst_cid,
+            event.first_decode.initial_token(),
             &server_config,
             addresses.remote,
         ) {
             Ok(token) => token,
             Err(InvalidRetryTokenError) => {
                 debug!("rejecting invalid retry token");
+                let crypto = server_config.crypto.initial_keys(version, dst_cid).ok()?;
+                // Respond only to what the Initial keys show to be an Initial packet
+                unprotect_initial(event.first_decode, &crypto)?;
                 return Some(DatagramEvent::Response(self.initial_close(
-                    header.version,
+                    version,
                     addresses,
                     &crypto,
-                    header.src_cid,
+                    src_cid,
                     TransportError::INVALID_TOKEN(""),
                     buf,
                 )));
@@ -528,21 +519,18 @@ impl Endpoint {
             datagrams: Vec::new(),
             total_bytes: 0,
         });
-        self.index
-            .insert_initial_incoming(header.dst_cid, incoming_idx);
+        self.index.insert_initial_incoming(dst_cid, incoming_idx);
 
         Some(DatagramEvent::NewConnection(Incoming {
             received_at: event.now,
             addresses,
             ecn: event.ecn,
-            packet: InitialPacket {
-                header,
-                header_data: packet.header_data,
-                payload: packet.payload,
-            },
+            packet: FirstPacket::Protected(event.first_decode),
             rest: event.remaining,
-            crypto,
             server_config,
+            version,
+            dst_cid,
+            src_cid,
             token,
             incoming_idx,
             improper_drop_warner: IncomingImproperDropWarner,
@@ -592,13 +580,12 @@ impl Endpoint {
     ) -> Result<Accepting, Box<AcceptError>> {
         let remote_address_validated = incoming.remote_address_validated();
 
-        let packet_number = incoming.packet.header.number.expand(0);
-        let InitialHeader {
+        let Incoming {
             src_cid,
             dst_cid,
             version,
             ..
-        } = incoming.packet.header;
+        } = incoming;
         let server_config = server_config.unwrap_or_else(|| incoming.server_config.clone());
 
         if server_config
@@ -619,14 +606,7 @@ impl Endpoint {
 
         if self.cids_exhausted() {
             debug!("refusing connection");
-            let response = self.initial_close(
-                version,
-                incoming.addresses,
-                &incoming.crypto,
-                src_cid,
-                TransportError::CONNECTION_REFUSED(""),
-                buf,
-            );
+            let response = self.refusal(&incoming, buf);
             self.ignore(incoming);
             return Err(Box::new(AcceptError {
                 cause: ConnectionError::CidsExhausted,
@@ -634,18 +614,7 @@ impl Endpoint {
             }));
         }
 
-        if incoming
-            .crypto
-            .packet
-            .remote
-            .decrypt(
-                packet_number,
-                &incoming.packet.header_data,
-                &mut incoming.packet.payload,
-            )
-            .is_err()
-        {
-            debug!(packet_number, "failed to authenticate initial packet");
+        if !incoming.decrypt() {
             self.ignore(incoming);
             return Err(Box::new(AcceptError {
                 cause: TransportError::PROTOCOL_VIOLATION("authentication failed").into(),
@@ -685,12 +654,19 @@ impl Endpoint {
             ecn,
             packet,
             rest,
-            crypto,
             incoming_idx,
             improper_drop_warner,
             ..
         } = incoming;
         improper_drop_warner.dismiss();
+        let FirstPacket::Decrypted(first) = packet else {
+            unreachable!("first packet was decrypted above");
+        };
+        let DecryptedInitial {
+            packet,
+            number: packet_number,
+            crypto,
+        } = *first;
 
         let mut rng_seed = [0; 32];
         self.rng.fill_bytes(&mut rng_seed);
@@ -830,13 +806,30 @@ impl Endpoint {
     /// Reject this incoming connection attempt
     pub fn refuse(&mut self, incoming: Incoming, buf: &mut Vec<u8>) -> Transmit {
         self.remove_incoming_state(&incoming);
+        let transmit = self.refusal(&incoming, buf);
         incoming.improper_drop_warner.dismiss();
+        transmit
+    }
 
+    /// Encode a close refusing an incoming connection attempt
+    fn refusal(&mut self, incoming: &Incoming, buf: &mut Vec<u8>) -> Transmit {
+        let derived;
+        let crypto = match &incoming.packet {
+            FirstPacket::Decrypted(first) => &first.crypto,
+            FirstPacket::Protected(_) | FirstPacket::Invalid => {
+                derived = incoming
+                    .server_config
+                    .crypto
+                    .initial_keys(incoming.version, incoming.dst_cid)
+                    .expect("version was accepted when the first packet arrived");
+                &derived
+            }
+        };
         self.initial_close(
-            incoming.packet.header.version,
+            incoming.version,
             incoming.addresses,
-            &incoming.crypto,
-            incoming.packet.header.src_cid,
+            crypto,
+            incoming.src_cid,
             TransportError::CONNECTION_REFUSED(""),
             buf,
         )
@@ -863,22 +856,22 @@ impl Endpoint {
 
         let payload = TokenPayload::Retry {
             address: incoming.addresses.remote,
-            orig_dst_cid: incoming.packet.header.dst_cid,
+            orig_dst_cid: incoming.dst_cid,
             issued: incoming.server_config.time_source.now(),
         };
         let token = Token::new(payload, &mut self.rng).encode(&*incoming.server_config.token_key);
 
         let header = Header::Retry {
             src_cid: loc_cid,
-            dst_cid: incoming.packet.header.src_cid,
-            version: incoming.packet.header.version,
+            dst_cid: incoming.src_cid,
+            version: incoming.version,
         };
 
         header.encode(buf);
         buf.put_slice(&token);
         buf.extend_from_slice(&incoming.server_config.crypto.retry_tag(
-            incoming.packet.header.version,
-            incoming.packet.header.dst_cid,
+            incoming.version,
+            incoming.dst_cid,
             buf,
         ));
 
@@ -902,7 +895,7 @@ impl Endpoint {
 
     /// Remove endpoint state associated with an `Incoming`.
     fn remove_incoming_state(&mut self, incoming: &Incoming) {
-        self.index.remove_initial(incoming.packet.header.dst_cid);
+        self.index.remove_initial(incoming.dst_cid);
         self.remove_incoming_buffer(incoming.incoming_idx);
     }
 
@@ -1303,11 +1296,13 @@ pub struct Incoming {
     received_at: Instant,
     addresses: FourTuple,
     ecn: Option<EcnCodepoint>,
-    packet: InitialPacket,
+    packet: FirstPacket,
     rest: Option<BytesMut>,
-    crypto: Keys,
     /// Configuration in effect when the first packet arrived
     server_config: Arc<ServerConfig>,
+    version: u32,
+    dst_cid: ConnectionId,
+    src_cid: ConnectionId,
     token: IncomingToken,
     incoming_idx: usize,
     improper_drop_warner: IncomingImproperDropWarner,
@@ -1349,6 +1344,50 @@ impl Incoming {
     pub fn orig_dst_cid(&self) -> ConnectionId {
         self.token.orig_dst_cid
     }
+
+    /// Remove packet protection from the first packet, unless that was attempted before
+    ///
+    /// Returns whether it is a valid Initial packet.
+    fn decrypt(&mut self) -> bool {
+        let partial = match mem::replace(&mut self.packet, FirstPacket::Invalid) {
+            FirstPacket::Protected(partial) => partial,
+            packet => {
+                self.packet = packet;
+                return matches!(self.packet, FirstPacket::Decrypted(_));
+            }
+        };
+
+        let Ok(crypto) = self
+            .server_config
+            .crypto
+            .initial_keys(self.version, self.dst_cid)
+        else {
+            return false;
+        };
+        let Some(mut packet) = unprotect_initial(partial, &crypto) else {
+            return false;
+        };
+        let number = packet.header.number.expand(0);
+        if crypto
+            .packet
+            .remote
+            .decrypt(number, &packet.header_data, &mut packet.payload)
+            .is_err()
+        {
+            debug!(
+                packet_number = number,
+                "failed to authenticate initial packet"
+            );
+            return false;
+        }
+
+        self.packet = FirstPacket::Decrypted(Box::new(DecryptedInitial {
+            packet,
+            number,
+            crypto,
+        }));
+        true
+    }
 }
 
 impl fmt::Debug for Incoming {
@@ -1363,6 +1402,49 @@ impl fmt::Debug for Incoming {
             // improper drop warner contains no information
             .finish_non_exhaustive()
     }
+}
+
+/// First packet of an [`Incoming`], from which packet protection is removed only once needed
+enum FirstPacket {
+    /// As received
+    Protected(PartialDecode),
+    /// With header protection removed and the payload decrypted
+    Decrypted(Box<DecryptedInitial>),
+    /// Not a valid Initial packet
+    Invalid,
+}
+
+struct DecryptedInitial {
+    packet: InitialPacket,
+    number: u64,
+    /// Initial keys, retained to send a close if the connection can't be established
+    crypto: Keys,
+}
+
+/// Remove header protection from an Initial packet, if it is a valid one
+fn unprotect_initial(partial: PartialDecode, crypto: &Keys) -> Option<InitialPacket> {
+    let packet = match partial.finish(Some(&*crypto.header.remote)) {
+        Ok(packet) => packet,
+        Err(e) => {
+            trace!("unable to decode initial packet: {}", e);
+            return None;
+        }
+    };
+
+    if !packet.reserved_bits_valid() {
+        debug!("dropping connection attempt with invalid reserved bits");
+        return None;
+    }
+
+    let Header::Initial(header) = packet.header else {
+        panic!("non-initial first packet");
+    };
+
+    Some(InitialPacket {
+        header,
+        header_data: packet.header_data,
+        payload: packet.payload,
+    })
 }
 
 struct IncomingImproperDropWarner;
