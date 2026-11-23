@@ -7,7 +7,7 @@ use bytes::BytesMut;
 use ring::aead;
 pub use rustls::Error;
 use rustls::{
-    self, CipherSuite, HandshakeKind, NamedGroup,
+    self, CipherSuite, HandshakeKind, NamedGroup, ProtocolVersion,
     client::danger::ServerCertVerifier,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
@@ -68,13 +68,12 @@ impl crypto::Session for TlsSession {
             protocol_version: match &self.inner {
                 Connection::Client(session) => session.protocol_version(),
                 Connection::Server(session) => session.protocol_version(),
-            }
-            .map(|x| -> Box<dyn Any> { Box::new(x) }),
+            },
             cipher_suite: match &self.inner {
                 Connection::Client(session) => session.negotiated_cipher_suite(),
                 Connection::Server(session) => session.negotiated_cipher_suite(),
             }
-            .map(|suite| -> Box<dyn Any> { Box::new(suite.suite()) }),
+            .map(|suite| suite.suite()),
             key_exchange_group: self
                 .inner
                 .negotiated_key_exchange_group()
@@ -280,9 +279,9 @@ pub struct HandshakeData {
     /// Always `None` for outgoing connections
     pub server_name: Option<String>,
     /// The protocol version negotiated with the peer, if any
-    pub protocol_version: Option<Box<dyn Any>>,
+    pub protocol_version: Option<ProtocolVersion>,
     /// The cipher suite negotiated with the peer, if any
-    pub cipher_suite: Option<Box<dyn Any>>,
+    pub cipher_suite: Option<CipherSuite>,
     /// The key exchange group negotiated with the peer, if any
     pub key_exchange_group: Option<NamedGroup>,
 }
