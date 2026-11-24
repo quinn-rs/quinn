@@ -196,10 +196,7 @@ fn run_invalid(b: &mut Bencher, token: Token, short_dcid: bool) {
     b.iter(|| {
         let mut out = Vec::new();
         let event = server.handle(now, addr, None, None, packet.as_slice().into(), &mut out);
-        assert!(
-            matches!(event, Some(DatagramEvent::Response(_))),
-            "expected a close"
-        );
+        assert!(event.is_none() && out.is_empty(), "expected no response");
         black_box(out);
     });
 }

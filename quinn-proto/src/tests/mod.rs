@@ -5058,7 +5058,7 @@ fn oversized_datagrams_trigger_unblock() {
 }
 
 #[test]
-fn reject_short_idcid() {
+fn ignore_short_idcid() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
     let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
@@ -5068,9 +5068,8 @@ fn reject_short_idcid() {
     let mut initial = BytesMut::from(hex!("c4 00000001 00 00 00 3f").as_ref());
     initial.resize(MIN_INITIAL_SIZE.into(), 0);
     let event = server.handle(now, client_addr, None, None, initial, &mut buf);
-    let Some(DatagramEvent::Response(Transmit { .. })) = event else {
-        panic!("expected an initial close");
-    };
+    assert!(event.is_none());
+    assert!(buf.is_empty());
 }
 
 /// Ensure that a connection can be made when a preferred address is advertised by the server,

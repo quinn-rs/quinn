@@ -103,37 +103,38 @@ fn refuse_of_invalid_initial() {
     assert_eq!(endpoint.known_connections(), 0);
 }
 
-/// A Retry token that's invalid for the sender is answered only if the packet is an Initial
+/// Initials that the endpoint turns down by itself cost it no Initial keys and get no response
 #[test]
-fn invalid_retry_token_in_invalid_initial() {
+fn invalid_initials_are_ignored() {
     let _guard = subscribe();
     let now = Instant::now();
-    let dst_cid = ConnectionId::new(&[1; 8]);
-    let config = Arc::new(server_config());
+    let mut config = server_config();
+    let derivations = count_initial_keys(&mut config);
+    let config = Arc::new(config);
+    let mut endpoint = Endpoint::new(Default::default(), Some(config.clone()), true);
+
+    // A Retry token issued to another address
     let payload = TokenPayload::Retry {
         address: "[::2]:4433".parse().unwrap(),
         orig_dst_cid: ConnectionId::new(&[3; 8]),
         issued: config.time_source.now(),
     };
     let token = Token::new(payload, &mut rand::rng()).encode(&*config.token_key);
-    let mut endpoint = Endpoint::new(Default::default(), Some(config), true);
+    let invalid_token = initial_packet(ConnectionId::new(&[1; 8]), &token);
+    // A destination CID shorter than a client may choose
+    let short_dst_cid = initial_packet(ConnectionId::new(&[1; 7]), &[]);
 
-    let mut buf = Vec::new();
-    let packet = initial_packet(dst_cid, &token);
-    assert!(matches!(
-        endpoint.handle(now, CLIENT, None, None, packet, &mut buf),
-        Some(DatagramEvent::Response(_))
-    ));
-
-    let mut buf = Vec::new();
-    let mut packet = initial_packet(dst_cid, &token);
-    packet[0] ^= 0x04;
-    assert!(
-        endpoint
-            .handle(now, CLIENT, None, None, packet, &mut buf)
-            .is_none()
-    );
-    assert!(buf.is_empty());
+    for packet in [invalid_token, short_dst_cid] {
+        let mut buf = Vec::new();
+        assert!(
+            endpoint
+                .handle(now, CLIENT, None, None, packet, &mut buf)
+                .is_none()
+        );
+        assert!(buf.is_empty());
+    }
+    assert_eq!(endpoint.open_connections(), 0);
+    assert_eq!(derivations.load(Ordering::Relaxed), 0);
 }
 
 const CLIENT: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 4433);

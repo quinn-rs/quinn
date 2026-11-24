@@ -168,11 +168,19 @@ fn retry_token_expired() {
     // to expire retry token
     fake_time.advance(retry_token_lifetime + Duration::from_millis(1));
 
-    pair.drive();
+    // The server ignores Initials carrying the expired token, which leaves the client to time out
+    while !pair.client_conn_mut(client_ch).is_closed() {
+        if !pair.step()
+            && let Some(t) = pair.client.next_wakeup()
+        {
+            pair.time = t;
+        }
+    }
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::ConnectionLost { reason: ConnectionError::ConnectionClosed(err) })
-        if err.error_code == TransportErrorCode::INVALID_TOKEN
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::TimedOut
+        })
     );
 
     assert_eq!(pair.client.known_connections(), 0);

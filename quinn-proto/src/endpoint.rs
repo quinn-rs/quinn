@@ -471,22 +471,17 @@ impl Endpoint {
         }
         let server_config = server_config.clone();
 
-        // Initial keys are derived only where a response has to be encrypted. Otherwise that's left
-        // until the application accepts or refuses the attempt, as most of the cost of an Initial
-        // that is retried or ignored would be in the keys.
-        if let Err(reason) = self.early_validate_first_packet(header) {
-            let crypto = server_config
-                .crypto
-                .initial_keys(header.version, dst_cid)
-                .ok()?;
-            return Some(DatagramEvent::Response(self.initial_close(
-                header.version,
-                addresses,
-                &crypto,
-                header.src_cid,
-                reason,
-                buf,
-            )));
+        // Initial keys aren't derived here. That's left until the application accepts or refuses
+        // the attempt, as most of the cost of an Initial that is retried or ignored would be in the
+        // keys. For the same reason, the Initials turned down below get no close in response:
+        // encrypting one takes those keys, and a flood of such packets would starve packet
+        // processing for existing connections.
+        if !self.is_valid_initial_dst_cid(header) {
+            debug!(
+                "ignoring initial with invalid DCID length {}",
+                header.dst_cid.len()
+            );
+            return None;
         }
 
         let (version, src_cid) = (header.version, header.src_cid);
@@ -499,18 +494,10 @@ impl Endpoint {
         ) {
             Ok(token) => token,
             Err(InvalidRetryTokenError) => {
-                debug!("rejecting invalid retry token");
-                let crypto = server_config.crypto.initial_keys(version, dst_cid).ok()?;
-                // Respond only to what the Initial keys show to be an Initial packet
-                unprotect_initial(event.first_decode, &crypto)?;
-                return Some(DatagramEvent::Response(self.initial_close(
-                    version,
-                    addresses,
-                    &crypto,
-                    src_cid,
-                    TransportError::INVALID_TOKEN(""),
-                    buf,
-                )));
+                // RFC 9000 §8.1.2 recommends closing with INVALID_TOKEN, and allows discarding the
+                // packet, which leaves the client to time out
+                debug!("ignoring initial with invalid retry token");
+                return None;
             }
         };
 
@@ -779,28 +766,14 @@ impl Endpoint {
     }
 
     /// Check if we should refuse a connection attempt regardless of the packet's contents
-    fn early_validate_first_packet(
-        &mut self,
-        header: &ProtectedInitialHeader,
-    ) -> Result<(), TransportError> {
+    fn is_valid_initial_dst_cid(&self, header: &ProtectedInitialHeader) -> bool {
         // RFC9000 §7.2 dictates that initial (client-chosen) destination CIDs must be at least 8
         // bytes. If this is a Retry packet, then the length must instead match our usual CID
         // length. If we ever issue non-Retry address validation tokens via `NEW_TOKEN`, then we'll
         // also need to validate CID length for those after decoding the token.
-        if header.dst_cid.len() < 8
-            && (header.token_pos.is_empty()
-                || header.dst_cid.len() != self.local_cid_generator.cid_len())
-        {
-            debug!(
-                "rejecting connection due to invalid DCID length {}",
-                header.dst_cid.len()
-            );
-            return Err(TransportError::PROTOCOL_VIOLATION(
-                "invalid destination CID length",
-            ));
-        }
-
-        Ok(())
+        header.dst_cid.len() >= 8
+            || (!header.token_pos.is_empty()
+                && header.dst_cid.len() == self.local_cid_generator.cid_len())
     }
 
     /// Reject this incoming connection attempt
