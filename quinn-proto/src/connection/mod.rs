@@ -2135,6 +2135,7 @@ impl Connection {
         );
 
         self.process_decrypted_packet(now, remote, Some(packet_number), packet.into())?;
+        self.finish_packet(now, remote, Ok(()), false, false);
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, ecn, data);
         }
