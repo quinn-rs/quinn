@@ -317,6 +317,39 @@ fn client_stateless_reset() {
     );
 }
 
+/// A client that closes before its first transmission sends an Initial packet carrying only
+/// CONNECTION_CLOSE. The server must drain the connection it accepts for that packet on its close
+/// timer, as it does for a close received later.
+#[test]
+fn close_in_first_initial_drains_server_connection() {
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    // Note: we disable the idle timeout so that only the close timer can drain the connection
+    Arc::get_mut(&mut server_config.transport)
+        .unwrap()
+        .max_idle_timeout(None);
+    let mut pair = Pair::new(Default::default(), server_config);
+    let client_ch = pair.begin_connect(client_config());
+    let now = pair.time;
+    pair.client_conn_mut(client_ch)
+        .close(now, VarInt(42), Bytes::new());
+    pair.drive_client();
+    pair.drive_server();
+    assert_eq!(
+        pair.server.known_connections(),
+        1,
+        "server should have accepted the client's Initial"
+    );
+
+    while pair.server.known_connections() > 0 {
+        pair.time = pair
+            .server
+            .next_wakeup()
+            .expect("server should have its close timer armed");
+        pair.drive_server();
+    }
+}
+
 /// Verify that stateless resets are rate-limited
 #[test]
 fn stateless_reset_limit() {
