@@ -68,16 +68,13 @@ impl crypto::Session for TlsSession {
             protocol_version: match &self.inner {
                 Connection::Client(session) => session.protocol_version(),
                 Connection::Server(session) => session.protocol_version(),
-            },
+            }?,
             cipher_suite: match &self.inner {
                 Connection::Client(session) => session.negotiated_cipher_suite(),
                 Connection::Server(session) => session.negotiated_cipher_suite(),
-            }
-            .map(|suite| suite.suite()),
-            key_exchange_group: self
-                .inner
-                .negotiated_key_exchange_group()
-                .map(|group| group.name()),
+            }?
+            .suite(),
+            key_exchange_group: self.inner.negotiated_key_exchange_group()?.name(),
         }))
     }
 
@@ -278,12 +275,12 @@ pub struct HandshakeData {
     ///
     /// Always `None` for outgoing connections
     pub server_name: Option<String>,
-    /// The protocol version negotiated with the peer, if any
-    pub protocol_version: Option<ProtocolVersion>,
-    /// The cipher suite negotiated with the peer, if any
-    pub cipher_suite: Option<CipherSuite>,
-    /// The key exchange group negotiated with the peer, if any
-    pub key_exchange_group: Option<NamedGroup>,
+    /// The protocol version negotiated with the peer
+    pub protocol_version: ProtocolVersion,
+    /// The cipher suite negotiated with the peer
+    pub cipher_suite: CipherSuite,
+    /// The key exchange group negotiated with the peer
+    pub key_exchange_group: NamedGroup,
 }
 
 /// A QUIC-compatible TLS client configuration
