@@ -51,7 +51,7 @@ async fn check_post_quantum_key_exchange(min_mtu: u16) {
                 .downcast::<HandshakeData>()
                 .unwrap()
                 .key_exchange_group,
-            Some(NamedGroup::X25519MLKEM768)
+            NamedGroup::X25519MLKEM768
         )
     });
 

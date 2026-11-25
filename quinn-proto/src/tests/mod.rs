@@ -1368,9 +1368,7 @@ fn alpn_success() {
         .downcast::<crypto::rustls::HandshakeData>()
         .unwrap();
     assert_eq!(hd.protocol.unwrap(), &b"bar"[..]);
-    assert_eq!(hd.protocol_version, Some(rustls::ProtocolVersion::TLSv1_3));
-    assert!(hd.cipher_suite.is_some());
-    assert!(hd.key_exchange_group.is_some());
+    assert_eq!(hd.protocol_version, rustls::ProtocolVersion::TLSv1_3);
 }
 
 #[test]
