@@ -59,7 +59,11 @@ impl Datagrams<'_> {
         let Some(max_datagram_size) = self.max_size() else {
             return;
         };
-        if !self.conn.datagrams.drop_oversized(max_datagram_size)
+        if !self
+            .conn
+            .datagrams
+            .outgoing
+            .drop_oversized(max_datagram_size)
             || !self.conn.datagrams.send_blocked
         {
             return;
@@ -152,49 +156,12 @@ impl DatagramState {
         Ok(was_empty)
     }
 
-    /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
-    ///
-    /// Returns whether any datagrams were dropped.
-    ///
-    /// Used to ensure that reductions in MTU don't get us stuck in a state where we have a datagram
-    /// queued but can't send it.
-    pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
-        let mut dropped_any = false;
-        self.outgoing.queue.retain(|datagram| {
-            let result = datagram.data.len() <= max_payload;
-            if !result {
-                trace!(
-                    "dropping {} byte datagram violating {} byte limit",
-                    datagram.data.len(),
-                    max_payload
-                );
-                self.outgoing.payload_bytes -= datagram.data.len();
-                dropped_any = true;
-            }
-            result
-        });
-        dropped_any
-    }
-
     /// Attempt to write a datagram frame into `buf`, consuming it from `self.outgoing`
     ///
     /// Returns whether a frame was written. At most `max_size` bytes will be written, including
     /// framing.
     pub(super) fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
-        let Some(datagram) = self.outgoing.pop_front() else {
-            return false;
-        };
-
-        if buf.len() + datagram.size(true) > max_size {
-            // Future work: we could be more clever about cramming small datagrams into
-            // mostly-full packets when a larger one is queued first
-            self.outgoing.push_front(datagram);
-            return false;
-        }
-
-        trace!(len = datagram.data.len(), "DATAGRAM");
-        datagram.encode(true, buf);
-        true
+        self.outgoing.write(buf, max_size)
     }
 
     pub(super) fn recv(&mut self) -> Option<Bytes> {
@@ -210,6 +177,51 @@ pub(super) struct DatagramBuffer {
 }
 
 impl DatagramBuffer {
+    /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
+    ///
+    /// Returns whether any datagrams were dropped.
+    ///
+    /// Used to ensure that reductions in MTU don't get us stuck in a state where we have a datagram
+    /// queued but can't send it.
+    pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
+        let mut dropped_any = false;
+        self.queue.retain(|datagram| {
+            let result = datagram.data.len() <= max_payload;
+            if !result {
+                trace!(
+                    "dropping {} byte datagram violating {} byte limit",
+                    datagram.data.len(),
+                    max_payload
+                );
+                self.payload_bytes -= datagram.data.len();
+                dropped_any = true;
+            }
+            result
+        });
+        dropped_any
+    }
+
+    /// Attempt to write a datagram frame into `buf`, consuming it from `self.outgoing`
+    ///
+    /// Returns whether a frame was written. At most `max_size` bytes will be written, including
+    /// framing.
+    pub(super) fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
+        let Some(datagram) = self.pop_front() else {
+            return false;
+        };
+
+        if buf.len() + datagram.size(true) > max_size {
+            // Future work: we could be more clever about cramming small datagrams into
+            // mostly-full packets when a larger one is queued first
+            self.push_front(datagram);
+            return false;
+        }
+
+        trace!(len = datagram.data.len(), "DATAGRAM");
+        datagram.encode(true, buf);
+        true
+    }
+
     fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize) {
         while !self.has_send_buffer_space(datagram_len, send_buffer_size) {
             let Some(prev) = self.pop_front() else {
@@ -263,35 +275,32 @@ mod tests {
 
     #[test]
     fn make_space_for_accounts_for_new_datagram() {
-        let mut state = DatagramState::default();
-        state.outgoing.push_back(Datagram {
+        let mut outgoing = DatagramBuffer::default();
+        outgoing.push_back(Datagram {
             data: Bytes::from_static(&[0; 7]),
         });
-        state.outgoing.push_back(Datagram {
+        outgoing.push_back(Datagram {
             data: Bytes::from_static(&[0; 2]),
         });
 
-        state
-            .outgoing
-            .make_space_for(4, 10 + 2 * size_of::<Datagram>());
-
-        assert_eq!(state.outgoing.queue.len(), 1);
-        assert_eq!(state.outgoing.queue[0].data.len(), 2);
-        assert_eq!(state.outgoing.payload_bytes, 2);
+        outgoing.make_space_for(4, 10 + 2 * size_of::<Datagram>());
+        assert_eq!(outgoing.queue.len(), 1);
+        assert_eq!(outgoing.queue[0].data.len(), 2);
+        assert_eq!(outgoing.payload_bytes, 2);
     }
 
     #[test]
     fn make_space_for_handles_overflowing_capacity_check() {
-        let mut state = DatagramState::default();
-        state.outgoing.queue.push_back(Datagram {
+        let mut outgoing = DatagramBuffer::default();
+        outgoing.queue.push_back(Datagram {
             data: Bytes::from_static(&[0]),
         });
-        state.outgoing.payload_bytes = usize::MAX - 1;
+        outgoing.payload_bytes = usize::MAX - 1;
 
-        state.outgoing.make_space_for(2, usize::MAX);
+        outgoing.make_space_for(2, usize::MAX);
 
-        assert!(state.outgoing.is_empty());
-        assert_eq!(state.outgoing.payload_bytes, usize::MAX - 2);
+        assert!(outgoing.is_empty());
+        assert_eq!(outgoing.payload_bytes, usize::MAX - 2);
     }
 
     #[test]
@@ -312,19 +321,19 @@ mod tests {
 
     #[test]
     fn drop_oversized_keeps_datagrams_at_limit() {
-        let mut state = DatagramState::default();
-        state.outgoing.push_back(Datagram {
+        let mut outgoing = DatagramBuffer::default();
+        outgoing.push_back(Datagram {
             data: Bytes::from_static(&[0; 10]),
         });
-        state.outgoing.push_back(Datagram {
+        outgoing.push_back(Datagram {
             data: Bytes::from_static(&[0; 11]),
         });
 
-        assert!(state.drop_oversized(10));
+        assert!(outgoing.drop_oversized(10));
 
-        assert_eq!(state.outgoing.queue.len(), 1);
-        assert_eq!(state.outgoing.queue[0].data.len(), 10);
-        assert_eq!(state.outgoing.payload_bytes, 10);
+        assert_eq!(outgoing.queue.len(), 1);
+        assert_eq!(outgoing.queue[0].data.len(), 10);
+        assert_eq!(outgoing.payload_bytes, 10);
     }
 }
 
