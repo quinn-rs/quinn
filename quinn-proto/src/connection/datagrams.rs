@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, mem};
 
 use bytes::Bytes;
 use thiserror::Error;
@@ -71,6 +71,11 @@ impl Datagrams<'_> {
 
         self.conn.datagrams.send_blocked = false;
         self.conn.events.push_back(Event::DatagramsUnblocked);
+    }
+
+    /// Replace the outgoing datagram queue with a new one, returning the old queue
+    pub fn replace_outgoing(&mut self, new: Box<dyn DatagramQueue>) -> Box<dyn DatagramQueue> {
+        mem::replace(&mut self.conn.datagrams.outgoing, new)
     }
 
     /// Compute the maximum size of datagrams that may passed to `send_datagram`
@@ -253,6 +258,10 @@ impl DatagramQueue for DatagramBuffer {
         }
     }
 
+    fn into_iter(self) -> Box<dyn Iterator<Item = Datagram>> {
+        Box::new(self.queue.into_iter())
+    }
+
     fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
         let Some(total) = self.memory_used().checked_add(datagram_len) else {
             return false;
@@ -274,7 +283,8 @@ impl DatagramQueue for DatagramBuffer {
     }
 }
 
-pub(crate) trait DatagramQueue: Send + Sync + 'static {
+/// A queue for outgoing datagrams
+pub trait DatagramQueue: Send + Sync + 'static {
     /// Attempt to write a datagram frame into `buf`, consuming it from `self.outgoing`
     ///
     /// Returns whether a frame was written. At most `max_size` bytes will be written, including
@@ -289,16 +299,27 @@ pub(crate) trait DatagramQueue: Send + Sync + 'static {
     /// queued but can't send it.
     fn drop_oversized(&mut self, max_payload: usize) -> bool;
 
+    /// Add a datagram to the outgoing queue
     fn push_back(&mut self, datagram: Datagram);
 
+    /// Make space for a datagram of length `datagram_len` in the outgoing queue
+    ///
+    /// Drops older datagrams if necessary to make space.
     fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize);
 
+    /// Convert the queue into an iterator over datagrams
+    fn into_iter(self) -> Box<dyn Iterator<Item = Datagram>>;
+
+    /// Check if there is space in the send buffer for a datagram of length `datagram_len`
     fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool;
 
+    /// Get the total number of payload bytes in the queue
     fn payload_bytes(&self) -> usize;
 
+    /// Check if there is a datagram that can be sent in 1-RTT packets with the given `max_size`
     fn can_send_1rtt(&self, max_size: usize) -> bool;
 
+    /// Check if the queue is empty
     fn is_empty(&self) -> bool;
 }
 
