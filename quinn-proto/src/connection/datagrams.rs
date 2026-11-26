@@ -39,10 +39,12 @@ impl Datagrams<'_> {
         if drop {
             self.conn
                 .datagrams
+                .outgoing
                 .make_space_for(data.len(), send_buffer_size);
         } else if !self
             .conn
             .datagrams
+            .outgoing
             .has_send_buffer_space(data.len(), send_buffer_size)
         {
             self.conn.datagrams.send_blocked = true;
@@ -150,23 +152,6 @@ impl DatagramState {
         Ok(was_empty)
     }
 
-    fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize) {
-        while !self.has_send_buffer_space(datagram_len, send_buffer_size) {
-            let Some(prev) = self.outgoing.pop_front() else {
-                break;
-            };
-            trace!(len = prev.data.len(), "dropping outgoing datagram");
-        }
-    }
-
-    fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
-        let Some(total) = self.outgoing.memory_used().checked_add(datagram_len) else {
-            return false;
-        };
-
-        total <= send_buffer_size
-    }
-
     /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
     ///
     /// Returns whether any datagrams were dropped.
@@ -225,6 +210,23 @@ pub(super) struct DatagramBuffer {
 }
 
 impl DatagramBuffer {
+    fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize) {
+        while !self.has_send_buffer_space(datagram_len, send_buffer_size) {
+            let Some(prev) = self.pop_front() else {
+                break;
+            };
+            trace!(len = prev.data.len(), "dropping outgoing datagram");
+        }
+    }
+
+    fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool {
+        let Some(total) = self.memory_used().checked_add(datagram_len) else {
+            return false;
+        };
+
+        total <= send_buffer_size
+    }
+
     fn push_back(&mut self, datagram: Datagram) {
         self.payload_bytes += datagram.data.len();
         self.queue.push_back(datagram);
@@ -269,7 +271,9 @@ mod tests {
             data: Bytes::from_static(&[0; 2]),
         });
 
-        state.make_space_for(4, 10 + 2 * size_of::<Datagram>());
+        state
+            .outgoing
+            .make_space_for(4, 10 + 2 * size_of::<Datagram>());
 
         assert_eq!(state.outgoing.queue.len(), 1);
         assert_eq!(state.outgoing.queue[0].data.len(), 2);
@@ -284,7 +288,7 @@ mod tests {
         });
         state.outgoing.payload_bytes = usize::MAX - 1;
 
-        state.make_space_for(2, usize::MAX);
+        state.outgoing.make_space_for(2, usize::MAX);
 
         assert!(state.outgoing.is_empty());
         assert_eq!(state.outgoing.payload_bytes, usize::MAX - 2);
