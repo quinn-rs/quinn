@@ -111,15 +111,14 @@ impl Datagrams<'_> {
         self.conn
             .config
             .datagram_send_buffer_size
-            .saturating_sub(self.conn.datagrams.outgoing.payload_bytes)
+            .saturating_sub(self.conn.datagrams.outgoing.payload_bytes())
             .saturating_sub(size_of::<Datagram>())
     }
 }
 
-#[derive(Default)]
 pub(super) struct DatagramState {
     pub(super) incoming: DatagramBuffer,
-    pub(super) outgoing: DatagramBuffer,
+    pub(super) outgoing: Box<dyn DatagramQueue>,
     pub(super) send_blocked: bool,
 }
 
@@ -170,6 +169,16 @@ impl DatagramState {
     }
 }
 
+impl Default for DatagramState {
+    fn default() -> Self {
+        Self {
+            incoming: DatagramBuffer::default(),
+            outgoing: Box::new(DatagramBuffer::default()),
+            send_blocked: false,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct DatagramBuffer {
     queue: VecDeque<Datagram>,
@@ -177,13 +186,42 @@ pub(super) struct DatagramBuffer {
 }
 
 impl DatagramBuffer {
-    /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
-    ///
-    /// Returns whether any datagrams were dropped.
-    ///
-    /// Used to ensure that reductions in MTU don't get us stuck in a state where we have a datagram
-    /// queued but can't send it.
-    pub(super) fn drop_oversized(&mut self, max_payload: usize) -> bool {
+    fn pop_front(&mut self) -> Option<Datagram> {
+        let datagram = self.queue.pop_front()?;
+        self.payload_bytes -= datagram.data.len();
+        Some(datagram)
+    }
+
+    fn push_front(&mut self, datagram: Datagram) {
+        self.payload_bytes += datagram.data.len();
+        self.queue.push_front(datagram);
+    }
+
+    fn memory_used(&self) -> usize {
+        self.payload_bytes
+            .saturating_add(self.queue.len() * size_of::<Datagram>())
+    }
+}
+
+impl DatagramQueue for DatagramBuffer {
+    fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
+        let Some(datagram) = self.pop_front() else {
+            return false;
+        };
+
+        if buf.len() + datagram.size(true) > max_size {
+            // Future work: we could be more clever about cramming small datagrams into
+            // mostly-full packets when a larger one is queued first
+            self.push_front(datagram);
+            return false;
+        }
+
+        trace!(len = datagram.data.len(), "DATAGRAM");
+        datagram.encode(true, buf);
+        true
+    }
+
+    fn drop_oversized(&mut self, max_payload: usize) -> bool {
         let mut dropped_any = false;
         self.queue.retain(|datagram| {
             let result = datagram.data.len() <= max_payload;
@@ -201,25 +239,9 @@ impl DatagramBuffer {
         dropped_any
     }
 
-    /// Attempt to write a datagram frame into `buf`, consuming it from `self.outgoing`
-    ///
-    /// Returns whether a frame was written. At most `max_size` bytes will be written, including
-    /// framing.
-    pub(super) fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
-        let Some(datagram) = self.pop_front() else {
-            return false;
-        };
-
-        if buf.len() + datagram.size(true) > max_size {
-            // Future work: we could be more clever about cramming small datagrams into
-            // mostly-full packets when a larger one is queued first
-            self.push_front(datagram);
-            return false;
-        }
-
-        trace!(len = datagram.data.len(), "DATAGRAM");
-        datagram.encode(true, buf);
-        true
+    fn push_back(&mut self, datagram: Datagram) {
+        self.payload_bytes += datagram.data.len();
+        self.queue.push_back(datagram);
     }
 
     fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize) {
@@ -239,34 +261,45 @@ impl DatagramBuffer {
         total <= send_buffer_size
     }
 
-    fn push_back(&mut self, datagram: Datagram) {
-        self.payload_bytes += datagram.data.len();
-        self.queue.push_back(datagram);
-    }
-
-    fn pop_front(&mut self) -> Option<Datagram> {
-        let datagram = self.queue.pop_front()?;
-        self.payload_bytes -= datagram.data.len();
-        Some(datagram)
-    }
-
-    fn push_front(&mut self, datagram: Datagram) {
-        self.payload_bytes += datagram.data.len();
-        self.queue.push_front(datagram);
-    }
-
-    fn memory_used(&self) -> usize {
+    fn payload_bytes(&self) -> usize {
         self.payload_bytes
-            .saturating_add(self.queue.len() * size_of::<Datagram>())
     }
 
-    pub(super) fn can_send_1rtt(&self, max_size: usize) -> bool {
+    fn can_send_1rtt(&self, max_size: usize) -> bool {
         self.queue.front().is_some_and(|x| x.size(true) <= max_size)
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }
+}
+
+pub(crate) trait DatagramQueue: Send + Sync + 'static {
+    /// Attempt to write a datagram frame into `buf`, consuming it from `self.outgoing`
+    ///
+    /// Returns whether a frame was written. At most `max_size` bytes will be written, including
+    /// framing.
+    fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool;
+
+    /// Discard outgoing datagrams with a payload larger than `max_payload` bytes
+    ///
+    /// Returns whether any datagrams were dropped.
+    ///
+    /// Used to ensure that reductions in MTU don't get us stuck in a state where we have a datagram
+    /// queued but can't send it.
+    fn drop_oversized(&mut self, max_payload: usize) -> bool;
+
+    fn push_back(&mut self, datagram: Datagram);
+
+    fn make_space_for(&mut self, datagram_len: usize, send_buffer_size: usize);
+
+    fn has_send_buffer_space(&self, datagram_len: usize, send_buffer_size: usize) -> bool;
+
+    fn payload_bytes(&self) -> usize;
+
+    fn can_send_1rtt(&self, max_size: usize) -> bool;
+
+    fn is_empty(&self) -> bool;
 }
 
 #[cfg(test)]
