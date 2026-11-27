@@ -185,6 +185,31 @@ impl RecvStream<'_> {
 
         Ok(Some(code))
     }
+
+    /// Override [`TransportConfig::stream_receive_window()`] for this stream
+    ///
+    /// Useful when streams on the same connection have different flow control needs, such as
+    /// raising the window on a large transfer for higher throughput without letting other streams
+    /// buffer as much, or lowering it (down to `0`) to throttle or pause a stream that the
+    /// application is not ready to read from yet.
+    ///
+    /// Lowering the window does not retract credit already advertised to the peer, so data up to
+    /// that limit may still arrive, and no new credit is issued until reads consume the excess.
+    ///
+    /// [`TransportConfig::stream_receive_window()`]: crate::TransportConfig::stream_receive_window
+    pub fn set_window(&mut self, window: VarInt) -> Result<(), ClosedStream> {
+        let hash_map::Entry::Occupied(mut entry) = self.state.recv.entry(self.id) else {
+            return Err(ClosedStream { _private: () });
+        };
+        let stream = get_or_insert_recv(entry.get_mut(), self.state.stream_receive_window);
+        if stream.stopped {
+            return Err(ClosedStream { _private: () });
+        }
+        if stream.set_window(window.into()).should_transmit() {
+            self.pending.max_stream_data.insert(self.id);
+        }
+        Ok(())
+    }
 }
 
 /// Access to streams

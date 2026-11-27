@@ -513,7 +513,7 @@ impl StreamsState {
             }
             retransmits.get_or_create().max_stream_data.insert(id);
 
-            let (max, _) = rs.max_stream_data(self.stream_receive_window);
+            let (max, _) = rs.max_stream_data();
             rs.record_sent_max_stream_data(max);
 
             trace!(stream = %id, max = max, "MAX_STREAM_DATA");

@@ -2489,6 +2489,115 @@ fn conn_flow_control() {
 }
 
 #[test]
+fn raised_stream_receive_window() {
+    let _guard = subscribe();
+    let (mut pair, client_ch, server_ch) = connect_with_stream_receive_window(10);
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(pair.client_send(client_ch, s).write(&[0; 10]).unwrap(), 10);
+    pair.drive();
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+
+    pair.server_recv(server_ch, s)
+        .set_window(100u32.into())
+        .unwrap();
+    pair.drive();
+    assert_eq!(pair.client_send(client_ch, s).write(&[0; 200]).unwrap(), 90);
+}
+
+#[test]
+fn lowered_stream_receive_window() {
+    let _guard = subscribe();
+    let (mut pair, client_ch, server_ch) = connect_with_stream_receive_window(100);
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(pair.client_send(client_ch, s).write(&[0; 1]).unwrap(), 1);
+    pair.drive();
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+
+    pair.server_recv(server_ch, s)
+        .set_window(0u32.into())
+        .unwrap();
+    pair.drive();
+    assert_eq!(pair.client_send(client_ch, s).write(&[0; 200]).unwrap(), 99);
+    pair.drive();
+    assert_eq!(read_server_stream(&mut pair, server_ch, s), 100);
+    pair.drive();
+    assert_matches!(
+        pair.client_send(client_ch, s).write(&[0; 1]),
+        Err(WriteError::Blocked)
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_tx
+            .max_stream_data,
+        0
+    );
+}
+
+#[test]
+fn reused_stream_starts_at_configured_receive_window() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            max_concurrent_uni_streams: 1u32.into(),
+            stream_receive_window: 10u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    let first = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, first).write(&[0; 1]).unwrap();
+    pair.client_send(client_ch, first).finish().unwrap();
+    pair.drive();
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == first);
+    pair.server_recv(server_ch, first)
+        .set_window(0u32.into())
+        .unwrap();
+    assert_eq!(read_server_stream(&mut pair, server_ch, first), 1);
+    pair.drive();
+
+    let second = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    assert_eq!(
+        pair.client_send(client_ch, second).write(&[0; 10]).unwrap(),
+        10
+    );
+    pair.drive();
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == second);
+    assert_eq!(read_server_stream(&mut pair, server_ch, second), 10);
+    pair.drive();
+    assert_eq!(
+        pair.client_send(client_ch, second).write(&[0; 20]).unwrap(),
+        10
+    );
+}
+
+fn connect_with_stream_receive_window(window: u32) -> (Pair, ConnectionHandle, ConnectionHandle) {
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            stream_receive_window: window.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    (pair, client_ch, server_ch)
+}
+
+fn read_server_stream(pair: &mut Pair, server_ch: ConnectionHandle, s: StreamId) -> usize {
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(true).unwrap();
+    let mut read = 0;
+    while let Ok(Some(chunk)) = chunks.next(usize::MAX) {
+        read += chunk.bytes.len();
+    }
+    let _ = chunks.finalize();
+    read
+}
+
+#[test]
 fn stop_opens_bidi() {
     let _guard = subscribe();
     let mut pair = Pair::default();
