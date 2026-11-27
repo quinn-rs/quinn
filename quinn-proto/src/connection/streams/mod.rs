@@ -1,9 +1,10 @@
 use std::{
     collections::{BinaryHeap, hash_map},
-    io,
+    io, mem,
 };
 
 use bytes::Bytes;
+use rustc_hash::FxHashSet;
 use thiserror::Error;
 use tracing::trace;
 
@@ -345,14 +346,11 @@ impl<'a> SendStream<'a> {
             .unwrap() // Unwrap safety: write_limit() would have returned Err(ClosedStream)
             .get_or_insert_with(|| Send::new(max_send_data));
 
-        let was_pending = stream.is_pending();
         self.state.data_sent += chunk.len() as u64;
         self.state.buffered_data += chunk.len() as u64;
         trace!(stream = %self.id, "wrote {} bytes", chunk.len());
         stream.pending.write(chunk);
-        if !was_pending {
-            self.state.pending.push_pending(self.id, stream.priority);
-        }
+        self.state.pending.push_pending(self.id, stream.priority);
     }
 
     /// Check if this stream was stopped, get the reason if it was
@@ -378,11 +376,8 @@ impl<'a> SendStream<'a> {
             .ok_or(FinishError::ClosedStream)?
             .get_or_insert_with(|| Send::new(max_send_data));
 
-        let was_pending = stream.is_pending();
         stream.finish()?;
-        if !was_pending {
-            self.state.pending.push_pending(self.id, stream.priority);
-        }
+        self.state.pending.push_pending(self.id, stream.priority);
 
         Ok(())
     }
@@ -452,10 +447,14 @@ impl<'a> SendStream<'a> {
 struct PendingStreamsQueue {
     streams: BinaryHeap<PendingStream>,
     /// The next stream to write out. This is `Some` when `TransportConfig::send_fairness(false)` and writing a stream is
-    /// interrupted while the stream still has some pending data. See `reinsert_pending()`.
+    /// interrupted while the stream still has some pending data. See `reschedule()`.
     next: Option<PendingStream>,
+    /// IDs in either the heap or `next`, including retired entries awaiting pruning.
+    members: FxHashSet<StreamId>,
+    /// Batch removal of retired entries until the next stream-event poll.
+    dirty: bool,
     /// A monotonically decreasing counter, used to implement round-robin scheduling for streams of the same priority.
-    /// Underflowing is not a practical concern, as it is initialized to u64::MAX and only decremented by 1 in `push_pending`
+    /// Decremented on insertion and fair rescheduling; underflow is not a practical concern.
     recency: u64,
 }
 
@@ -464,31 +463,23 @@ impl PendingStreamsQueue {
         Self {
             streams: BinaryHeap::new(),
             next: None,
+            members: FxHashSet::default(),
+            dirty: false,
             recency: u64::MAX,
         }
     }
 
-    /// Reinsert a stream that was pending and still contains unsent data.
-    fn reinsert_pending(&mut self, id: StreamId, priority: i32) {
-        assert!(self.next.is_none());
-
-        self.next = Some(PendingStream {
-            priority,
-            recency: self.recency, // the value here doesn't really matter
-            id,
-        });
-    }
-
-    /// Push a pending stream ID with the given priority, queued after any already-queued streams for the priority
+    /// Queue a stream once, after already-queued streams with the same priority.
     fn push_pending(&mut self, id: StreamId, priority: i32) {
+        if !self.members.insert(id) {
+            return;
+        }
         // Note that in the case where fairness is disabled, if we have a reinserted stream we don't
         // bump it even if priority > next.priority. In order to minimize fragmentation we
         // always try to complete a stream once part of it has been written.
 
         // As the recency counter is monotonically decreasing, we know that using its value to sort this stream will queue it
         // after all other queued streams of the same priority.
-        // This is enough to implement round-robin scheduling for streams that are still pending even after being handled,
-        // as in that case they are removed from the `BinaryHeap`, handled, and then immediately reinserted.
         self.recency -= 1;
         self.streams.push(PendingStream {
             priority,
@@ -497,13 +488,69 @@ impl PendingStreamsQueue {
         });
     }
 
+    fn peek(&self) -> Option<&PendingStream> {
+        self.next.as_ref().or_else(|| self.streams.peek())
+    }
+
+    /// Reschedule the current stream without changing queue membership.
+    fn reschedule(&mut self, priority: i32, fair: bool) {
+        if !fair {
+            let mut stream = self.next.take().or_else(|| self.streams.pop()).unwrap();
+            stream.priority = priority;
+            stream.recency = self.recency;
+            self.next = Some(stream);
+            return;
+        }
+
+        self.recency -= 1;
+        if let Some(mut stream) = self.next.take() {
+            stream.priority = priority;
+            stream.recency = self.recency;
+            self.streams.push(stream);
+        } else {
+            // Updating the heap root is equivalent to popping and reinserting
+            // it with this key. PeekMut restores heap order on drop.
+            let mut stream = self.streams.peek_mut().unwrap();
+            stream.priority = priority;
+            stream.recency = self.recency;
+        }
+    }
+
     fn pop(&mut self) -> Option<PendingStream> {
-        self.next.take().or_else(|| self.streams.pop())
+        let stream = self.next.take().or_else(|| self.streams.pop())?;
+        let removed = self.members.remove(&stream.id);
+        debug_assert!(removed);
+        Some(stream)
+    }
+
+    fn retire(&mut self, id: StreamId) {
+        self.dirty |= self.members.contains(&id);
+    }
+
+    fn prune(&mut self, mut is_live: impl FnMut(StreamId) -> bool) {
+        if !mem::take(&mut self.dirty) {
+            return;
+        }
+        let members = &mut self.members;
+        let mut keep = |stream: &PendingStream| {
+            if is_live(stream.id) {
+                return true;
+            }
+            let removed = members.remove(&stream.id);
+            debug_assert!(removed);
+            false
+        };
+        self.streams.retain(&mut keep);
+        if self.next.as_ref().is_some_and(|stream| !keep(stream)) {
+            self.next = None;
+        }
     }
 
     fn clear(&mut self) {
         self.next = None;
         self.streams.clear();
+        self.members.clear();
+        self.dirty = false;
     }
 
     fn iter(&self) -> impl Iterator<Item = &PendingStream> {

@@ -104,6 +104,8 @@ pub struct StreamsState {
     pub(super) pending: PendingStreamsQueue,
 
     events: VecDeque<StreamEvent>,
+    /// Defer removal of retired blocked IDs until the next poll, independently of write credit.
+    blocked_queue_dirty: bool,
     /// Streams blocked on connection-level flow control or stream window space
     ///
     /// Streams are only added to this list when a write fails.
@@ -173,6 +175,7 @@ impl StreamsState {
             send_streams: 0,
             pending: PendingStreamsQueue::new(),
             events: VecDeque::new(),
+            blocked_queue_dirty: false,
             connection_blocked: Vec::new(),
             max_data: 0,
             receive_window: receive_window.into(),
@@ -244,6 +247,7 @@ impl StreamsState {
         self.data_sent = 0;
         self.buffered_data = 0;
         self.connection_blocked.clear();
+        self.blocked_queue_dirty = false;
         self.data_blocked_limit = None;
     }
 
@@ -379,7 +383,11 @@ impl StreamsState {
         match self.send.entry(id) {
             hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
-                if let Some(SendState::ResetSent) = e.get().as_ref().map(|s| s.state) {
+                if let Some(stream) = e.get().as_ref()
+                    && stream.is_reset()
+                {
+                    self.pending.retire(id);
+                    self.blocked_queue_dirty |= stream.connection_blocked;
                     e.remove_entry();
                     self.stream_freed(id, StreamHalf::Send);
                 }
@@ -620,9 +628,9 @@ impl StreamsState {
                 break;
             }
 
-            // Pop the stream of the highest priority that currently has pending data
-            // If the stream still has some pending data left after writing, it will be reinserted, otherwise not
-            let Some(stream) = self.pending.pop() else {
+            // Keep the stream queued while writing; rescheduling changes its
+            // ordering key without removing and reinserting its membership.
+            let Some(stream) = self.pending.peek() else {
                 break;
             };
 
@@ -630,6 +638,7 @@ impl StreamsState {
 
             let Some(stream) = self.send.get_mut(&id).and_then(|s| s.as_mut()) else {
                 // Stream was reset with pending data and the reset was acknowledged
+                self.pending.pop();
                 continue;
             };
 
@@ -637,6 +646,7 @@ impl StreamsState {
             // hasn't acknowledged the reset, but should not generate STREAM frames, so we need to
             // check for them explicitly.
             if stream.is_reset() {
+                self.pending.pop();
                 continue;
             }
 
@@ -651,15 +661,9 @@ impl StreamsState {
             }
 
             if stream.is_pending() {
-                // If the stream still has pending data, reinsert it, possibly with an updated priority value
-                // Fairness with other streams is achieved by implementing round-robin scheduling,
-                // so that the other streams will have a chance to write data
-                // before we touch this stream again.
-                if fair {
-                    self.pending.push_pending(id, stream.priority);
-                } else {
-                    self.pending.reinsert_pending(id, stream.priority);
-                }
+                self.pending.reschedule(stream.priority, fair);
+            } else {
+                self.pending.pop();
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
@@ -708,6 +712,8 @@ impl StreamsState {
             return;
         }
 
+        self.pending.retire(id);
+        self.blocked_queue_dirty |= stream.connection_blocked;
         entry.remove_entry();
         self.stream_freed(id, StreamHalf::Send);
         self.events.push_back(StreamEvent::Finished { id });
@@ -721,9 +727,7 @@ impl StreamsState {
         if stream.is_reset() {
             return;
         }
-        if !stream.is_pending() {
-            self.pending.push_pending(frame.id, stream.priority);
-        }
+        self.pending.push_pending(frame.id, stream.priority);
         stream.fin_pending |= frame.fin;
         stream.pending.retransmit(frame.offsets);
     }
@@ -740,9 +744,7 @@ impl StreamsState {
                     // this stream
                     continue;
                 }
-                if !stream.is_pending() {
-                    self.pending.push_pending(id, stream.priority);
-                }
+                self.pending.push_pending(id, stream.priority);
                 stream.pending.retransmit_all_for_0rtt();
             }
         }
@@ -828,6 +830,11 @@ impl StreamsState {
 
     /// Yield stream events
     pub(crate) fn poll(&mut self) -> Option<StreamEvent> {
+        if mem::take(&mut self.blocked_queue_dirty) {
+            self.connection_blocked
+                .retain(|id| self.send.contains_key(id));
+        }
+        self.pending.prune(|id| self.send.contains_key(&id));
         if let Some(dir) = Dir::iter().find(|&i| mem::replace(&mut self.opened[i as usize], false))
         {
             return Some(StreamEvent::Opened { dir });
@@ -1002,6 +1009,8 @@ impl StreamsState {
     /// Update counters for removal of a stream
     pub(super) fn stream_freed(&mut self, id: StreamId, half: StreamHalf) {
         if id.initiator() != self.side {
+            // Bidirectional streams release their concurrency credit only after both
+            // independent send and receive halves have been disposed.
             let fully_free = id.dir() == Dir::Uni
                 || match half {
                     StreamHalf::Send => !self.recv.contains_key(&id),
@@ -1063,6 +1072,204 @@ mod tests {
             (1024 * 1024u32).into(),
             (1024 * 1024u32).into(),
         )
+    }
+
+    fn sending(credit: u32) -> (StreamsState, Retransmits) {
+        let mut state = make(Side::Client);
+        state.set_params(&TransportParameters {
+            initial_max_streams_uni: 3u32.into(),
+            initial_max_data: credit.into(),
+            initial_max_stream_data_uni: 1_000_000u32.into(),
+            ..TransportParameters::default()
+        });
+        (state, Retransmits::default())
+    }
+
+    fn open_uni(state: &mut StreamsState) -> StreamId {
+        Streams {
+            state,
+            conn_state: &ConnState::Established,
+        }
+        .open(Dir::Uni)
+        .unwrap()
+    }
+
+    fn send_stream<'a>(
+        state: &'a mut StreamsState,
+        pending: &'a mut Retransmits,
+        id: StreamId,
+    ) -> SendStream<'a> {
+        SendStream {
+            id,
+            state,
+            pending,
+            conn_state: &ConnState::Established,
+        }
+    }
+
+    #[test]
+    fn empty_writes_enqueue_once() {
+        for chunks in [false, true] {
+            let (mut state, mut pending) = sending(100);
+            let id = open_uni(&mut state);
+            for _ in 0..2 {
+                let mut stream = send_stream(&mut state, &mut pending, id);
+                if chunks {
+                    let mut empty = [Bytes::new(), Bytes::new()];
+                    assert_eq!(stream.write_chunks(&mut empty).unwrap().bytes, 0);
+                } else {
+                    assert_eq!(stream.write(b""), Ok(0));
+                }
+                assert_eq!(state.pending.len(), 1);
+            }
+            // Check visibility before any retransmission can enqueue the stream.
+            let frames = state.write_stream_frames(&mut Vec::new(), 1200, true);
+            assert_eq!(frames.len(), 1);
+            assert_eq!(frames[0].id, id);
+            assert_eq!(frames[0].offsets, 0..0);
+            assert!(!frames[0].fin);
+            assert_eq!(state.pending.len(), 0);
+            assert!(state.pending.members.is_empty());
+        }
+    }
+
+    #[test]
+    fn empty_retransmits_and_fin_share_queue_entry() {
+        let (mut state, mut pending) = sending(100);
+        let id = open_uni(&mut state);
+        send_stream(&mut state, &mut pending, id)
+            .write(b"")
+            .unwrap();
+        let frame = state.write_stream_frames(&mut Vec::new(), 1200, true)[0].clone();
+        for _ in 0..2 {
+            state.retransmit(frame.clone());
+            assert_eq!(state.pending.len(), 1);
+        }
+        send_stream(&mut state, &mut pending, id).finish().unwrap();
+        assert_eq!(state.pending.len(), 1);
+        let frames = state.write_stream_frames(&mut Vec::new(), 1200, true);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].offsets, 0..0);
+        assert!(frames[0].fin);
+        state.received_ack_of(frames[0].clone());
+        assert_eq!(state.poll(), Some(StreamEvent::Finished { id }));
+        assert!(state.pending.members.is_empty());
+    }
+
+    #[test]
+    fn reset_ack_prunes_queues_without_write_credit() {
+        for fair in [false, true] {
+            let (mut state, mut pending) = sending(3 * 128);
+            let ids = std::array::from_fn::<_, 3, _>(|_| open_uni(&mut state));
+            for &id in &ids {
+                send_stream(&mut state, &mut pending, id)
+                    .write(&[0; 128])
+                    .unwrap();
+            }
+            for &id in &ids {
+                assert_eq!(
+                    send_stream(&mut state, &mut pending, id).write(b"x"),
+                    Err(WriteError::Blocked)
+                );
+            }
+            // Exercise both the heap and the nonfair next slot.
+            let frames = state.write_stream_frames(&mut Vec::new(), 100, fair);
+            assert_eq!(frames[0].id, ids[0]);
+            assert_eq!(state.pending.next.is_some(), !fair);
+            for &id in &ids[..2] {
+                send_stream(&mut state, &mut pending, id)
+                    .reset(0u32.into())
+                    .unwrap();
+                state.reset_acked(id);
+            }
+            assert_eq!(state.pending.len(), 3);
+            assert_eq!(state.write_limit(), 0);
+            assert_eq!(state.poll(), None);
+            assert_eq!(state.pending.len(), 1);
+            assert_eq!(state.pending.members, [ids[2]].into_iter().collect());
+            assert_eq!(state.connection_blocked, [ids[2]]);
+
+            state.received_max_data((3 * 128 + 1u32).into());
+            assert_eq!(state.poll(), Some(StreamEvent::Writable { id: ids[2] }));
+            assert_eq!(state.poll(), None);
+            assert_eq!(
+                send_stream(&mut state, &mut pending, ids[2]).write(b"x"),
+                Ok(1)
+            );
+        }
+    }
+
+    #[test]
+    fn finish_ack_prunes_queued_retransmit() {
+        let (mut state, mut pending) = sending(100);
+        let id = open_uni(&mut state);
+        let mut stream = send_stream(&mut state, &mut pending, id);
+        stream.write(b"x").unwrap();
+        stream.finish().unwrap();
+        let frame = state.write_stream_frames(&mut Vec::new(), 1200, true)[0].clone();
+        state.retransmit(frame.clone());
+        state.received_ack_of(frame.clone());
+        state.received_ack_of(frame);
+        assert_eq!(state.poll(), Some(StreamEvent::Finished { id }));
+        assert_eq!(state.poll(), None);
+        assert_eq!(state.pending.len(), 0);
+        assert!(state.pending.members.is_empty());
+    }
+
+    #[test]
+    fn retry_keeps_one_pending_entry() {
+        for fair in [false, true] {
+            for packet_size in [100, 8192] {
+                let (mut state, mut pending) = sending(4096);
+                let id = open_uni(&mut state);
+                let mut stream = send_stream(&mut state, &mut pending, id);
+                stream.write(&[0; 4096]).unwrap();
+                stream.finish().unwrap();
+                state.write_stream_frames(&mut Vec::new(), packet_size, fair);
+                state.retransmit_all_for_0rtt();
+                state.retransmit_all_for_0rtt();
+                assert_eq!(state.pending.len(), 1);
+                assert_eq!(state.pending.next.is_some(), !fair && packet_size == 100);
+                let frames = state.write_stream_frames(&mut Vec::new(), 8192, fair);
+                assert_eq!(frames.len(), 1);
+                assert_eq!(frames[0].offsets, 0..4096);
+                assert!(frames[0].fin);
+                assert!(state.pending.members.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_zero_rtt_clears_queue_membership() {
+        let (mut state, mut pending) = sending(256);
+        let ids = std::array::from_fn::<_, 3, _>(|_| open_uni(&mut state));
+        for &id in &ids[..2] {
+            send_stream(&mut state, &mut pending, id)
+                .write(&[0; 128])
+                .unwrap();
+        }
+        assert_eq!(
+            send_stream(&mut state, &mut pending, ids[2]).write(b"x"),
+            Err(WriteError::Blocked)
+        );
+        state.write_stream_frames(&mut Vec::new(), 100, false);
+        assert_eq!(state.pending.streams.len(), 1);
+        assert!(state.pending.next.is_some());
+
+        state.zero_rtt_rejected();
+        assert_eq!(state.pending.len(), 0);
+        assert!(state.pending.members.is_empty());
+        assert!(state.connection_blocked.is_empty());
+        pending = Retransmits::default();
+        for &id in &ids {
+            assert_eq!(open_uni(&mut state), id);
+            send_stream(&mut state, &mut pending, id)
+                .write(b"x")
+                .unwrap();
+        }
+        let frames = state.write_stream_frames(&mut Vec::new(), 1200, true);
+        assert_eq!(frames.iter().map(|frame| frame.id).collect::<Vec<_>>(), ids);
+        assert!(state.pending.members.is_empty());
     }
 
     #[test]
@@ -1882,6 +2089,15 @@ mod tests {
 
         assert_eq!(pending.reset_stream, &[(id, 0u32.into())]);
         assert!(!server.can_send_stream_data());
+        assert!(
+            server
+                .write_stream_frames(&mut Vec::new(), 1200, true)
+                .is_empty()
+        );
+        assert_eq!(server.pending.len(), 0);
+        assert!(server.pending.members.is_empty());
+        server.reset_acked(id);
+        assert_eq!(server.poll(), None);
     }
 
     #[test]
