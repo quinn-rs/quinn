@@ -20,6 +20,9 @@ use crate::{
     transport_parameters::TransportParameters,
 };
 
+#[cfg(test)]
+mod queue_tests;
+
 /// Wrapper around `Recv` that facilitates reusing `Recv` instances
 #[derive(Debug)]
 pub(super) enum StreamRecv {
@@ -104,6 +107,10 @@ pub struct StreamsState {
     pub(super) pending: PendingStreamsQueue,
 
     events: VecDeque<StreamEvent>,
+    /// Defer removal of retired stream IDs so each affected queue is scanned
+    /// once for a batch of acknowledgements, independently of write credit.
+    pending_queue_dirty: bool,
+    blocked_queue_dirty: bool,
     /// Streams blocked on connection-level flow control or stream window space
     ///
     /// Streams are only added to this list when a write fails.
@@ -171,6 +178,8 @@ impl StreamsState {
             send_streams: 0,
             pending: PendingStreamsQueue::new(),
             events: VecDeque::new(),
+            pending_queue_dirty: false,
+            blocked_queue_dirty: false,
             connection_blocked: Vec::new(),
             max_data: 0,
             receive_window: receive_window.into(),
@@ -251,6 +260,8 @@ impl StreamsState {
         self.data_sent = 0;
         self.buffered_data = 0;
         self.connection_blocked.clear();
+        self.pending_queue_dirty = false;
+        self.blocked_queue_dirty = false;
         self.data_blocked_limit = None;
     }
 
@@ -391,7 +402,9 @@ impl StreamsState {
             hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
                 if let Some(SendState::ResetSent) = e.get().as_ref().map(|s| s.state) {
-                    e.remove_entry();
+                    let stream = e.remove().unwrap();
+                    self.pending_queue_dirty |= stream.pending_queue;
+                    self.blocked_queue_dirty |= stream.connection_blocked;
                     self.stream_freed(id, StreamHalf::Send);
                 }
             }
@@ -624,6 +637,8 @@ impl StreamsState {
                 None => continue,
             };
 
+            stream.pending_queue = false;
+
             // Reset streams aren't removed from the pending list and still exist while the peer
             // hasn't acknowledged the reset, but should not generate STREAM frames, so we need to
             // check for them explicitly.
@@ -651,6 +666,7 @@ impl StreamsState {
                 } else {
                     self.pending.reinsert_pending(id, stream.priority);
                 }
+                stream.pending_queue = true;
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
@@ -724,7 +740,9 @@ impl StreamsState {
             return;
         }
 
-        entry.remove_entry();
+        let stream = entry.remove().unwrap();
+        self.pending_queue_dirty |= stream.pending_queue;
+        self.blocked_queue_dirty |= stream.connection_blocked;
         self.stream_freed(id, StreamHalf::Send);
         self.events.push_back(StreamEvent::Finished { id });
     }
@@ -738,8 +756,9 @@ impl StreamsState {
         if stream.is_reset() {
             return;
         }
-        if !stream.is_pending() {
+        if !stream.pending_queue {
             self.pending.push_pending(frame.id, stream.priority);
+            stream.pending_queue = true;
         }
         stream.fin_pending |= frame.fin;
         stream.pending.retransmit(frame.offsets);
@@ -758,8 +777,9 @@ impl StreamsState {
                     // this stream
                     continue;
                 }
-                if !stream.is_pending() {
+                if !stream.pending_queue {
                     self.pending.push_pending(id, stream.priority);
+                    stream.pending_queue = true;
                 }
                 stream.pending.retransmit_all_for_0rtt();
             }
@@ -847,6 +867,23 @@ impl StreamsState {
 
     /// Yield stream events
     pub(crate) fn poll(&mut self) -> Option<StreamEvent> {
+        if mem::take(&mut self.blocked_queue_dirty) {
+            self.connection_blocked
+                .retain(|id| self.send.contains_key(id));
+        }
+        if mem::take(&mut self.pending_queue_dirty) {
+            self.pending
+                .streams
+                .retain(|stream| self.send.contains_key(&stream.id));
+            if self
+                .pending
+                .next
+                .as_ref()
+                .is_some_and(|stream| !self.send.contains_key(&stream.id))
+            {
+                self.pending.next = None;
+            }
+        }
         if let Some(dir) = Dir::iter().find(|&i| mem::replace(&mut self.opened[i as usize], false))
         {
             return Some(StreamEvent::Opened { dir });
