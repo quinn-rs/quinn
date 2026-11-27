@@ -453,10 +453,14 @@ pub(crate) struct EndpointInner {
 impl EndpointInner {
     pub(crate) fn accept(
         &self,
-        incoming: proto::Incoming,
+        mut incoming: proto::Incoming,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
         let mut response_buffer = Vec::new();
+
+        // Derive Initial keys and decrypt the first packet before taking the lock, as neither
+        // needs endpoint state. Phase 1 reports the failure if the packet turns out to be invalid.
+        incoming.decrypt();
 
         // Phase 1: reserve endpoint state for the connection under the lock.
         let accepting = {

@@ -66,6 +66,16 @@ impl PartialDecode {
         self.plain_header.as_initial()
     }
 
+    /// Token of an Initial packet, which header protection doesn't cover
+    ///
+    /// Empty for other packets.
+    pub(crate) fn initial_token(&self) -> &[u8] {
+        match self.plain_header.as_initial() {
+            Some(header) => &self.buf.get_ref()[header.token_pos.clone()],
+            None => &[],
+        }
+    }
+
     pub(crate) fn has_long_header(&self) -> bool {
         !matches!(self.plain_header, ProtectedHeader::Short { .. })
     }

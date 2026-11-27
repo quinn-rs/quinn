@@ -19,7 +19,8 @@ benchmark_group!(
     small_data_1_stream,
     small_data_100_streams
 );
-benchmark_main!(benches);
+mod initial;
+benchmark_main!(benches, initial::benches);
 
 fn large_data_1_stream(bench: &mut Bencher) {
     send_data(bench, LARGE_DATA, 1);

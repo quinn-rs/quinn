@@ -298,10 +298,8 @@ impl EndpointFactory {
     }
 
     fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
-        let key = PrivateKeyDer::Pkcs8(self.cert.signing_key.serialize_der().into());
         let transport_config = Arc::new(transport_config);
-        let mut server_config =
-            crate::ServerConfig::with_single_cert(vec![self.cert.cert.der().clone()], key).unwrap();
+        let mut server_config = self.server_config();
         server_config.transport_config(transport_config.clone());
 
         let mut roots = RootCertStore::empty();
@@ -318,6 +316,11 @@ impl EndpointFactory {
         endpoint.set_default_client_config(client_config);
 
         endpoint
+    }
+
+    fn server_config(&self) -> crate::ServerConfig {
+        let key = PrivateKeyDer::Pkcs8(self.cert.signing_key.serialize_der().into());
+        crate::ServerConfig::with_single_cert(vec![self.cert.cert.der().clone()], key).unwrap()
     }
 }
 
@@ -381,6 +384,10 @@ impl ProtoServerConfig for BlockingServerConfig {
         self.inner.initial_keys(version, dst_cid)
     }
 
+    fn supports_version(&self, version: u32) -> bool {
+        self.inner.supports_version(version)
+    }
+
     fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
         self.inner.retry_tag(version, orig_dst_cid, packet)
     }
@@ -391,6 +398,59 @@ impl ProtoServerConfig for BlockingServerConfig {
         params: &TransportParameters,
     ) -> Box<dyn Session> {
         self.blocker.block();
+        self.inner.clone().start_session(version, params)
+    }
+}
+
+/// Crypto provider checking that Initial keys are derived without holding the endpoint lock
+struct LockProbingServerConfig {
+    inner: Arc<dyn ProtoServerConfig>,
+    probe: Arc<LockProbe>,
+}
+
+/// Checks that work is done without holding the lock of an endpoint
+#[derive(Default)]
+struct LockProbe {
+    /// Endpoint whose lock is checked, once it exists
+    endpoint: Mutex<Option<Endpoint>>,
+    checks: AtomicUsize,
+}
+
+impl LockProbe {
+    fn check(&self, work: &str) {
+        if let Some(endpoint) = &*self.endpoint.lock().unwrap() {
+            assert!(
+                endpoint.inner.state.try_lock().is_ok(),
+                "{work} while holding the endpoint lock"
+            );
+            self.checks.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+impl ProtoServerConfig for LockProbingServerConfig {
+    fn initial_keys(
+        &self,
+        version: u32,
+        dst_cid: ConnectionId,
+    ) -> Result<Keys, UnsupportedVersion> {
+        self.probe.check("Initial keys derived");
+        self.inner.initial_keys(version, dst_cid)
+    }
+
+    fn supports_version(&self, version: u32) -> bool {
+        self.inner.supports_version(version)
+    }
+
+    fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
+        self.inner.retry_tag(version, orig_dst_cid, packet)
+    }
+
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+    ) -> Box<dyn Session> {
         self.inner.clone().start_session(version, params)
     }
 }
@@ -1160,6 +1220,43 @@ async fn retry_after_rebind() {
     })
     .await
     .expect("retried handshake must complete using the rebound socket");
+}
+
+#[tokio::test]
+async fn accept_derives_initial_keys_outside_endpoint_lock() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let mut server_config = factory.server_config();
+    let probe = Arc::new(LockProbe::default());
+    server_config.crypto = Arc::new(LockProbingServerConfig {
+        inner: server_config.crypto.clone(),
+        probe: probe.clone(),
+    });
+    let server = Endpoint::new(
+        factory.endpoint_config.clone(),
+        Some(server_config),
+        UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap(),
+        Arc::new(TokioRuntime),
+    )
+    .unwrap();
+    *probe.endpoint.lock().unwrap() = Some(server.clone());
+    let client = factory.endpoint();
+
+    timeout(Duration::from_secs(5), async {
+        let connecting = client
+            .connect(server.local_addr().unwrap(), "localhost")
+            .unwrap();
+        let incoming = server.accept().await.unwrap();
+        let (accepted, connected) = join!(incoming, connecting);
+        let _server_connection = accepted.unwrap();
+        let _client_connection = connected.unwrap();
+    })
+    .await
+    .expect("handshake must complete");
+
+    assert_eq!(probe.checks.load(Ordering::Relaxed), 1);
+    // The provider is owned by the endpoint it refers to
+    probe.endpoint.lock().unwrap().take();
 }
 
 #[tokio::test]

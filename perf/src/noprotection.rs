@@ -154,6 +154,10 @@ impl crypto::ServerConfig for NoProtectionServerConfig {
         self.inner.initial_keys(version, dst_cid)
     }
 
+    fn supports_version(&self, version: u32) -> bool {
+        self.inner.supports_version(version)
+    }
+
     fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
         self.inner.retry_tag(version, orig_dst_cid, packet)
     }
