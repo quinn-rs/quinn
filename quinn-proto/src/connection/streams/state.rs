@@ -1382,6 +1382,57 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_reset_with_used_receive_window() {
+        let mut client = StreamsState::new(
+            Side::Client,
+            128u32.into(),
+            128u32.into(),
+            1024 * 1024,
+            100u32.into(),
+            (1024 * 1024u32).into(),
+        );
+        let reset = |final_offset: u32| frame::ResetStream {
+            id: StreamId::new(Side::Server, Dir::Uni, 0),
+            error_code: 0u32.into(),
+            final_offset: final_offset.into(),
+        };
+        // The stream is reset before any of its data arrives. Its final size counts against the
+        // receive window, and is credited back at once, as none of it will be read.
+        let _ = client.received_reset(reset(60)).unwrap();
+        assert_eq!(client.data_recvd, 60);
+        assert_eq!(client.local_max_data, 160);
+
+        // Another stream uses most of the window
+        let _ = client
+            .received(
+                frame::Stream {
+                    id: StreamId::new(Side::Server, Dir::Uni, 1),
+                    offset: 0,
+                    fin: false,
+                    data: Bytes::from_static(&[0; 80]),
+                },
+                80,
+            )
+            .unwrap();
+        assert_eq!(client.data_recvd, 140);
+
+        // The same reset again, as loss recovery sends it, consumes nothing: the window doesn't
+        // need room for its final size a second time
+        assert_eq!(
+            client.received_reset(reset(60)).unwrap(),
+            ShouldTransmit(false)
+        );
+        assert_eq!(client.data_recvd, 140);
+        assert_eq!(client.local_max_data, 160);
+
+        // A reset with another final size is still an error
+        assert_eq!(
+            client.received_reset(reset(61)).unwrap_err().code,
+            TransportErrorCode::FINAL_SIZE_ERROR
+        );
+    }
+
+    #[test]
     fn recv_stopped() {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
