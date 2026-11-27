@@ -21,25 +21,25 @@ Using AI (LLMs) as tools for coding is welcome. A high bar is held for all contr
 project. Moreover, the project maintainers remain responsible for any code that is published as
 part of a release. Contributors are expected to be responsible for any code they publish.
 
-AI should not be used to generate comments when communicating with maintainers. Comments are
-expected to be written by humans. Comments that are believed to be written by AI may be hidden
-without notice.
+Comments and issue/PR descriptions should reflect your own understanding of the topic. You are
+responsible for everything you post and should be able to discuss and defend it.
+
+Using AI (or any other assistive technology) to help write is allowed. This includes use by
+disabled people for whom AI is an accessibility tool. We will not hide comments simply because
+they appear to have been written with AI assistance.
+
+We may still hide comments that are clearly low-effort spam, bulk-generated noise, or that the
+author cannot meaningfully discuss when asked.
 
 If you are opening an issue, you should be able to describe the problem in your own words.
 
 If you are opening a pull request, you are expected to be able to explain the proposed changes in
 your own words. This includes the pull request body and responses to questions. Make sure you have
-reviewed the PR yourself before submitting it for review to the maintainers. Do not copy responses
-from the AI when replying to questions from maintainers.
+reviewed the PR yourself before submitting it for review to the maintainers.
 
-If you wish to include context from an interaction with AI in your comments, it must be in a
-quote block (using `>`) and disclosed as such. It must be accompanied by human commentary
-explaining the relevance and implications of the context. Do not share long snippets.
-
-AI is useful when communicating as a non-native English speaker. If you are using AI to edit your
-comments for this purpose, please take the time to ensure it reflects your own voice and ideas.
-When using AI for translation, we recommend writing in your native language and including the AI
-translation in a quote block.
+If you want to include raw AI output as supporting context (for example, to show what a model said
+about a technical point), put it in a quote block and say that it came from AI. You do not need to
+disclose ordinary use of AI as an assistive writing tool.
 
 ## Code changes
 
