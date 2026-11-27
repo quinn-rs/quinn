@@ -3939,11 +3939,13 @@ impl Connection {
     /// latency and packet loss.
     fn predict_1rtt_overhead(&self, pn: Option<u64>) -> usize {
         let pn_len = match pn {
-            Some(pn) => PacketNumber::new(
-                pn,
-                self.spaces[SpaceId::Data].largest_acked_packet.unwrap_or(0),
-            )
-            .len(),
+            Some(pn) => {
+                let largest_acked = self.spaces[SpaceId::Data].largest_acked_packet.unwrap_or(0);
+                match PacketNumber::new(pn, largest_acked) {
+                    Some(pn) => pn.len(),
+                    None => 4,
+                }
+            }
             // Upper bound
             None => 4,
         };

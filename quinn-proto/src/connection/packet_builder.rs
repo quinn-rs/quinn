@@ -30,8 +30,11 @@ pub(super) struct PacketBuilder {
 impl PacketBuilder {
     /// Write a new packet header to `buffer` and determine the packet's properties
     ///
-    /// Marks the connection drained and returns `None` if the confidentiality limit would be
-    /// violated, or an Initial token leaves insufficient space for frames.
+    /// Marks the connection drained and returns `None` if:
+    ///
+    /// - The confidentiality limit would be violated, or
+    /// - An Initial token leaves insufficient space for frames, or
+    /// - The packet number cannot be allocated due to exhaustion.
     pub(super) fn new(
         now: Instant,
         space_id: SpaceId,
@@ -85,8 +88,16 @@ impl PacketBuilder {
         };
 
         let span = trace_span!("send", space = ?space_id, pn = exact_number).entered();
+        let Some(number) = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0))
+        else {
+            // The packet number can't be encoded, so no packet can be sent (RFC 9000 §17.1)
+            conn.kill(
+                TransportError::INTERNAL_ERROR("packet number too far ahead of largest acked")
+                    .into(),
+            );
+            return None;
+        };
 
-        let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
         let header = match space_id {
             SpaceId::Data if space.crypto.is_some() => Header::Short {
                 dst_cid,
