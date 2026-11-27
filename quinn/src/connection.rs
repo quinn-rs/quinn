@@ -552,10 +552,44 @@ impl Connection {
                 Ok(())
             }
             Err(e) => Err(match e {
-                Blocked(..) => unreachable!(),
+                Blocked(..) => unreachable!("blocked datagrams are dropped"),
                 UnsupportedByPeer => SendDatagramError::UnsupportedByPeer,
                 Disabled => SendDatagramError::Disabled,
                 TooLarge => SendDatagramError::TooLarge,
+            }),
+        }
+    }
+
+    /// Transmit several datagrams as unreliable, unordered application datagrams
+    ///
+    /// Unlike calling [`send_datagram()`] repeatedly, all datagrams are queued under a single
+    /// lock acquisition, which makes this cheaper when sending bursts of datagrams.
+    ///
+    /// Each datagram follows the same rules as [`send_datagram()`]: previously queued datagrams
+    /// which are still unsent may be discarded to make space.
+    ///
+    /// Returns the number of datagrams queued.
+    ///
+    /// [`send_datagram()`]: Connection::send_datagram
+    pub fn send_datagrams(
+        &self,
+        datas: impl IntoIterator<Item = Bytes>,
+    ) -> Result<usize, SendDatagramsError> {
+        let conn = &mut *self.0.state.lock("send_datagrams");
+        if let Some(x) = &conn.error {
+            return Err(SendDatagramsError::ConnectionLost(x.clone()));
+        }
+        use proto::SendDatagramsError::*;
+        match conn.inner.datagrams().send_many(datas, true) {
+            Ok(queued) => {
+                conn.wake();
+                Ok(queued)
+            }
+            Err(e) => Err(match e {
+                Blocked { .. } => unreachable!("blocked datagrams are dropped"),
+                UnsupportedByPeer => SendDatagramsError::UnsupportedByPeer,
+                Disabled => SendDatagramsError::Disabled,
+                TooLarge { offset } => SendDatagramsError::TooLarge { offset },
             }),
         }
     }
@@ -1525,6 +1559,29 @@ pub enum SendDatagramError {
     /// exceeded.
     #[error("datagram too large")]
     TooLarge,
+    /// The connection was lost
+    #[error("connection lost")]
+    ConnectionLost(#[from] ConnectionError),
+}
+
+/// Errors that can arise when sending multiple datagrams
+#[derive(Debug, Error, Clone, Eq, PartialEq)]
+pub enum SendDatagramsError {
+    /// The peer does not support receiving datagram frames
+    #[error("datagrams not supported by peer")]
+    UnsupportedByPeer,
+    /// Datagram support is disabled locally
+    #[error("datagram support disabled")]
+    Disabled,
+    /// The datagram is larger than the connection can currently accommodate
+    ///
+    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
+    /// exceeded.
+    #[error("datagram too large")]
+    TooLarge {
+        /// Offset of the oversized datagram
+        offset: usize,
+    },
     /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
