@@ -283,6 +283,17 @@ impl RecvStream {
         Ok(())
     }
 
+    /// See [`proto::RecvStream::set_window()`]
+    pub fn set_window(&mut self, window: VarInt) -> Result<(), ClosedStream> {
+        let mut conn = self.conn.state.lock("RecvStream::set_window");
+        if self.is_0rtt && conn.check_0rtt().is_err() {
+            return Ok(());
+        }
+        conn.inner.recv_stream(self.stream).set_window(window)?;
+        conn.wake();
+        Ok(())
+    }
+
     /// Check if this stream predates completion of the handshake on an incoming connection.
     ///
     /// True only if the stream was accepted before the handshake completed, which is only possible
