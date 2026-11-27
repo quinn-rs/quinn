@@ -2808,15 +2808,10 @@ impl Connection {
             }
 
             let _guard = span.as_ref().map(|x| x.enter());
-            if packet.header.is_0rtt() {
-                match frame {
-                    Frame::Crypto(_) | Frame::Close(Close::Application(_)) => {
-                        return Err(TransportError::PROTOCOL_VIOLATION(
-                            "illegal frame type in 0-RTT",
-                        ));
-                    }
-                    _ => {}
-                }
+            if packet.header.is_0rtt() && !frame.allow_in_0rtt() {
+                let mut err = TransportError::PROTOCOL_VIOLATION("illegal frame type in 0-RTT");
+                err.frame = Some(frame.ty());
+                return Err(err);
             }
             ack_eliciting |= frame.is_ack_eliciting();
 
