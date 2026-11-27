@@ -48,7 +48,7 @@ use cid_state::CidState;
 
 mod datagrams;
 use datagrams::DatagramState;
-pub use datagrams::{Datagrams, SendDatagramError};
+pub use datagrams::{DatagramQueue, Datagrams, SendDatagramError};
 
 mod mtud;
 mod pacing;
