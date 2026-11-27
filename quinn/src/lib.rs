@@ -45,6 +45,7 @@ mod connection;
 mod endpoint;
 mod incoming;
 mod mutex;
+mod queued_events;
 mod recv_stream;
 mod runtime;
 mod send_stream;
@@ -61,10 +62,10 @@ pub use proto::{
     AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream, ConfigError,
     ConnectError, ConnectionClose, ConnectionError, ConnectionId, ConnectionIdGenerator,
     ConnectionStats, Dir, EcnCodepoint, EndpointConfig, FrameStats, FrameType, IdleTimeout,
-    InvalidCid, MtuDiscoveryConfig, NoneTokenLog, NoneTokenStore, PathStats, ServerConfig, Side,
-    StdSystemTime, StreamId, TimeSource, TokenLog, TokenMemoryCache, TokenReuseError, TokenStore,
-    Transmit, TransportConfig, TransportErrorCode, UdpStats, ValidationTokenConfig, VarInt,
-    VarIntBoundsExceeded, Written, congestion, crypto,
+    InvalidCid, MtuDiscoveryConfig, NoneTokenLog, NoneTokenStore, PathStats, QueueStats,
+    RecoveryStats, ServerConfig, Side, StdSystemTime, StreamId, TimeSource, TokenLog,
+    TokenMemoryCache, TokenReuseError, TokenStore, Transmit, TransportConfig, TransportErrorCode,
+    UdpStats, ValidationTokenConfig, VarInt, VarIntBoundsExceeded, Written, congestion, crypto,
 };
 #[cfg(feature = "qlog")]
 pub use proto::{QlogConfig, QlogStream};

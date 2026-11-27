@@ -57,6 +57,10 @@ impl PartialDecode {
         }
     }
 
+    pub(crate) fn allocated_size(&self) -> usize {
+        self.buf.get_ref().capacity()
+    }
+
     /// The underlying partially-decoded packet data
     pub(crate) fn data(&self) -> &[u8] {
         self.buf.get_ref()

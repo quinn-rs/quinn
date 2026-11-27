@@ -225,6 +225,14 @@ pub(super) struct DatagramBuffer {
 }
 
 impl DatagramBuffer {
+    pub(super) fn payload_bytes(&self) -> usize {
+        self.payload_bytes
+    }
+
+    pub(super) fn capacity(&self) -> usize {
+        self.queue.capacity()
+    }
+
     fn push_back(&mut self, datagram: Datagram) {
         self.payload_bytes += datagram.data.len();
         self.queue.push_back(datagram);

@@ -1,3 +1,4 @@
+use std::mem::size_of;
 use std::{
     cmp::{Ordering, max},
     collections::VecDeque,
@@ -28,6 +29,14 @@ pub(super) struct Assembler {
 impl Assembler {
     pub(super) fn new() -> Self {
         Self::default()
+    }
+
+    pub(super) fn memory_usage(&self) -> super::stats::MemoryUsage {
+        super::stats::MemoryUsage {
+            buffered_bytes: self.buffered as u64,
+            allocated_bytes: self.allocated as u64,
+            metadata_bytes: (self.data.capacity() * size_of::<Buffer>()) as u64,
+        }
     }
 
     /// Reset to the initial state
