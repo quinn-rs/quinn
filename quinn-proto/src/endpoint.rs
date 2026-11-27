@@ -22,7 +22,9 @@ use crate::{
     Side, Transmit, TransportConfig, TransportError,
     cid_generator::ConnectionIdGenerator,
     coding::BufMutExt,
-    config::{ClientConfig, EndpointConfig, ServerConfig},
+    config::{
+        ClientConfig, EndpointConfig, InitialDecision, InitialMetadata, ServerConfig, TokenCheck,
+    },
     connection::{Connection, ConnectionArgs, ConnectionError, SideArgs},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
@@ -460,6 +462,63 @@ impl Endpoint {
             return None;
         }
 
+        let early_validation = self.early_validate_first_packet(header);
+        let mut filtered_token = None;
+        if let Some(filter) = &server_config.initial_filter {
+            let metadata = InitialMetadata {
+                remote: addresses.remote,
+                local_ip: addresses.local_ip,
+                received_at: event.now,
+                datagram_len,
+                malformed: early_validation.is_err(),
+            };
+            if !filter.before_token_check(&metadata) {
+                trace!("dropping initial for connection {dst_cid} per admission gate");
+                return None;
+            }
+            // Malformed headers skip `after_token_check()` and get the usual encrypted close below
+            if early_validation.is_ok() {
+                let token = IncomingToken::from_header(
+                    header.dst_cid,
+                    event.first_decode.initial_token(),
+                    server_config,
+                    addresses.remote,
+                );
+                if let Ok(token) = &token {
+                    let check = TokenCheck {
+                        validated: token.validated,
+                        may_retry: token.retry_src_cid.is_none(),
+                    };
+                    match filter.after_token_check(&metadata, &check) {
+                        InitialDecision::Ignore => {
+                            trace!("dropping initial for connection {dst_cid} per filter");
+                            return None;
+                        }
+                        InitialDecision::Retry if check.may_retry => {
+                            if !server_config.crypto.supports_version(header.version) {
+                                debug!(
+                                    "ignoring initial packet version {:#x} unsupported by cryptographic layer",
+                                    header.version
+                                );
+                                return None;
+                            }
+                            let server_config = server_config.clone();
+                            return Some(DatagramEvent::Response(self.encode_retry(
+                                &server_config,
+                                header.version,
+                                addresses,
+                                header.dst_cid,
+                                header.src_cid,
+                                buf,
+                            )));
+                        }
+                        InitialDecision::Proceed | InitialDecision::Retry => {}
+                    }
+                }
+                filtered_token = Some(token);
+            }
+        }
+
         let crypto = match server_config.crypto.initial_keys(header.version, dst_cid) {
             Ok(keys) => keys,
             Err(UnsupportedVersion) => {
@@ -473,7 +532,7 @@ impl Endpoint {
             }
         };
 
-        if let Err(reason) = self.early_validate_first_packet(header) {
+        if let Err(reason) = early_validation {
             return Some(DatagramEvent::Response(self.initial_close(
                 header.version,
                 addresses,
@@ -503,7 +562,14 @@ impl Endpoint {
 
         let server_config = self.server_config.as_ref().unwrap().clone();
 
-        let token = match IncomingToken::from_header(&header, &server_config, addresses.remote) {
+        let token = match filtered_token.unwrap_or_else(|| {
+            IncomingToken::from_header(
+                header.dst_cid,
+                &header.token,
+                &server_config,
+                addresses.remote,
+            )
+        }) {
             Ok(token) => token,
             Err(InvalidRetryTokenError) => {
                 debug!("rejecting invalid retry token");
@@ -802,7 +868,7 @@ impl Endpoint {
 
     /// Check if we should refuse a connection attempt regardless of the packet's contents
     fn early_validate_first_packet(
-        &mut self,
+        &self,
         header: &ProtectedInitialHeader,
     ) -> Result<(), TransportError> {
         // RFC9000 §7.2 dictates that initial (client-chosen) destination CIDs must be at least 8
@@ -854,6 +920,28 @@ impl Endpoint {
         self.remove_incoming_state(&incoming);
         incoming.improper_drop_warner.dismiss();
 
+        Ok(self.encode_retry(
+            &server_config,
+            incoming.packet.header.version,
+            incoming.addresses,
+            incoming.packet.header.dst_cid,
+            incoming.packet.header.src_cid,
+            buf,
+        ))
+    }
+
+    /// Encode a Retry packet
+    ///
+    /// The caller must have checked that the crypto provider supports `version`.
+    fn encode_retry(
+        &mut self,
+        server_config: &ServerConfig,
+        version: u32,
+        addresses: FourTuple,
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
+        buf: &mut Vec<u8>,
+    ) -> Transmit {
         // First Initial
         // The peer will use this as the DCID of its following Initials. Initial DCIDs are
         // looked up separately from Handshake/Data DCIDs, so there is no risk of collision
@@ -863,34 +951,29 @@ impl Endpoint {
         let loc_cid = self.local_cid_generator.generate_cid();
 
         let payload = TokenPayload::Retry {
-            address: incoming.addresses.remote,
-            orig_dst_cid: incoming.packet.header.dst_cid,
+            address: addresses.remote,
+            orig_dst_cid: dst_cid,
             issued: server_config.time_source.now(),
         };
         let token = Token::new(payload, &mut self.rng).encode(&*server_config.token_key);
 
         let header = Header::Retry {
             src_cid: loc_cid,
-            dst_cid: incoming.packet.header.src_cid,
-            version: incoming.packet.header.version,
+            dst_cid: src_cid,
+            version,
         };
 
-        let encode = header.encode(buf);
+        header.encode(buf);
         buf.put_slice(&token);
-        buf.extend_from_slice(&server_config.crypto.retry_tag(
-            incoming.packet.header.version,
-            incoming.packet.header.dst_cid,
-            buf,
-        ));
-        encode.finish(buf, &*incoming.crypto.header.local, None);
+        buf.extend_from_slice(&server_config.crypto.retry_tag(version, dst_cid, buf));
 
-        Ok(Transmit {
-            destination: incoming.addresses.remote,
+        Transmit {
+            destination: addresses.remote,
             ecn: None,
             size: buf.len(),
             segment_size: None,
-            src_ip: incoming.addresses.local_ip,
-        })
+            src_ip: addresses.local_ip,
+        }
     }
 
     /// Ignore this incoming connection attempt, not sending any packet in response
