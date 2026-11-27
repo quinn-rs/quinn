@@ -32,6 +32,43 @@ fn basic() {
 }
 
 #[test]
+#[cfg(unix)]
+fn broken_pipe_send_errors_are_propagated() {
+    let socket = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
+    let destination = socket.local_addr().unwrap();
+    socket.connect(&destination).unwrap();
+    let state = UdpSocketState::new((&socket).into()).unwrap();
+    socket.shutdown(std::net::Shutdown::Write).unwrap();
+
+    let transmit = Transmit {
+        destination: destination.as_socket().unwrap(),
+        ecn: None,
+        contents: b"hello",
+        segment_size: None,
+        src_ip: None,
+    };
+    assert_eq!(
+        state.send((&socket).into(), &transmit).unwrap_err().kind(),
+        std::io::ErrorKind::BrokenPipe,
+    );
+}
+
+#[test]
+fn oversized_datagram_send_errors_are_ignored() {
+    let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let state = UdpSocketState::new((&socket).into()).unwrap();
+    let transmit = Transmit {
+        destination: socket.local_addr().unwrap(),
+        ecn: None,
+        contents: &[0; u16::MAX as usize + 1],
+        segment_size: None,
+        src_ip: None,
+    };
+    assert!(state.try_send((&socket).into(), &transmit).is_err());
+    assert!(state.send((&socket).into(), &transmit).is_ok());
+}
+
+#[test]
 fn basic_src_ip() {
     let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
         .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
