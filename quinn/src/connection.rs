@@ -541,12 +541,36 @@ impl Connection {
     /// Previously queued datagrams which are still unsent may be discarded to make space for this
     /// datagram, in order of oldest to newest.
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
+        self.send_datagram_inner(data, None)
+    }
+
+    /// Transmit a datagram with an expiration time.
+    ///
+    /// Like [`send_datagram`](Self::send_datagram), but the datagram is discarded if its deadline
+    /// has been reached at the time sampled for packet generation. Expiration is checked when
+    /// the connection next attempts transmission, not by a dedicated timer.
+    ///
+    /// Already generated packets are not canceled, so this does not guarantee a deadline for
+    /// UDP transmission or delivery. Success does not imply that the datagram will be sent.
+    pub fn send_datagram_with_deadline(
+        &self,
+        data: Bytes,
+        deadline: Instant,
+    ) -> Result<(), SendDatagramError> {
+        self.send_datagram_inner(data, Some(deadline))
+    }
+
+    fn send_datagram_inner(
+        &self,
+        data: Bytes,
+        deadline: Option<Instant>,
+    ) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.state.lock("send_datagram");
         if let Some(x) = &conn.error {
             return Err(SendDatagramError::ConnectionLost(x.clone()));
         }
         use proto::SendDatagramError::*;
-        match conn.inner.datagrams().send(data, true) {
+        match conn.inner.datagrams().send(data, true, deadline) {
             Ok(()) => {
                 conn.wake();
                 Ok(())
@@ -1050,7 +1074,7 @@ impl Future for SendDatagram<'_> {
         match state
             .inner
             .datagrams()
-            .send(this.data.take().unwrap(), false)
+            .send(this.data.take().unwrap(), false, None)
         {
             Ok(()) => {
                 state.wake();
