@@ -1864,6 +1864,24 @@ fn data_blocked_not_sent_for_local_send_window() {
 }
 
 #[test]
+fn send_buffered_until_acked() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    const MSG: &[u8] = b"hello";
+    pair.client_send(client_ch, s).write(MSG).unwrap();
+    assert_eq!(
+        pair.client_streams(client_ch).send_buffered(),
+        MSG.len() as u64
+    );
+
+    pair.drive();
+    assert_eq!(pair.client_streams(client_ch).send_buffered(), 0);
+}
+
+#[test]
 fn data_blocked_dropped_when_limit_raised() {
     let _guard = subscribe();
     let server = ServerConfig {

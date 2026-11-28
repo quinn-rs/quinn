@@ -94,6 +94,12 @@ impl<'a> Streams<'a> {
             - (self.state.max_remote[dir as usize]
                 - self.state.allocated_remote_count[dir as usize])
     }
+
+    /// The number of bytes of outgoing stream data retained in send buffers, including
+    /// acknowledged data.
+    pub fn send_buffered(&self) -> u64 {
+        self.state.buffered_data
+    }
 }
 
 /// Access to streams
