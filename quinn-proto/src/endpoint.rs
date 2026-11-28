@@ -854,13 +854,20 @@ impl Endpoint {
         self.remove_incoming_state(&incoming);
         incoming.improper_drop_warner.dismiss();
 
-        // First Initial
-        // The peer will use this as the DCID of its following Initials. Initial DCIDs are
-        // looked up separately from Handshake/Data DCIDs, so there is no risk of collision
-        // with established connections. In the unlikely event that a collision occurs
-        // between two connections in the initial phase, both will fail fast and may be
-        // retried by the application layer.
-        let loc_cid = self.local_cid_generator.generate_cid();
+        // The peer will use this as the DCID of its following Initials, and Initial DCIDs
+        // are looked up in `connection_ids` before `connection_ids_initial`. An ID already
+        // held by a live connection would route those Initials to that connection, where
+        // they are dropped and the handshake stalls until the client times out. Keep
+        // generating until the ID is unused, mirroring `new_cid`.
+        let loc_cid = loop {
+            let cid = self.local_cid_generator.generate_cid();
+            if cid.is_empty()
+                || (!self.index.connection_ids.contains_key(&cid)
+                    && !self.index.connection_ids_initial.contains_key(&cid))
+            {
+                break cid;
+            }
+        };
 
         let payload = TokenPayload::Retry {
             address: incoming.addresses.remote,

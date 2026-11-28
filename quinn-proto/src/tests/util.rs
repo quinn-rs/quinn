@@ -414,15 +414,22 @@ impl TestEndpoint {
         let buffer_size = self.endpoint.config().get_max_udp_payload_size() as usize;
         let mut buf = Vec::with_capacity(buffer_size);
 
+        // The endpoint timeout is the earliest timeout across all connections,
+        // recomputed from scratch on every call. A single per-endpoint slot
+        // overwritten once per connection silently dropped every connection's
+        // timers but the last-iterated one's, and queued datagrams were
+        // delivered to whichever connection happened to be iterated first
+        // instead of the connection they were routed to. Both break an
+        // endpoint hosting more than one connection.
+        self.timeout = None;
         loop {
             let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
             for (ch, conn) in self.connections.iter_mut() {
-                if self.timeout.is_some_and(|x| x <= now) {
-                    self.timeout = None;
+                if conn.poll_timeout().is_some_and(|x| x <= now) {
                     conn.handle_timeout(now);
                 }
 
-                for (_, mut events) in self.conn_events.drain() {
+                if let Some(mut events) = self.conn_events.remove(ch) {
                     for event in events.drain(..) {
                         conn.handle_event(event);
                     }
@@ -436,7 +443,7 @@ impl TestEndpoint {
                     self.outbound.extend(split_transmit(transmit, &buf[..size]));
                     buf.clear();
                 }
-                self.timeout = conn.poll_timeout();
+                self.timeout = min_opt(self.timeout, conn.poll_timeout());
             }
 
             if endpoint_events.is_empty() {

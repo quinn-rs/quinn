@@ -31,7 +31,7 @@ use crate::{
     crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
     packet::{Header, InitialHeader, PacketNumber},
-    shared::{ConnectionEventInner, DatagramConnectionEvent},
+    shared::{ConnectionEventInner, ConnectionId, DatagramConnectionEvent},
     transport_parameters::TransportParameters,
 };
 mod util;
@@ -108,6 +108,110 @@ fn pending_incoming_can_retry_after_disabling_server() {
     pair.server.assert_accept();
     assert!(
         iter::from_fn(|| pair.client_conn_mut(client_ch).poll())
+            .any(|event| matches!(event, Event::Connected))
+    );
+}
+
+/// State shared between a test and the CID generator it injects into the server.
+struct CollidingGeneratorState {
+    /// Every CID the generator has issued so far.
+    issued: Vec<ConnectionId>,
+    /// A CID to return once instead of a fresh one, then clear.
+    armed: Option<ConnectionId>,
+}
+
+/// A CID generator that records every CID it issues and can be armed to return a
+/// chosen CID once, so a test can force a collision with a live connection's CID.
+struct CollidingConnectionIdGenerator {
+    inner: RandomConnectionIdGenerator,
+    shared: Arc<Mutex<CollidingGeneratorState>>,
+}
+
+impl ConnectionIdGenerator for CollidingConnectionIdGenerator {
+    fn generate_cid(&mut self) -> ConnectionId {
+        let mut state = self.shared.lock().unwrap();
+        if let Some(cid) = state.armed.take() {
+            return cid;
+        }
+        let cid = self.inner.generate_cid();
+        state.issued.push(cid);
+        cid
+    }
+
+    fn cid_len(&self) -> usize {
+        self.inner.cid_len()
+    }
+
+    fn cid_lifetime(&self) -> Option<Duration> {
+        self.inner.cid_lifetime()
+    }
+}
+
+#[test]
+fn retry_avoids_live_connection_ids() {
+    let _guard = subscribe();
+    let shared = Arc::new(Mutex::new(CollidingGeneratorState {
+        issued: Vec::new(),
+        armed: None,
+    }));
+    let factory_shared = shared.clone();
+    let cid_generator_factory: Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync> =
+        Arc::new(move || {
+            Box::new(CollidingConnectionIdGenerator {
+                inner: RandomConnectionIdGenerator::default(),
+                shared: factory_shared.clone(),
+            })
+        });
+    let server = Endpoint::new(
+        Arc::new(EndpointConfig {
+            connection_id_generator_factory: cid_generator_factory,
+            ..EndpointConfig::default()
+        }),
+        Some(Arc::new(server_config())),
+        true,
+    );
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let mut pair = Pair::new_from_endpoint(client, server);
+
+    // Connect client A and keep it up.
+    let (client_ch_a, _server_ch_a) = pair.connect();
+    let _ = client_ch_a;
+    // Arm the generator to hand the Retry a CID already held by A's connection.
+    let live_cid = shared.lock().unwrap().issued[0];
+    shared.lock().unwrap().armed = Some(live_cid);
+
+    // Client B connects; hold its incoming so we can retry it.
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
+    let client_ch_b = pair.begin_connect(client_config());
+    pair.drive_client();
+    pair.server.drive_incoming(pair.time, pair.client.addr);
+    let incoming = pair.server.waiting_incoming.pop().unwrap();
+    pair.server.retry(incoming);
+    pair.server.handle_incoming = Box::new(|incoming| {
+        assert!(incoming.remote_address_validated());
+        IncomingConnectionBehavior::Accept
+    });
+    pair.drive();
+    pair.server.assert_accept();
+    assert!(
+        iter::from_fn(|| pair.client_conn_mut(client_ch_b).poll())
+            .any(|event| matches!(event, Event::Connected))
+    );
+}
+
+/// A second connection can handshake while the first is still live on the
+/// same endpoint. Guards the harness driving per-connection timeouts and
+/// events instead of a single shared slot.
+#[test]
+fn two_simultaneous_connections() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (_client_ch_a, _server_ch_a) = pair.connect();
+    let client_ch_b = pair.begin_connect(client_config());
+    pair.drive();
+    pair.server.assert_accept();
+    assert!(
+        iter::from_fn(|| pair.client_conn_mut(client_ch_b).poll())
             .any(|event| matches!(event, Event::Connected))
     );
 }
