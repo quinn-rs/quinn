@@ -94,6 +94,26 @@ impl<'a> Streams<'a> {
             - (self.state.max_remote[dir as usize]
                 - self.state.allocated_remote_count[dir as usize])
     }
+
+    /// The number of bytes of outgoing stream data retained in send buffers, including
+    /// acknowledged data.
+    pub fn send_buffered(&self) -> u64 {
+        self.state.buffered_data
+    }
+
+    /// The estimated number of bytes held by received stream data that has not been read.
+    ///
+    /// Data is counted with the size of the packet that carried it, so this can exceed the amount
+    /// of unread data.
+    pub fn recv_buffered(&self) -> u64 {
+        self.state
+            .recv
+            .values()
+            .flatten()
+            .filter_map(|rs| rs.as_open_recv())
+            .map(|rs| rs.assembler.allocated() as u64)
+            .sum()
+    }
 }
 
 /// Access to streams
