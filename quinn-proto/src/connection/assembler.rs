@@ -232,6 +232,10 @@ impl Assembler {
         self.bytes_read
     }
 
+    pub(super) fn allocated(&self) -> usize {
+        self.allocated
+    }
+
     /// Discard all buffered data
     pub(super) fn clear(&mut self) {
         self.data.clear();

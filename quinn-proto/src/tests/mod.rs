@@ -1882,6 +1882,26 @@ fn send_buffered_until_acked() {
 }
 
 #[test]
+fn recv_buffered_until_read() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    const MSG: &[u8] = b"hello";
+    pair.client_send(client_ch, s).write(MSG).unwrap();
+    pair.drive();
+    assert!(pair.server_streams(server_ch).recv_buffered() >= MSG.len() as u64);
+
+    assert_matches!(pair.server_streams(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(false).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Ok(Some(chunk)) if chunk.bytes == MSG);
+    let _ = chunks.finalize();
+    assert_eq!(pair.server_streams(server_ch).recv_buffered(), 0);
+}
+
+#[test]
 fn data_blocked_dropped_when_limit_raised() {
     let _guard = subscribe();
     let server = ServerConfig {
